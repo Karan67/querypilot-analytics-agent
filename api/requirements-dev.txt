@@ -1,0 +1,16 @@
+# Host-side test dependencies (decision D-1 in specs/001-schema-tool-plan.md).
+# Deliberately NOT installed into the runtime image.
+#
+# SQLAlchemy is pinned to the same range as api/requirements.txt on purpose:
+# AC5 asserts exact rendered type strings, so a version skew between the host
+# suite and the container would surface as a confusing assertion failure rather
+# than as the version problem it actually is.
+pytest>=8.0,<9.0
+sqlalchemy>=2.0,<2.1
+psycopg[binary]>=3.2,<3.3
+
+# The eval dataset is YAML (specs/006-evals.md §5). Dev-only on purpose: evals/
+# is a measurement harness and is not shipped in the API image, so adding a
+# parser to the runtime image for a benchmark that never runs there would be
+# dead weight in production.
+pyyaml>=6.0,<7.0

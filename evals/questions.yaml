@@ -1,0 +1,567 @@
+# QueryPilot evaluation dataset — specs/006-evals.md AC1-AC6.
+#
+# AUTHORSHIP (resolved Q-D): agent-derived from schema coverage, pending human
+# review. The questions were NOT chosen by taste. They were derived from
+# `get_schema()`: every one of the 12 relations appears at least once, every one
+# of the 11 foreign-key paths is exercised, and the `hard` tier allocates one
+# question per SQL feature category. `tests/test_eval_questions.py` asserts that
+# coverage rather than trusting this comment.
+#
+# ORDERING DISCIPLINE — the part that actually protects the number. Every
+# question and every gold query here was written and verified *before the eval
+# runner existed*. The score could not influence the questions because there was
+# no score. If the first baseline is embarrassing, the fix belongs in
+# Iteration 5, not in this file.
+#
+# EDITING RULES
+#   - An id is permanent (AC2). A question that gets harder becomes a NEW id;
+#     editing one in place makes every earlier EVALS.md entry describe something
+#     that no longer exists.
+#   - `ordered: true` only when row order is genuinely part of the answer, and
+#     only when the gold query's sort key has no ties among the rows it returns.
+#     A tie makes the gold ambiguous and can fail a correct answer.
+#   - Never edit a question because the model got it wrong. That is the one
+#     change this whole iteration exists to prevent.
+
+version: 2
+dataset: chinook
+
+# Withdrawn question ids. **Never reused** — the loader refuses a collision,
+# because each of these has already been scored and published in EVALS.md under
+# one meaning, and letting the id return under another would silently corrupt
+# every comparison against those entries (AC2).
+#
+# Both were retired after the v1 baseline, when the failure list showed the
+# questions were at fault rather than the answers. Neither was edited in place
+# and neither was removed quietly: the reason is the useful part of a
+# retirement, and it is the record of how this benchmark was wrong.
+retired:
+  medium-008: >-
+    Ambiguous. "How many customers does each support representative handle?"
+    did not say whether employees who support nobody are support
+    representatives. The gold's inner join returned the 3 Sales Support Agents;
+    an equally defensible left join returns all 8 employees with five zeroes.
+    Replaced by medium-017, which states the treatment of zero-customer
+    employees explicitly.
+  medium-016: >-
+    Under-specified precision. The question asked for an average without saying
+    how precise, so a candidate rounding to numeric(10,2) computed exactly the
+    same averages and scored wrong against a full-precision gold under the
+    six-decimal comparison policy. The policy is deliberately unchanged;
+    medium-018 states the rounding in the question instead.
+
+# AC12 — asserted before any scoring. If the database underneath was reseeded,
+# the run aborts rather than appending a number that is not comparable to the
+# entries above it in EVALS.md.
+fingerprint:
+  track: 3503
+  invoice: 412
+  invoice_line: 2240
+  customer: 59
+  playlist_track: 8715
+
+questions:
+
+  # ---- easy: single relation, no join ------------------------------------
+  # `expect` (resolved D-2) is a sanity check on the GOLD, not on the model. It
+  # is permitted here and nowhere else, because on this tier the answer is
+  # verifiable by looking at the database. Copying an `expect` from a run of the
+  # gold query would verify nothing, which is why the loader refuses it on the
+  # joined tiers.
+
+  - id: easy-001
+    tier: easy
+    question: How many tracks are in the library?
+    gold_sql: SELECT count(*) FROM track
+    ordered: false
+    covers: [track]
+    expect:
+      rows: 1
+      value: 3503
+
+  - id: easy-002
+    tier: easy
+    question: How many artists are there?
+    gold_sql: SELECT count(*) FROM artist
+    ordered: false
+    covers: [artist]
+    expect:
+      rows: 1
+      value: 275
+
+  - id: easy-003
+    tier: easy
+    question: How many albums are there?
+    gold_sql: SELECT count(*) FROM album
+    ordered: false
+    covers: [album]
+    expect:
+      rows: 1
+      value: 347
+
+  - id: easy-004
+    tier: easy
+    question: List every genre name in alphabetical order.
+    gold_sql: SELECT name FROM genre ORDER BY name
+    ordered: true
+    covers: [genre]
+    expect:
+      rows: 25
+
+  - id: easy-005
+    tier: easy
+    question: What media types are available?
+    gold_sql: SELECT name FROM media_type
+    ordered: false
+    covers: [media_type]
+    expect:
+      rows: 5
+
+  - id: easy-006
+    tier: easy
+    question: How many customers are there?
+    gold_sql: SELECT count(*) FROM customer
+    ordered: false
+    covers: [customer]
+    expect:
+      rows: 1
+      value: 59
+
+  - id: easy-007
+    tier: easy
+    question: List the first and last name of every employee.
+    gold_sql: SELECT first_name, last_name FROM employee
+    ordered: false
+    covers: [employee]
+    expect:
+      rows: 8
+
+  - id: easy-008
+    tier: easy
+    question: What is the total value of all invoices?
+    gold_sql: SELECT sum(total) FROM invoice
+    ordered: false
+    covers: [invoice]
+    expect:
+      rows: 1
+      value: 2328.60
+
+  - id: easy-009
+    tier: easy
+    question: How many invoice line items are there?
+    gold_sql: SELECT count(*) FROM invoice_line
+    ordered: false
+    covers: [invoice_line]
+    expect:
+      rows: 1
+      value: 2240
+
+  # The id is in the question for a reason. "List the names of all playlists"
+  # was the first draft, and it is ambiguous for the same reason medium-009 was:
+  # four playlist names are duplicated, so the gold returns 18 rows while
+  # `SELECT DISTINCT name` returns 14, and both are defensible readings of
+  # "the names of all playlists". Asking for the id as well removes the choice.
+  - id: easy-010
+    tier: easy
+    question: List the id and name of every playlist.
+    gold_sql: SELECT playlist_id, name FROM playlist
+    ordered: false
+    covers: [playlist]
+    expect:
+      rows: 18
+
+  - id: easy-011
+    tier: easy
+    question: How many playlist-to-track assignments are there in total?
+    gold_sql: SELECT count(*) FROM playlist_track
+    ordered: false
+    covers: [playlist_track]
+    expect:
+      rows: 1
+      value: 8715
+
+  # The view. Included because AC5 requires it and because a view is exactly
+  # where a schema-grounding failure shows up: it has no primary key, no NOT
+  # NULL, and no foreign keys, so a model that pattern-matches on table shape
+  # rather than reading the schema will avoid it.
+  - id: easy-012
+    tier: easy
+    question: What is the largest number of line items on a single invoice?
+    gold_sql: SELECT max(line_count) FROM invoice_totals
+    ordered: false
+    covers: [invoice_totals]
+    expect:
+      rows: 1
+      value: 14
+
+  - id: easy-013
+    tier: easy
+    question: How many tracks have no composer listed?
+    gold_sql: SELECT count(*) FROM track WHERE composer IS NULL
+    ordered: false
+    covers: [track]
+    expect:
+      rows: 1
+      value: 977
+
+  - id: easy-014
+    tier: easy
+    question: How many different countries do customers come from?
+    gold_sql: SELECT count(DISTINCT country) FROM customer
+    ordered: false
+    covers: [customer]
+    expect:
+      rows: 1
+      value: 24
+
+  # ---- medium: one or two joins, grouping, filtering ---------------------
+
+  # Top 3, not top 5, and the reason is measured: U2 and Metallica both have 10
+  # albums and sit at ranks 4 and 5. With `ordered: true` a correct answer that
+  # broke that tie the other way would have scored wrong, and with any limit
+  # past 3 the membership of the result is ambiguous too. Ranks 1-3 are 21, 14
+  # and 11, with rank 4 at 10 — no tie inside the answer, none at the boundary.
+  - id: medium-001
+    tier: medium
+    question: Which 3 artists have the most albums? Show the artist name and the
+      album count, highest first.
+    gold_sql: >-
+      SELECT ar.name, count(*) FROM album al
+      JOIN artist ar ON ar.artist_id = al.artist_id
+      GROUP BY ar.artist_id, ar.name
+      ORDER BY count(*) DESC LIMIT 3
+    ordered: true
+    covers: [album, artist]
+
+  - id: medium-002
+    tier: medium
+    question: How many tracks are on the album 'Let There Be Rock'?
+    gold_sql: >-
+      SELECT count(*) FROM track t
+      JOIN album a ON a.album_id = t.album_id
+      WHERE a.title = 'Let There Be Rock'
+    ordered: false
+    covers: [track, album]
+
+  - id: medium-003
+    tier: medium
+    question: Show the 10 genres with the most tracks, giving the genre name and
+      the track count, highest first.
+    gold_sql: >-
+      SELECT g.name, count(*) FROM track t
+      JOIN genre g ON g.genre_id = t.genre_id
+      GROUP BY g.genre_id, g.name
+      ORDER BY count(*) DESC LIMIT 10
+    ordered: true
+    covers: [track, genre]
+
+  - id: medium-004
+    tier: medium
+    question: How many tracks use each media type? Show the media type name and
+      the number of tracks.
+    gold_sql: >-
+      SELECT m.name, count(*) FROM track t
+      JOIN media_type m ON m.media_type_id = t.media_type_id
+      GROUP BY m.media_type_id, m.name
+    ordered: false
+    covers: [track, media_type]
+
+  - id: medium-005
+    tier: medium
+    question: Which customer has spent the most in total? Give their first name,
+      last name and total spend.
+    gold_sql: >-
+      SELECT c.first_name, c.last_name, sum(i.total) FROM invoice i
+      JOIN customer c ON c.customer_id = i.customer_id
+      GROUP BY c.customer_id, c.first_name, c.last_name
+      ORDER BY sum(i.total) DESC LIMIT 1
+    ordered: true
+    covers: [invoice, customer]
+
+  - id: medium-006
+    tier: medium
+    question: How many invoice lines belong to invoices billed to Germany?
+    gold_sql: >-
+      SELECT count(*) FROM invoice_line il
+      JOIN invoice i ON i.invoice_id = il.invoice_id
+      WHERE i.billing_country = 'Germany'
+    ordered: false
+    covers: [invoice_line, invoice]
+
+  - id: medium-007
+    tier: medium
+    question: What is the total revenue from tracks whose listed unit price is
+      1.99?
+    gold_sql: >-
+      SELECT sum(il.unit_price * il.quantity) FROM invoice_line il
+      JOIN track t ON t.track_id = il.track_id
+      WHERE t.unit_price = 1.99
+    ordered: false
+    covers: [invoice_line, track]
+
+  # Replaces the retired medium-008, whose phrasing left the treatment of
+  # zero-customer employees open. Both readings were defensible, so the fix is
+  # to say which one is meant.
+  #
+  # The "include them" reading was chosen for a reason independent of the v1
+  # failure: nothing else in the corpus exercises a LEFT JOIN or the zero-row
+  # aggregate it produces, and that is a genuine capability worth measuring.
+  # The opposite phrasing would have been equally unambiguous and would have
+  # tested less.
+  - id: medium-017
+    tier: medium
+    question: How many customers does each employee support? Include employees
+      who support no customers, showing them with a count of zero. Show the
+      first name, last name and the count.
+    gold_sql: >-
+      SELECT e.first_name, e.last_name, count(c.customer_id) FROM employee e
+      LEFT JOIN customer c ON c.support_rep_id = e.employee_id
+      GROUP BY e.employee_id, e.first_name, e.last_name
+    ordered: false
+    covers: [customer, employee]
+
+  # Deliberately not "which playlists have the most tracks". Chinook has four
+  # duplicated playlist NAMES — Music, TV Shows, Movies and Audiobooks each
+  # appear twice — and playlists 1 and 8 are both called Music with 3290 tracks
+  # apiece. Grouping by playlist_id yields two identical ('Music', 3290) rows;
+  # grouping by name yields one ('Music', 6580). Both readings are defensible,
+  # so the question had no single right answer and no model could have known
+  # which was meant. 'Heavy Metal Classic' occurs exactly once.
+  - id: medium-009
+    tier: medium
+    question: How many tracks are assigned to the 'Heavy Metal Classic' playlist?
+    gold_sql: >-
+      SELECT count(*) FROM playlist_track pt
+      JOIN playlist p ON p.playlist_id = pt.playlist_id
+      WHERE p.name = 'Heavy Metal Classic'
+    ordered: false
+    covers: [playlist_track, playlist]
+
+  - id: medium-010
+    tier: medium
+    question: How many tracks longer than five minutes appear in at least one
+      playlist?
+    gold_sql: >-
+      SELECT count(DISTINCT t.track_id) FROM playlist_track pt
+      JOIN track t ON t.track_id = pt.track_id
+      WHERE t.milliseconds > 300000
+    ordered: false
+    covers: [playlist_track, track]
+
+  - id: medium-011
+    tier: medium
+    question: What was the total invoice revenue in 2023?
+    gold_sql: >-
+      SELECT sum(total) FROM invoice
+      WHERE invoice_date >= DATE '2023-01-01'
+        AND invoice_date < DATE '2024-01-01'
+    ordered: false
+    covers: [invoice]
+
+  - id: medium-012
+    tier: medium
+    question: Which customer countries generated more than 100 in total sales?
+      Show the country and the total, highest first.
+    gold_sql: >-
+      SELECT c.country, sum(i.total) FROM invoice i
+      JOIN customer c ON c.customer_id = i.customer_id
+      GROUP BY c.country
+      HAVING sum(i.total) > 100
+      ORDER BY sum(i.total) DESC
+    ordered: true
+    covers: [invoice, customer]
+
+  - id: medium-013
+    tier: medium
+    question: Which invoices have a total above 20? Show the invoice id and the
+      total.
+    gold_sql: SELECT invoice_id, total FROM invoice WHERE total > 20
+    ordered: false
+    covers: [invoice]
+
+  - id: medium-014
+    tier: medium
+    question: Which employees were hired in 2003? Give their first and last
+      names.
+    gold_sql: >-
+      SELECT first_name, last_name FROM employee
+      WHERE hire_date >= DATE '2003-01-01'
+        AND hire_date < DATE '2004-01-01'
+    ordered: false
+    covers: [employee]
+
+  - id: medium-015
+    tier: medium
+    question: What is the average track length in milliseconds for the Jazz
+      genre?
+    gold_sql: >-
+      SELECT avg(t.milliseconds) FROM track t
+      JOIN genre g ON g.genre_id = t.genre_id
+      WHERE g.name = 'Jazz'
+    ordered: false
+    covers: [track, genre]
+
+  # Replaces the retired medium-016. Its first draft asked which customers had
+  # an invoice with more than 10 line items; measured, the answer was all 59 of
+  # them, so `SELECT first_name, last_name FROM customer` — no join, no view, no
+  # work — scored full marks. That was fixed before the v1 run. What the v1 run
+  # then exposed was a second defect: the question asked for an average without
+  # saying how precise, so a candidate that computed the identical averages and
+  # cast them to numeric(10,2) scored wrong.
+  #
+  # **The six-decimal comparison policy is deliberately unchanged** — loosening
+  # it would raise the headline number, which is exactly why it was not touched.
+  # The question specifies the rounding instead, so both sides agree by
+  # construction rather than by tolerance.
+  - id: medium-018
+    tier: medium
+    question: For each customer country, what is the average number of line items
+      per invoice, rounded to two decimal places? Show the country and the
+      average.
+    gold_sql: >-
+      SELECT c.country, round(avg(v.line_count), 2) FROM invoice_totals v
+      JOIN customer c ON c.customer_id = v.customer_id
+      GROUP BY c.country
+    ordered: false
+    covers: [invoice_totals, customer]
+
+  # ---- hard: one per SQL feature category --------------------------------
+
+  # correlated subquery
+  - id: hard-001
+    tier: hard
+    question: How many tracks are longer than the average track length of their
+      own genre?
+    gold_sql: >-
+      SELECT count(*) FROM track t
+      WHERE t.milliseconds > (
+        SELECT avg(t2.milliseconds) FROM track t2 WHERE t2.genre_id = t.genre_id
+      )
+    ordered: false
+    covers: [track]
+
+  # scalar subquery in a HAVING clause
+  - id: hard-002
+    tier: hard
+    question: Which customers have spent more than the average customer's total
+      spend? Give their first and last names.
+    gold_sql: >-
+      SELECT c.first_name, c.last_name FROM customer c
+      JOIN invoice i ON i.customer_id = c.customer_id
+      GROUP BY c.customer_id, c.first_name, c.last_name
+      HAVING sum(i.total) > (
+        SELECT avg(s) FROM (
+          SELECT sum(total) AS s FROM invoice GROUP BY customer_id
+        ) per_customer
+      )
+    ordered: false
+    covers: [customer, invoice]
+
+  # self-join — the employee.reports_to -> employee path, which no other
+  # question can reach
+  - id: hard-003
+    tier: hard
+    question: List each employee's first and last name together with their
+      manager's first and last name. Skip employees who have no manager.
+    gold_sql: >-
+      SELECT e.first_name, e.last_name, m.first_name, m.last_name
+      FROM employee e
+      JOIN employee m ON m.employee_id = e.reports_to
+    ordered: false
+    covers: [employee]
+
+  # window function. The tie-break is stated in the question because without one
+  # the answer would be ambiguous and a correct response could score wrong.
+  - id: hard-004
+    tier: hard
+    question: For each genre, show the genre name and the name of its longest
+      track. If two tracks tie for longest, use the one with the lower track id.
+    gold_sql: >-
+      SELECT name, track_name FROM (
+        SELECT g.name AS name, t.name AS track_name,
+               row_number() OVER (
+                 PARTITION BY g.genre_id ORDER BY t.milliseconds DESC, t.track_id
+               ) AS rn
+        FROM track t JOIN genre g ON g.genre_id = t.genre_id
+      ) ranked
+      WHERE rn = 1
+    ordered: false
+    covers: [track, genre]
+
+  # set operation — also exercises specs/002 AC25 (recursive branch validation)
+  # end to end, since both branches must be inspected by Gate 2
+  - id: hard-005
+    tier: hard
+    question: List every city that appears either as a customer city or as an
+      employee city.
+    gold_sql: SELECT city FROM customer UNION SELECT city FROM employee
+    ordered: false
+    covers: [customer, employee]
+
+  # HAVING with an aggregate predicate
+  - id: hard-006
+    tier: hard
+    question: Which genres have an average track length of more than five
+      minutes? Show the genre name and the average length in milliseconds.
+    gold_sql: >-
+      SELECT g.name, avg(t.milliseconds) FROM track t
+      JOIN genre g ON g.genre_id = t.genre_id
+      GROUP BY g.genre_id, g.name
+      HAVING avg(t.milliseconds) > 300000
+    ordered: false
+    covers: [track, genre]
+
+  # four-table join
+  - id: hard-007
+    tier: hard
+    question: Which 10 artists have the most tracks in the Rock genre? Show the
+      artist name and the track count, highest first.
+    gold_sql: >-
+      SELECT ar.name, count(*) FROM track t
+      JOIN album al ON al.album_id = t.album_id
+      JOIN artist ar ON ar.artist_id = al.artist_id
+      JOIN genre g ON g.genre_id = t.genre_id
+      WHERE g.name = 'Rock'
+      GROUP BY ar.artist_id, ar.name
+      ORDER BY count(*) DESC LIMIT 10
+    ordered: true
+    covers: [track, album, artist, genre]
+
+  # CASE expression. The bucket labels are given in the question, so the model
+  # is not being asked to guess wording the scorer will compare literally.
+  - id: hard-008
+    tier: hard
+    question: Counting a track as 'short' when it is under three minutes and
+      'long' otherwise, how many tracks fall into each bucket? Show the label and
+      the count.
+    gold_sql: >-
+      SELECT CASE WHEN milliseconds < 180000 THEN 'short' ELSE 'long' END AS
+      bucket, count(*) FROM track GROUP BY 1
+    ordered: false
+    covers: [track]
+
+  # DISTINCT inside an aggregate
+  - id: hard-009
+    tier: hard
+    question: Which 5 genres feature the most distinct artists? Show the genre
+      name and the number of distinct artists, highest first.
+    gold_sql: >-
+      SELECT g.name, count(DISTINCT ar.artist_id) FROM track t
+      JOIN genre g ON g.genre_id = t.genre_id
+      JOIN album al ON al.album_id = t.album_id
+      JOIN artist ar ON ar.artist_id = al.artist_id
+      GROUP BY g.genre_id, g.name
+      ORDER BY count(DISTINCT ar.artist_id) DESC LIMIT 5
+    ordered: true
+    covers: [track, genre, album, artist]
+
+  # date-range aggregate
+  - id: hard-010
+    tier: hard
+    question: What was the total invoice value for each year, earliest year
+      first? Show the year and the total.
+    gold_sql: >-
+      SELECT extract(year FROM invoice_date) AS yr, sum(total) FROM invoice
+      GROUP BY yr ORDER BY yr
+    ordered: true
+    covers: [invoice]

@@ -1,0 +1,17 @@
+# The LLM provider SDK arrives in Iteration 2, behind the swappable interface.
+# Ranges now, a lockfile at Iteration 8.
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.34,<0.35
+sqlalchemy>=2.0,<2.1
+psycopg[binary]>=3.2,<3.3
+
+# Gate 2, the AST validator (specs/002-sql-validation.md). Pinned to a single
+# major: sqlglot is pre-1.0 and its expression taxonomy is not a stable
+# contract -- AC24 exists precisely because a minor upgrade can add statement
+# types the validator has never classified.
+sqlglot>=27,<28
+
+# LLM provider (specs/005-single-shot-generation.md). The only vendor SDK in the
+# project, imported by exactly one module -- api/llm/groq_provider.py -- which a
+# structural test enforces.
+groq>=0.37,<1.0

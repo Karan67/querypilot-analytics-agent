@@ -1,0 +1,72 @@
+# QueryPilot - Iteration 0 foundation stack.
+#
+#   db  : PostgreSQL 16, seeded with Chinook, exposing the read-only role
+#   api : FastAPI, reaching db ONLY through that read-only role
+#
+# Prerequisites:
+#   1. cp .env.example .env
+#   2. ./db/fetch_chinook.sh      (or db\fetch_chinook.ps1 on Windows)
+#   3. docker compose up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: querypilot-db
+    restart: unless-stopped
+    environment:
+      # Superuser: used for seeding and for creating the read-only role.
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Consumed by db/init/02_readonly_role.sh
+      QUERYPILOT_RO_USER: ${QUERYPILOT_RO_USER}
+      QUERYPILOT_RO_PASSWORD: ${QUERYPILOT_RO_PASSWORD}
+      QUERYPILOT_STATEMENT_TIMEOUT: ${QUERYPILOT_STATEMENT_TIMEOUT:-10s}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Init scripts run in filename order, ONCE, on an empty data volume:
+      #   01 loads Chinook, 02 grants SELECT on the tables 01 created.
+      # The order is load-bearing: GRANT ... ON ALL TABLES only affects
+      # tables that already exist at the moment the grant runs.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db/seed:/seed:ro
+    healthcheck:
+      # -h 127.0.0.1 is deliberate. During init the postgres entrypoint runs a
+      # temporary server on the unix socket only, so a socket-based check would
+      # report healthy while Chinook is still loading. Forcing TCP means
+      # healthy == init finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  api:
+    build:
+      context: ./api
+    container_name: querypilot-api
+    restart: unless-stopped
+    environment:
+      # The only database credential the API ever holds is the read-only role.
+      QUERYPILOT_DATABASE_URL: postgresql+psycopg://${QUERYPILOT_RO_USER}:${QUERYPILOT_RO_PASSWORD}@db:5432/${POSTGRES_DB}
+      # LLM provider (specs/005-single-shot-generation.md). Provider and model
+      # are configuration, not code -- switching either is an environment
+      # change (AC3). The key is read from .env, which is gitignored.
+      #
+      # The default is empty rather than absent: with no key the API still
+      # starts and /health still passes, and only a question fails, with a
+      # message saying what to set. A container that refused to boot without an
+      # LLM key would make the database work unreachable too.
+      QUERYPILOT_LLM_PROVIDER: ${QUERYPILOT_LLM_PROVIDER:-groq}
+      QUERYPILOT_LLM_MODEL: ${QUERYPILOT_LLM_MODEL:-openai/gpt-oss-120b}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

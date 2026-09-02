@@ -1,0 +1,5 @@
+# Linux containers execute these. A CRLF line ending breaks the shebang and
+# produces a confusing "no such file or directory" at container init.
+*.sh text eol=lf
+*.sql text eol=lf
+Dockerfile text eol=lf
