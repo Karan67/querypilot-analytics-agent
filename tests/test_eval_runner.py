@@ -124,6 +124,36 @@ def full_gold(full, configured_database):
 # --- the corpus agrees with the scorer --------------------------------------
 
 
+def test_single_shot_still_defaults_to_ddl():
+    """`answer_question` renders DDL unconditionally and `build_strategy`
+    refuses any other rendering rather than accepting a flag it would ignore.
+
+    So the adopted default cannot be applied blindly: a bare
+    `--strategy single-shot` would raise a ValueError from its own default.
+    That is not hypothetical -- it is what the first version of T7's adoption
+    did, and it is the same trap the glossary default hit at T3.
+    """
+    from api.agent.prompts import ADOPTED_RENDERING, SCHEMA_DDL
+    from evals.run_evals import resolve_rendering
+
+    assert resolve_rendering("single-shot", None) == SCHEMA_DDL
+    assert resolve_rendering("loop", None) == ADOPTED_RENDERING
+
+
+def test_an_explicit_rendering_always_wins():
+    """Resolution fills a blank; it never overrides an answer.
+
+    A resolver that ignored its argument would silently score every run under
+    the adopted rendering, including the `ddl` arm of an A/B -- which would make
+    the comparison that selected the adopted rendering unfalsifiable.
+    """
+    from api.agent.prompts import ADOPTED_RENDERING, SCHEMA_DDL
+    from evals.run_evals import resolve_rendering
+
+    assert resolve_rendering("loop", SCHEMA_DDL) == SCHEMA_DDL
+    assert resolve_rendering("single-shot", SCHEMA_DDL) == SCHEMA_DDL
+
+
 def test_a_perfect_run_over_the_whole_corpus_scores_100_percent(full, full_gold):
     """Echoing each gold query back must score 100% on all forty.
 
@@ -135,9 +165,14 @@ def test_a_perfect_run_over_the_whole_corpus_scores_100_percent(full, full_gold)
     report = run_pass(full, ScriptedProvider(full), full_gold)
 
     assert report.accuracy == 1.0, [c.id for c in report.failures]
-    assert report.correct == report.total == 40
+    assert report.correct == report.total == 50
     assert report.breakdown == {}
-    assert report.per_tier == {"easy": 1.0, "medium": 1.0, "hard": 1.0}
+    assert report.per_tier == {
+        "easy": 1.0,
+        "medium": 1.0,
+        "hard": 1.0,
+        "expert": 1.0,
+    }
 
 
 # --- AC13-AC17: the arithmetic ----------------------------------------------

@@ -32,6 +32,10 @@ def question(index: int, **overrides) -> dict:
         "gold_sql": "SELECT count(*) FROM track",
         "ordered": False,
         "covers": ["track"],
+        # Required since Iteration 5 T4. `dev` here is an arbitrary valid value
+        # for fixtures that are testing something else; the real corpus's
+        # membership is pinned in `tests/test_splits.py`.
+        "split": "dev",
     }
     base.update(overrides)
     return base
@@ -230,7 +234,7 @@ def test_ac1_too_many_questions_is_rejected():
 
 def test_ac1_tiers_are_fixed():
     """Per-tier accuracy is only comparable across runs if the tiers are."""
-    assert TIERS == ("easy", "medium", "hard")
+    assert TIERS == ("easy", "medium", "hard", "expert")
 
 
 # --- D-2: `expect` is an easy-tier-only sanity check -----------------------

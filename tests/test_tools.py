@@ -20,13 +20,29 @@ from api.db import introspection
 
 
 def test_registry_exposes_exactly_the_tools_built_so_far():
-    """Iteration 1 is complete: all four tools from the roadmap exist."""
+    """The agent's whole capability surface, in one assertion.
+
+    `sample_rows` was here through Iteration 4 and was removed at Iteration 5
+    T1 (spec AC1). `api/db/sampling.py` and `tests/test_sampling.py` are
+    untouched (resolved Q-B): the capability still exists, the agent simply has
+    no way to reach it.
+    """
     assert set(tools.TOOLS) == {
         "get_schema",
-        "sample_rows",
         "validate_sql",
         "execute_sql",
     }
+
+
+def test_ac1_the_registry_no_longer_exposes_sample_rows():
+    """Both halves, because either alone leaves a route in.
+
+    The registry key is what a dispatcher looks up; the module attribute is
+    what any caller importing `tools` could still reach directly. Deliberate
+    callers now go to `api/db/sampling.py`, which AC3 keeps.
+    """
+    assert "sample_rows" not in tools.TOOLS
+    assert not hasattr(tools, "sample_rows")
 
 
 def test_validate_sql_wrapper_delegates_unchanged():
@@ -114,23 +130,16 @@ def test_execute_sql_validates_through_the_registry(configured_database):
     assert result.category == "rejected"
 
 
-def test_sample_rows_wrapper_delegates_unchanged(configured_database):
-    from api.db import sampling
-
-    for name in ("track", "invoice_totals", "nope"):
-        assert tools.sample_rows(name) == sampling.sample_rows(name)
-
-
-def test_sample_rows_registry_entry_is_the_wrapper():
-    assert tools.TOOLS["sample_rows"] is tools.sample_rows
-
-
-def test_sample_rows_through_the_registry_enforces_the_allowlist(configured_database):
-    """The registry entry must carry the allowlist with it. A tool reachable by
-    name that could sample `pg_stat_activity` would undo the only gate."""
-    result = tools.TOOLS["sample_rows"]("pg_stat_activity")
-    assert result.ok is False
-    assert result.category == "unknown_relation"
+# Three `sample_rows` wrapper tests were deleted here at Iteration 5 T1, with
+# the wrapper itself. Two were pure delegation checks and died with their
+# subject. The third is worth accounting for: it asserted that a tool reachable
+# by name could not sample `pg_stat_activity`.
+#
+# That coverage is not lost. The allowlist lives in `api/db/sampling.py`, never
+# in the wrapper, and `tests/test_sampling.py` asserts it against the
+# implementation directly — including that it runs *before* any SQL is built.
+# Verified rather than assumed before deleting these. Removing a caller cannot
+# weaken a defence that was never in the caller.
 
 
 def test_tools_module_holds_no_implementation():

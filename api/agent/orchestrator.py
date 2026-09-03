@@ -25,16 +25,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from api.agent.prompts import (
+    ADOPTED_RENDERING,
+    SCHEMA_DDL,
     SCHEMA_FULL,
     LOOP_ACTIONS,
     build_loop_system,
-    frame_sample_rows,
     render_rows,
     render_schema_ddl,
     render_transcript,
 )
 from api.agent.protocol import parse_action
-from api.agent.single_shot import CATEGORY_NO_SQL, CATEGORY_PROVIDER_ERROR
+from api.agent.single_shot import (
+    CATEGORY_NO_SQL,
+    CATEGORY_PROVIDER_ERROR,
+    CATEGORY_RATE_LIMITED,
+)
 from api.db.execution import (
     CATEGORY_CONNECTION_ERROR,
     CATEGORY_DATABASE_ERROR,
@@ -45,8 +50,8 @@ from api.db.execution import (
     execute_sql,
 )
 from api.db.introspection import SchemaIntrospectionError, get_schema
-from api.db.sampling import CATEGORY_UNKNOWN_RELATION, sample_rows
-from api.llm.base import LLMError, LLMProvider
+from api.llm.base import LLMError, LLMProvider, RateLimitError, TokenUsage
+from api.llm.counting import usage_for_call
 
 #: Hard cap on provider calls per question (AC6, AC7).
 #:
@@ -97,9 +102,17 @@ RETRY_POLICY: dict[str, str] = {
     # `002` spent its whole design budget making rejection reasons actionable.
     # Measured never to occur from a competent model, cheap to support.
     CATEGORY_REJECTED: RETRY,
-    # The message lists the relations that do exist, which is close to ideal
-    # retry material.
-    CATEGORY_UNKNOWN_RELATION: RETRY,
+    # `unknown_relation` was classified RETRY here through Iteration 4. It was
+    # removed at Iteration 5 T1 with the only action that could produce it.
+    #
+    # It is *not* re-homed in TERMINAL_CATEGORIES: that set means "the loop
+    # reports this as final", and this category is not reported at all any more.
+    # Declaring it terminal would be a false statement kept alive to satisfy a
+    # test. `api/db/sampling.py` still defines the constant, so the completeness
+    # check below no longer enumerates that module -- see its docstring for why
+    # that is a scope correction rather than the convenience exemption this
+    # project has been bitten by before.
+    #
     # Retriable in principle -- "narrow the query" is real advice -- but each
     # attempt costs the full statement timeout before anything is learned, so
     # AC8 caps it at one.
@@ -114,6 +127,11 @@ RETRY_POLICY: dict[str, str] = {
     # Not fixable by rewriting. A transport-level retry is a different mechanism
     # with different risks, and out of scope.
     CATEGORY_PROVIDER_ERROR: STOP,
+    # AC9. Retrying spends the remaining budget re-learning that the clock
+    # has not moved, and every retry is another request against the quota
+    # that just refused one. Backing off is a different mechanism with
+    # different risks, and out of scope here as much as a transport retry is.
+    CATEGORY_RATE_LIMITED: STOP,
     # AC13. See `_categorise_execution` for why this is load-bearing and how a
     # refusal actually reaches it.
     CATEGORY_NO_SQL: STOP,
@@ -169,11 +187,20 @@ class AgentResult:
     attempts_used: int = 0
     category: str = ""
     error: str = ""
+    #: What this question cost (AC5). `measured` says whether the provider
+    #: reported it or it was counted locally -- different quantities, and
+    #: `EVALS.md` records which.
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
     @property
     def used_actions(self) -> tuple[str, ...]:
-        """Which actions this run actually invoked. T7 reports `sample_rows`
-        usage from this (resolved D-3)."""
+        """Which actions this run actually invoked.
+
+        Iteration 4's T7 reported per-action usage from this (`007` resolved
+        D-3). The answer it gave -- `sample_rows` chosen zero times in every
+        recorded run -- is the measurement that retired that action at
+        Iteration 5 T1.
+        """
         return tuple(step.action for step in self.steps)
 
 
@@ -187,6 +214,10 @@ class _State:
     seen_sql: set[str] = field(default_factory=set)
     spent_once: set[str] = field(default_factory=set)
     last_sql: str = ""
+    #: Accumulated across every provider call this question made (AC5).
+    #: Per-question, because `calls x prompt size` is the cost model and a
+    #: question that took three attempts cost three times one that took one.
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 def _categorise_execution(result: ExecutionResult, explicit: bool) -> str:
@@ -289,29 +320,6 @@ def _run_get_schema(state: _State) -> Step:
         )
 
 
-def _run_sample_rows(state: _State, relation: str) -> Step:
-    """Dispatch `sample_rows`, framing the result as data (AC16)."""
-    result = sample_rows(relation)
-
-    if not result.ok:
-        return Step(
-            attempt=state.calls,
-            action="sample_rows",
-            ok=False,
-            category=result.category,
-            error=result.error,
-            observation=_observation(result.category, result),
-        )
-
-    body = render_rows(result.columns, result.rows)
-    return Step(
-        attempt=state.calls,
-        action="sample_rows",
-        ok=True,
-        observation=frame_sample_rows(relation, body),
-    )
-
-
 def _unknown_action(state: _State, name: str) -> Step:
     """An action that is not in the registry.
 
@@ -339,6 +347,11 @@ def _failure(state: _State, category: str, error: str) -> AgentResult:
         attempts_used=state.calls,
         category=category,
         error=error,
+        # A failed question still cost tokens, and a budget that only
+        # counted successes would understate exactly the runs that spend
+        # the most -- a question burning all three calls is the expensive
+        # case, not the cheap one.
+        usage=state.usage,
     )
 
 
@@ -347,6 +360,8 @@ def answer(
     provider: LLMProvider | None = None,
     schema_mode: str = SCHEMA_FULL,
     max_calls: int = MAX_PROVIDER_CALLS,
+    rendering: str = ADOPTED_RENDERING,
+    glossary: bool = True,
 ) -> AgentResult:
     """Answer one question, retrying against observed failures.
 
@@ -355,6 +370,16 @@ def answer(
         provider: injected for testing; defaults to the configured one.
         schema_mode: `SCHEMA_FULL` renders the schema into the system prompt;
             `SCHEMA_WITHHELD` makes the agent look it up (resolved Q-A).
+        rendering: which schema form to render (spec AC6). Defaults to
+            `ADOPTED_RENDERING`, which D-2 set to `compact` at T7 on a
+            dev-split A/B. This is the deployed prompt, so the default is
+            the decision -- passing `SCHEMA_DDL` explicitly still gets the
+            Iteration 4 shape.
+        glossary: inject the business-term block (spec AC10, resolved Q-D). On
+            by default, because that is the configuration a real deployment
+            ships. `glossary=False` reproduces Iteration 4's prompt exactly,
+            which is what makes it the control for AC13's with/without
+            comparison rather than merely a cheaper run.
         max_calls: budget override. Defaults to the measured `MAX_PROVIDER_CALLS`
             and exists for one purpose: **`max_calls=1` is the control for the
             withheld-schema benchmark.** One call, same prompt, same protocol,
@@ -399,13 +424,15 @@ def answer(
             from api.llm.factory import get_provider
 
             provider = get_provider()
+        except RateLimitError as exc:
+            return _failure(state, CATEGORY_RATE_LIMITED, str(exc))
         except LLMError as exc:
             return _failure(state, CATEGORY_PROVIDER_ERROR, str(exc))
 
     # Fixed for the whole run. Everything learned afterwards arrives through the
     # transcript (resolved Q-C), so there is one prompt shape rather than one
     # that mutates as the run proceeds.
-    system = build_loop_system(schema, schema_mode)
+    system = build_loop_system(schema, schema_mode, rendering, glossary)
 
     while state.calls < max_calls:
         user = render_transcript(
@@ -414,11 +441,18 @@ def answer(
 
         try:
             response = provider.complete(system, user)
+        # Caught before LLMError, which it subclasses. A quota refusal ends the
+        # run in its own category (AC9): retrying it would spend the remaining
+        # budget re-learning that the clock has not moved.
+        except RateLimitError as exc:
+            state.calls += 1
+            return _failure(state, CATEGORY_RATE_LIMITED, str(exc))
         except LLMError as exc:
             state.calls += 1
             return _failure(state, CATEGORY_PROVIDER_ERROR, str(exc))
 
         state.calls += 1
+        state.usage += usage_for_call(provider, system, user, response)
         action = parse_action(response)
 
         if action.name == "execute_sql":
@@ -454,12 +488,19 @@ def answer(
                     result=execution,
                     steps=tuple(state.steps),
                     attempts_used=state.calls,
+                    usage=state.usage,
                 )
         elif action.name == "get_schema":
             step = _run_get_schema(state)
-        elif action.name == "sample_rows":
-            step = _run_sample_rows(state, action.argument.strip())
         else:
+            # `sample_rows` lands here since Iteration 5 T1, and deleting this
+            # branch -- not the registry entry -- is what actually retired it.
+            #
+            # Measured, not assumed: with only the `TOOLS` entry removed, a
+            # scripted `ACTION: sample_rows track` still returned rows from the
+            # database, because this branch imported the implementation
+            # directly and never consulted the registry (spec AC4b). The
+            # registry declares the surface; this chain *is* the surface.
             step = _unknown_action(state, action.name)
 
         state.steps.append(step)

@@ -14,3 +14,14 @@ psycopg[binary]>=3.2,<3.3
 # parser to the runtime image for a benchmark that never runs there would be
 # dead weight in production.
 pyyaml>=6.0,<7.0
+
+# Token measurement (specs/008-prompt-tuning.md D-1). Dev-only, and for the
+# same reason as pyyaml: this is measurement apparatus, not runtime code, and
+# shipping a tokenizer in the API image would be dead weight in production.
+#
+# o200k_base is the encoding of the deployed openai/gpt-oss-* family. It is a
+# tokenizer, not a provider SDK, so it does not engage the section 5
+# swappability constraint -- that guards `groq` imports under api/.
+#
+# It exists because T1 found the spec's headline token numbers were len//4.
+tiktoken>=0.7,<1.0

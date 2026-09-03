@@ -13,7 +13,12 @@ import os
 
 import groq
 
-from api.llm.base import LLM_TIMEOUT_SECONDS, LLMError
+from api.llm.base import (
+    LLM_TIMEOUT_SECONDS,
+    LLMError,
+    RateLimitError,
+    TokenUsage,
+)
 
 #: Default model (resolved D-1).
 #:
@@ -52,6 +57,7 @@ class GroqProvider:
         self._api_key = api_key
         self._model = model
         self._client = groq.Groq(api_key=api_key, timeout=timeout)
+        self._last_usage: TokenUsage | None = None
 
     @property
     def model(self) -> str:
@@ -79,8 +85,33 @@ class GroqProvider:
             text = text.replace(self._api_key, "<redacted>")
         return text
 
+    @property
+    def last_usage(self) -> TokenUsage | None:
+        """What the most recent call cost, as Groq counted it (D-1).
+
+        **Best-effort, and off the protocol on purpose.** `complete()` stays one
+        method returning one string; a caller that wants this reads it with
+        `getattr`, exactly as `describe_model()` reads `model`. A provider that
+        does not report usage simply never grows this attribute.
+
+        `None` until a call has been made, and `None` again if a call came back
+        without a usage block -- which is not hypothetical, since a streamed or
+        errored response may carry none. Callers must treat absence as "count it
+        yourself", never as zero: a missing figure silently read as 0 would make
+        a run look free.
+
+        Reset at the start of every call, so a failed call cannot leave the
+        previous call's numbers standing and be counted twice.
+        """
+        return self._last_usage
+
     def complete(self, system: str, user: str) -> str:
         """One call. No retries -- see AC16; retry policy is Iteration 4's."""
+        # Cleared first. If the call raises, `last_usage` must not still hold the
+        # previous call's cost -- a caller accumulating per call would otherwise
+        # bill a successful call twice and a failed one at someone else's rate.
+        self._last_usage = None
+
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
@@ -90,6 +121,17 @@ class GroqProvider:
                 ],
                 temperature=TEMPERATURE,
             )
+        except groq.RateLimitError as exc:
+            # AC9. Split out *before* the general handler, because a quota
+            # refusal is evidence about the clock rather than about the prompt,
+            # and Iteration 4 reported the two identically -- which is what made
+            # its 82.5% a floor rather than a measurement.
+            #
+            # Typed, never text-matched: `003` established that message wording
+            # is not a contract.
+            raise RateLimitError(
+                f"Groq rate limit reached. {self._safe_message(exc)}"
+            ) from exc
         except Exception as exc:  # noqa: BLE001 - see below
             # Broad by necessity, narrow in effect. The SDK raises a family of
             # its own errors plus whatever httpx raises underneath, and this
@@ -98,9 +140,37 @@ class GroqProvider:
             # scrubbed message; nothing is swallowed.
             raise LLMError(f"Groq request failed. {self._safe_message(exc)}") from exc
 
+        self._last_usage = self._read_usage(response)
+
         # `.reasoning` is deliberately not read. gpt-oss returns its chain of
         # thought in that separate field -- measured at 591 characters against
         # 137 of content on one call -- and it is a model-shaped concept. The
         # interface returns content only.
         content = response.choices[0].message.content
         return content or ""
+
+    @staticmethod
+    def _read_usage(response) -> TokenUsage | None:
+        """Lift the vendor's usage block into the project's own shape.
+
+        Defensive about every field. The SDK's response model is not a contract
+        this project controls, and the failure mode of trusting it -- an
+        AttributeError raised *after* a successful, already-paid-for call --
+        would turn a working answer into a provider error and spend the budget
+        for nothing.
+        """
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+
+        prompt = getattr(usage, "prompt_tokens", None)
+        completion = getattr(usage, "completion_tokens", None)
+        if not isinstance(prompt, int) or not isinstance(completion, int):
+            return None
+
+        return TokenUsage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            calls=1,
+            measured=True,
+        )

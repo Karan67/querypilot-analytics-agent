@@ -18,15 +18,29 @@ not the place to keep a code-execution primitive alive out of convenience.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 from dataclasses import dataclass, field
 
 import yaml
 from sqlglot import exp
 
-#: The three tiers (AC1). Fixed, because per-tier accuracy (AC17) is only
-#: comparable across runs if the tiers themselves are.
-TIERS = ("easy", "medium", "hard")
+#: The tiers (AC1). Fixed, because per-tier accuracy (AC17) is only comparable
+#: across runs if the tiers themselves are.
+#:
+#: `expert` arrived at Iteration 5 T6 (`008-prompt-tuning.md` AC14). It is not
+#: "harder SQL" -- the `hard` tier already scores 100% and more window functions
+#: would measure nothing new (AC15). It is **harder interpretation**: every
+#: expert question has a naive reading that a competent analyst would produce
+#: without the glossary, and a different one they would produce with it.
+TIERS = ("easy", "medium", "hard", "expert")
+
+#: The tier on which `naive_sql` is required, and the only one that permits it.
+#:
+#: Strict in both directions for the same reason `expect` is easy-only: a field
+#: that may appear anywhere gets used somewhere it means nothing, and a field
+#: that may be omitted where it matters silently stops protecting anything.
+TIER_EXPERT = "expert"
 
 #: AC1 — 30 to 50 questions. Enforced at load so a dataset that lost half its
 #: questions to a bad merge fails immediately rather than producing a
@@ -37,12 +51,40 @@ MAX_QUESTIONS = 50
 #: Dialect for the fingerprint queries. Matches `api/safety/validator.py`.
 DIALECT = "postgres"
 
-_REQUIRED_KEYS = frozenset({"id", "tier", "question", "gold_sql", "ordered", "covers"})
+_REQUIRED_KEYS = frozenset(
+    {"id", "tier", "question", "gold_sql", "ordered", "covers", "split"}
+)
 
-#: `expect` is the only optional key, and only on the `easy` tier (resolved
-#: D-2). Allowing it everywhere would recreate literal row snapshots — the
-#: option Q-A rejected — one question at a time.
-_OPTIONAL_KEYS = frozenset({"expect"})
+#: Which half of the corpus a question belongs to (`008-prompt-tuning.md` Q-A).
+#:
+#: `dev` is the only split tuning may look at. `test` is held out and read once,
+#: at the end. Required rather than defaulted, for the same reason `ordered` is:
+#: a default would silently assign whichever questions forgot to say, and the
+#: whole value of a held-out split is that its membership was decided before any
+#: number was seen.
+SPLIT_DEV = "dev"
+SPLIT_TEST = "test"
+SPLITS = (SPLIT_DEV, SPLIT_TEST)
+
+#: Optional question keys.
+#:
+#: `expect` is permitted only on the `easy` tier (resolved D-2). Allowing it
+#: everywhere would recreate literal row snapshots — the option Q-A rejected —
+#: one question at a time.
+#:
+#: `glossary` names the business terms a question depends on
+#: (`008-prompt-tuning.md` AC10), added at Iteration 5 T3. It is **not** what
+#: puts the glossary in the prompt: resolved Q-D injects every term on every
+#: call, because a block that appeared only for the questions needing it would
+#: tell the model which questions are the ambiguous ones. It exists so a test
+#: can assert the declared terms are actually defined, and so a reader of the
+#: dataset can see which convention a question turns on.
+#: `naive_sql` is the reading a competent analyst produces *without* the
+#: glossary. **It is never scored** — it exists so a test can prove the question
+#: discriminates (AC12), the direct analogue of `006`'s duplicate-row check. A
+#: question whose two readings return the same rows is a free point: it inflates
+#: the number while measuring nothing.
+_OPTIONAL_KEYS = frozenset({"expect", "glossary", "naive_sql"})
 
 #: Recognised sub-keys of `expect`. `rows` is an exact row count; `value` is the
 #: first cell of the first row. Both are things a human can verify by looking at
@@ -83,6 +125,15 @@ class Question:
 
     `covers` names the relations the reference query touches, and is what AC5's
     coverage test is computed from.
+
+    `glossary` names the business terms the question turns on, and is empty for
+    a question that turns on none. Declaring a term does not change the prompt —
+    every term is injected on every call (resolved Q-D) — it declares a
+    dependency, so `tests/test_glossary.py` can prove the term is defined.
+
+    `split` is `dev` or `test`. Frozen at Iteration 5 T4, before any tuning ran
+    against it, and pinned by `tests/test_splits.py`. Moving a question between
+    splits fails that test the way reusing a retired id fails the loader.
     """
 
     id: str
@@ -91,6 +142,11 @@ class Question:
     gold_sql: str
     ordered: bool
     covers: tuple[str, ...]
+    split: str
+    glossary: tuple[str, ...] = ()
+    #: The reading a competent analyst produces *without* the glossary.
+    #: **Never scored** (AC12); present on the `expert` tier only.
+    naive_sql: str = ""
     expect_rows: int | None = None
     expect_value: object = None
     has_expect_value: bool = False
@@ -186,6 +242,63 @@ def _parse_question(raw, index: int) -> Question:
         f"{where} has an empty or non-string `covers` list",
     )
 
+    split = raw["split"]
+    _require(
+        split in SPLITS,
+        f"{where} has unknown split {split!r}; expected one of {list(SPLITS)}",
+    )
+
+    # AC12. Required on `expert` and refused everywhere else: a naive reading is
+    # only meaningful where the question turns on interpretation, and a question
+    # on this tier without one has nothing proving it is not a free point.
+    naive_sql = ""
+    if tier == TIER_EXPERT:
+        _require(
+            "naive_sql" in raw,
+            f"{where} is on the {TIER_EXPERT!r} tier and has no `naive_sql`; "
+            f"without one nothing proves the question discriminates (AC12)",
+        )
+        naive_sql = raw["naive_sql"]
+        _require(
+            isinstance(naive_sql, str) and naive_sql.strip() != "",
+            f"{where} has an empty `naive_sql`",
+        )
+        _require(
+            naive_sql.strip() != gold_sql.strip(),
+            f"{where} has `naive_sql` identical to `gold_sql`, so the question "
+            f"is a free point under either reading (AC12)",
+        )
+        _require(
+            bool(raw.get("glossary")),
+            f"{where} is on the {TIER_EXPERT!r} tier and declares no glossary "
+            f"term; an expert question is hard because of a stated convention",
+        )
+    else:
+        _require(
+            "naive_sql" not in raw,
+            f"{where} has `naive_sql` on the {tier!r} tier; it is permitted on "
+            f"{TIER_EXPERT!r} only, where a naive reading is what is being tested",
+        )
+
+    # Validated as strictly as `covers`, and for the same reason: a declared
+    # term that is a typo would silently declare nothing, and the forward test
+    # in `tests/test_glossary.py` would then pass by having nothing to check.
+    glossary_terms: tuple[str, ...] = ()
+    if "glossary" in raw:
+        declared = raw["glossary"]
+        _require(
+            isinstance(declared, list)
+            and declared
+            and all(isinstance(t, str) and t.strip() for t in declared),
+            f"{where} has an empty or non-string `glossary` list; omit the key "
+            f"entirely if the question turns on no business term",
+        )
+        _require(
+            len(set(declared)) == len(declared),
+            f"{where} declares a glossary term twice",
+        )
+        glossary_terms = tuple(declared)
+
     expect_rows: int | None = None
     expect_value: object = None
     has_expect_value = False
@@ -224,10 +337,54 @@ def _parse_question(raw, index: int) -> Question:
         gold_sql=gold_sql,
         ordered=ordered,
         covers=tuple(covers),
+        split=split,
+        glossary=glossary_terms,
+        naive_sql=naive_sql,
         expect_rows=expect_rows,
         expect_value=expect_value,
         has_expect_value=has_expect_value,
     )
+
+
+def split_fingerprint(dataset: Dataset) -> str:
+    """A hash of the frozen split membership (`008-prompt-tuning.md` §3, guard 2).
+
+    **Derived, not declared**, exactly like the prompt fingerprint and for the
+    same reason: a version constant somebody bumps fails in the situation that
+    matters, where the split changes and the constant does not.
+
+    Recorded in `EVALS.md` beside every number, so a figure taken under a
+    different split is *visibly* a different figure rather than one that merely
+    looks comparable. It will change once more when T6 adds the expert tier —
+    expected, and before any tuning, which is the whole point of the ordering.
+
+    Hashes the sorted `(id, split)` pairs and nothing else. Question wording is
+    deliberately excluded: this identifies the partition, and `006`'s dataset
+    fingerprint already identifies the data.
+    """
+    material = "\n".join(
+        f"{question.id}:{question.split}"
+        for question in sorted(dataset.questions, key=lambda q: q.id)
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+
+
+def questions_in_split(dataset: Dataset, split: str | None) -> tuple[Question, ...]:
+    """The questions belonging to one split, in dataset order (`006` AC22).
+
+    `None` means every question — the `all` option of `--split`, which exists so
+    a full-corpus number stays reproducible rather than requiring two runs to be
+    added together.
+
+    Raises:
+        DatasetError: on an unknown split name. A typo must not silently select
+            the whole corpus and be recorded as a dev number.
+    """
+    if split is None:
+        return dataset.questions
+    if split not in SPLITS:
+        raise DatasetError(f"unknown split {split!r}; expected one of {list(SPLITS)}")
+    return tuple(q for q in dataset.questions if q.split == split)
 
 
 def parse_dataset(raw_text: str, source: str = "<string>") -> Dataset:

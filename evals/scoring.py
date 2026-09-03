@@ -19,8 +19,10 @@ the contract's import path still resolves.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
+
+from api.llm.base import TokenUsage
 
 #: Six decimal places (resolved Q-C).
 #:
@@ -176,6 +178,11 @@ class CaseResult:
     executed: bool = False
     category: str = ""
     error: str = ""
+    #: What this question cost (AC5). Per-question because the cost model
+    #: is `calls x prompt size`, so a question that needed three attempts
+    #: cost three times one that needed one -- and the expensive questions
+    #: are exactly the ones a per-run average hides.
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 @dataclass(frozen=True)
@@ -190,6 +197,26 @@ class EvalReport:
     cases: tuple[CaseResult, ...] = ()
     model: str = ""
     prompt_fingerprint: str = ""
+    #: Identifies the schema rendering a run used (spec AC7). Recorded
+    #: alongside `prompt_fingerprint` rather than folded into it, so
+    #: Iteration 4's DDL entries stay comparable to later DDL runs.
+    schema_fingerprint: str = ""
+    rendering: str = ""
+    #: Whether the business-term block was injected (spec AC10, AC13).
+    #: Recorded because it changes the prompt by 178 measured tokens, so a
+    #: glossary-on number is not comparable to a glossary-off one.
+    glossary: bool = False
+    #: Which split produced this number (`008` Q-A). `None` is the whole
+    #: corpus. A dev number and a test number are different quantities and
+    #: mixing them silently is exactly what the split exists to prevent.
+    split: str | None = None
+    #: Hash of the frozen `(id, split)` membership. A number taken under a
+    #: different partition is visibly a different number.
+    split_fingerprint: str = ""
+    #: Summed over every question in the pass. `measured` is False if any
+    #: single question fell back to a local count -- a total containing one
+    #: estimate is an estimate.
+    usage: TokenUsage = field(default_factory=TokenUsage)
     temperature: float = 0.0
     total: int = 0
     correct: int = 0
@@ -210,11 +237,31 @@ def _rate(numerator: int, denominator: int) -> float:
     return (numerator / denominator) if denominator else 0.0
 
 
+def _total_usage(cases) -> TokenUsage:
+    """Sum per-question usage.
+
+    `TokenUsage.__add__` degrades `measured` to False if either side is, so
+    a run where one question fell back to a local count is reported as an
+    estimate rather than as a billed figure. That is the conservative
+    direction: over-claiming precision is the failure mode that makes a
+    record unreadable.
+    """
+    total = TokenUsage(measured=True)
+    for case in cases:
+        total = total + case.usage
+    return total
+
+
 def aggregate(
     cases,
     *,
     model: str = "",
     prompt_fingerprint: str = "",
+    schema_fingerprint: str = "",
+    rendering: str = "",
+    glossary: bool = False,
+    split: str | None = None,
+    split_fingerprint: str = "",
     temperature: float = 0.0,
 ) -> EvalReport:
     """Turn per-case results into the metrics of AC13-AC17.
@@ -257,6 +304,12 @@ def aggregate(
         cases=cases,
         model=model,
         prompt_fingerprint=prompt_fingerprint,
+        schema_fingerprint=schema_fingerprint,
+        rendering=rendering,
+        glossary=glossary,
+        split=split,
+        split_fingerprint=split_fingerprint,
+        usage=_total_usage(cases),
         temperature=temperature,
         total=total,
         correct=correct,

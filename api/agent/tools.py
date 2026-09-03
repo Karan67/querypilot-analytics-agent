@@ -27,7 +27,6 @@ from api.db.execution import ExecutionResult
 from api.db.execution import execute_sql as _execute_sql
 from api.db.introspection import Schema
 from api.db.introspection import get_schema as _introspect_schema
-from api.db.sampling import sample_rows as _sample_rows
 from api.safety.validator import validate_sql as _validate_sql
 
 
@@ -82,34 +81,28 @@ def execute_sql(sql: str) -> ExecutionResult:
     return _execute_sql(sql)
 
 
-def sample_rows(table_name: str) -> ExecutionResult:
-    """Return a few example rows from one known relation.
-
-    Delegates to `api.db.sampling.sample_rows`. See
-    `specs/004-sample-rows.md`.
-
-    `table_name` must match a relation reported by `get_schema()` exactly. That
-    allowlist is not a convenience: PostgreSQL lets any role read most of its
-    catalogs, and a catalog query is a perfectly valid SELECT, so nothing else
-    would stop the agent sampling `pg_stat_activity`.
-
-    **The rows it returns are untrusted input.** This is the only tool that puts
-    database content into the model's context, so prompt design must treat these
-    values as data rather than instructions.
-
-    Returns:
-        An `ExecutionResult`, or an `unknown_relation` failure. Never raises.
-    """
-    return _sample_rows(table_name)
-
-
 #: The agent's complete tool surface, name to callable.
 #:
 #: Names are the ones the model will use, so they are part of the contract:
 #: renaming a key is a prompt change, not a refactor.
+#:
+#: **`sample_rows` was removed at Iteration 5 T1** (`008-prompt-tuning.md` AC1).
+#: Not because it was unsafe: it was chosen zero times across 24 probe calls and
+#: every recorded Iteration 4 run, and an option the model never takes is dead
+#: weight in its decision space. Measured, the prompt description cost 19 tokens.
+#:
+#: **Removing this entry is necessary but was not sufficient.** T1 measured that
+#: the orchestrator dispatched the action through a direct import rather than
+#: through this registry, so deleting the entry alone left the capability fully
+#: live (spec AC4b). The dispatch branch had to go too. The lesson generalises:
+#: this dictionary is the *declared* surface, and a declared surface only
+#: constrains what the loop can do while the loop actually consults it.
+#:
+#: `api/db/sampling.py` and its tests are deliberately **kept** (resolved Q-B).
+#: Deleting them buys zero tokens and would discard the only mechanism by which
+#: the agent could ever inspect a value's format.
 TOOLS: dict[str, Callable[..., object]] = {
     "get_schema": get_schema,
     "validate_sql": validate_sql,
     "execute_sql": execute_sql,
-    "sample_rows": sample_rows,
 }

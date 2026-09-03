@@ -102,9 +102,13 @@ def parse_action(response: object) -> Action:
         return Action(DEFAULT_ACTION, extract_sql(text), explicit=False)
 
     # Everything after the marker on the first line. A name may be followed by
-    # its argument on the same line -- `ACTION: sample_rows track` -- so the
+    # its argument on the same line -- `ACTION: execute_sql SELECT 1` -- so the
     # first whitespace-delimited token is the name and any tail joins the
     # argument.
+    #
+    # The parser does not check the name against any registry: dispatch decides
+    # what exists, and an unknown name has to reach the loop intact so it can be
+    # answered with `unknown_action` rather than mis-parsed into silence.
     after_marker = stripped[len(ACTION_PREFIX) :].strip()
     name, _, inline_argument = after_marker.partition(" ")
 
