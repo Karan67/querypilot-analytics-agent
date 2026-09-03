@@ -28,7 +28,7 @@ from api.agent.orchestrator import (
     AgentResult,
     answer,
 )
-from api.agent.prompts import SCHEMA_FULL, SCHEMA_WITHHELD
+from api.agent.prompts import SCHEMA_DDL, SCHEMA_FULL, SCHEMA_WITHHELD
 from api.llm.base import LLMError
 
 pytestmark = pytest.mark.usefixtures("configured_database")
@@ -79,12 +79,20 @@ def test_ac11_every_category_in_the_project_has_an_explicit_policy():
 
     By introspection, not a source grep: this project has twice written a
     structural test that matched its own docstring.
+
+    **`sampling` left this list at Iteration 5 T1**, when its only category
+    stopped being reachable. That is the move this test's own history warns
+    against, so it is not taken on trust: the companion test below proves the
+    orchestrator cannot reach `api/db/sampling.py` at all. The rule is "every
+    category *the loop can produce*", and a module the loop cannot call cannot
+    produce one. If the import ever returns, that test fails and this list has
+    to grow again before anything else will pass.
     """
     from api.agent import single_shot
-    from api.db import execution, sampling
+    from api.db import execution
 
     declared = set()
-    for module in (execution, sampling, single_shot, orchestrator):
+    for module in (execution, single_shot, orchestrator):
         declared |= {
             value
             for name, value in vars(module).items()
@@ -96,6 +104,35 @@ def test_ac11_every_category_in_the_project_has_an_explicit_policy():
         f"categories with no retry policy: {sorted(unclassified)}. Decide "
         f"whether each is safe to retry and add it to RETRY_POLICY, or declare "
         f"it in TERMINAL_CATEGORIES."
+    )
+
+
+def test_the_sampling_exemption_is_earned_not_assumed():
+    """**What makes dropping `sampling` above a scope fix rather than a hole.**
+
+    The exemption is valid only while the loop genuinely cannot reach that
+    module. Asserted against the parsed AST rather than the source text —
+    `"sampling" in source` would match this docstring, which this project has
+    done twice.
+
+    If `sample_rows` is ever restored, this fails first and says what else to
+    put back, so the category cannot slip through unclassified the way
+    `unknown_action` once did.
+    """
+    tree = ast.parse(
+        pathlib.Path("api/agent/orchestrator.py").read_text(encoding="utf-8")
+    )
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+        elif isinstance(node, ast.Import):
+            imported |= {alias.name for alias in node.names}
+
+    assert "api.db.sampling" not in imported, (
+        "The orchestrator imports api.db.sampling again. Restore `sampling` to "
+        "the module list in the completeness test above and give its categories "
+        "an explicit retry policy before relying on this."
     )
 
 
@@ -341,29 +378,62 @@ def test_blind_mode_omits_the_schema_from_the_system_prompt():
 
 
 def test_full_mode_includes_the_schema_in_the_system_prompt():
+    """The default carries the schema in the adopted rendering (T7), and the
+    DDL rendering is still reachable by asking for it."""
     provider = Scripted(act("execute_sql", "SELECT count(*) FROM track"))
     answer("q", provider=provider, schema_mode=SCHEMA_FULL)
+
+    system, _ = provider.prompts[0]
+    assert "track(" in system
+    assert "CREATE TABLE track" not in system
+
+    provider = Scripted(act("execute_sql", "SELECT count(*) FROM track"))
+    answer("q", provider=provider, schema_mode=SCHEMA_FULL, rendering=SCHEMA_DDL)
 
     system, _ = provider.prompts[0]
     assert "CREATE TABLE track" in system
 
 
-def test_ac16_sampled_rows_reach_the_prompt_framed_as_data():
+def test_ac4b_the_retired_action_reaches_no_database_path():
+    """**The test that would have caught T1's near-miss, and the only one that
+    could have.**
+
+    The plan asserted that dropping the `TOOLS` entry made `sample_rows`
+    undispatchable. Measured, that was false: the orchestrator imported the
+    implementation directly and dispatched from its own `elif` branch, so with
+    the registry entry removed and nothing else changed, this exact script
+    still returned rows from the database — `ok is True`, observation
+    `Observation from sample_rows("track") …`.
+
+    Every registry test and every prompt test stayed green while that was
+    true. A declared surface only constrains the loop while the loop consults
+    it, and no amount of asserting things about `TOOLS` detects a branch that
+    never reads `TOOLS`. Hence an end-to-end assertion: drive the loop and
+    observe that no rows come back.
+    """
     provider = Scripted(
         act("sample_rows", "track"),
         act("execute_sql", "SELECT count(*) FROM track"),
     )
     result = answer("q", provider=provider)
 
-    assert result.used_actions[0] == "sample_rows"
+    assert result.steps[0].ok is False
+    assert result.steps[0].category == CATEGORY_UNKNOWN_ACTION
+    assert "DATA VALUES" not in result.steps[0].observation
+    assert "Observation from sample_rows" not in result.steps[0].observation
+
     _, second_user = provider.prompts[1]
-    assert "DATA VALUES" in second_user
-    assert "not instructions" in second_user
+    assert "not an available action" in second_user
+    assert "DATA VALUES" not in second_user, "no database rows reached the prompt"
 
 
-def test_a_bad_relation_name_is_retriable():
-    """The message lists the relations that do exist, which is close to ideal
-    retry material."""
+def test_ac2_the_retired_action_costs_a_call_but_not_the_run():
+    """AC2 — an ordinary `unknown_action` observation, not an error.
+
+    A capability the model still remembers must cost one turn and a correction,
+    never the run. The relation name is deliberately one that does not exist:
+    the argument is now irrelevant, because nothing looks at it.
+    """
     provider = Scripted(
         act("sample_rows", "no_such_table"),
         act("execute_sql", "SELECT count(*) FROM track"),
@@ -371,7 +441,8 @@ def test_a_bad_relation_name_is_retriable():
     result = answer("q", provider=provider)
 
     assert result.ok is True
-    assert result.steps[0].category == "unknown_relation"
+    assert result.attempts_used == 2
+    assert result.steps[0].category == CATEGORY_UNKNOWN_ACTION
 
 
 def test_ac14_an_unknown_action_does_not_end_the_run():

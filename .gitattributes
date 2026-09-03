@@ -1,5 +1,23 @@
-# Linux containers execute these. A CRLF line ending breaks the shebang and
-# produces a confusing "no such file or directory" at container init.
+# Every text file is LF in the repository and LF in the working tree.
+#
+# Added 2026-09-03 while closing Iteration 5. `core.autocrlf` is `true` on this
+# machine, so git converted on checkout and `git diff` warned on all 21 touched
+# files. Iteration 5 met the same problem from the other direction: scripted
+# edits reintroduced CRLF into four source files, and every later edit had to
+# normalise by hand before it could be trusted.
+#
+# `text=auto` still detects binary content and leaves it alone; `eol=lf` pins
+# the working-tree ending regardless of each developer's `core.autocrlf`, which
+# is what makes this a property of the repository rather than of a machine.
+#
+# Safe to introduce here: the index already stored LF for all 71 text files, so
+# this normalises nothing and produces no renormalisation diff.
+* text=auto eol=lf
+
+# Redundant under the rule above, and kept anyway for the reason attached to
+# them: Linux containers execute these, and a CRLF line ending breaks the
+# shebang and produces a confusing "no such file or directory" at container
+# init. The rule can be re-derived; the reason cannot.
 *.sh text eol=lf
 *.sql text eol=lf
 Dockerfile text eol=lf

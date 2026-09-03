@@ -27,38 +27,112 @@ require knowing the business rather than knowing SQL.
 
 > **Iteration 5 — Done when:** accuracy improves against Iteration 4's numbers,
 > and the improvement is attributable.
+>
+> **NOT DONE as of 2026-09-04.** Two obligations remain, both recorded rather
+> than carried in memory:
+>
+> 1. **T8's held-out run must be repeated on a clean quota.** It ran, scored
+> 85.0%, and was refused by the `rate_limited` guard, so `EVALS.md` still has
+> no Iteration 5 entry (plan section 12).
+> 2. **AC13 is unmet** — the glossary-off control arm was dropped from T7 and
+> accuracy is reported with the glossary only (see AC13 below).
+>
+> What *is* settled: `sample_rows` is gone, the corpus is v3 with a frozen
+> 30/20 split, and D-2 selected `compact`, which is now the deployed default.
 
 ---
 
 ## 2. What the measurements say
 
-### 2.1 Removing `sample_rows` saves 22 tokens, not a meaningful share
+### 2.1 Removing `sample_rows` saves 19 tokens, not a meaningful share
 
-The premise for removing it was token cost. Measured, that premise does not
-hold:
+> **Corrected 2026-09-03, at Iteration 5 T1.** The numbers first published here
+> were **not measurements**. They were `len(text) // 4`, and the table below
+> records both so the correction is visible rather than silent: 4120 chars →
+> 1030, 3340 → 835, 271 → 67, 88 → 22. Three of the four matched the heuristic
+> exactly, which is how it was identified.
+>
+> The figures now shown are counted with `tiktoken`, encoding `o200k_base` —
+> the encoding of the deployed `openai/gpt-oss-*` family. `cl100k_base` was
+> checked as a control and agrees to within 6 tokens on the whole prompt, so
+> this is a real tokenizer disagreeing with a heuristic, not two tokenizers
+> disagreeing with each other.
 
-| Component of the loop system prompt | Tokens | Share |
-|---|---|---|
-| Schema DDL | 835 | **81%** |
-| Rules and boilerplate | 128 | 12% |
-| Action list (all three) | 67 | 7% |
-| — of which `sample_rows` | **22** | **2.1%** |
+| Component of the loop system prompt | Tokens | Share | Was claimed |
+|---|---|---|---|
+| Schema DDL | 771 | **82%** | 835 |
+| Rules and boilerplate | 109 | 12% | 128 |
+| Action list (all three) | 62 | 7% | 67 |
+| — of which `sample_rows` | **19** | **2.0%** | 22 |
+| Whole prompt, schema rendered | 944 | 100% | 1030 |
+
+The parts sum to 942 against a whole of 944; BPE merges across the join
+boundaries account for the two.
+
+**Every absolute number was ~9% too high, and every ratio survived.** The
+argument this section makes rests on the shares — schema dominates at ~82%,
+the retired action is ~2% — and those are what the correction leaves standing.
+
+That is luck rather than vindication, and §2.2 proves it: when the same
+heuristic was corrected there, **the ratios did not survive** — −37% became
+−24% and −54% became −38%. An estimate that happens to preserve the ratio it is
+quoted for is still an estimate, and the next one may not be so kind. The
+prompt total here (944) is the pre-T1 prompt, which still offered
+`sample_rows`; §2.2's 925 is the same prompt after T1 removed it.
 
 **The evidence for removing it is real; the token argument is not.** It was
 chosen zero times across 24 probe calls and every recorded Iteration 4 run, and
 an option the model never takes is dead weight in its decision space. That is a
 good enough reason on its own. But removing it will not move the token problem,
-and this spec should not pretend otherwise — the 81% is where the money is.
+and this spec should not pretend otherwise — the 82% is where the money is.
 
-### 2.2 The schema is 81% of the prompt, and compaction is cheap
+### 2.2 The schema is 83% of the prompt, and compaction is cheaper than DDL but dearer than estimated
+
+> **MEASURED at T2, 2026-09-03**, with `tiktoken`/`o200k_base` against the
+> renderings now in `api/agent/prompts.py`. The estimates this section
+> originally carried were the same `chars // 4` heuristic §2.1 corrects, and
+> **the prediction made when they were flagged was wrong**: it said a
+> proportional error would largely cancel in the ratio. It did not. The
+> percentages moved substantially, in the direction that matters.
 
 Three renderings of the same twelve relations:
 
-| Rendering | Tokens | Change |
-|---|---|---|
-| DDL (current) | 835 | baseline |
-| Compact, full types | 532 | **−37%** |
-| Compact, abbreviated types | 389 | **−54%** |
+| Rendering | Est. | **Measured** | Est. change | **Measured change** |
+|---|---|---|---|---|
+| DDL (current) | 835 | **771** | baseline | baseline |
+| Compact, full types | 532 | **583** | −37% | **−24%** |
+| Compact, abbreviated types | 389 | **481** | −54% | **−38%** |
+
+Assembled into the whole loop system prompt, which is what actually gets billed:
+
+| Rendering | Prompt | vs DDL | One 40-question pass | Share of the 200k/day ceiling |
+|---|---|---|---|---|
+| `ddl` | 925 | — | 37,000 | 18.5% |
+| `compact` | 737 | **−20.3%** | 29,480 | 14.7% |
+| `compact-abbrev` | 635 | **−31.4%** | 25,400 | 12.7% |
+
+**Two reasons the measured saving is smaller than the estimate**, both
+deliberate rather than accidental:
+
+1. **The compact form carries more than the sketch did.** The T2 decision kept
+   view marking (+3), nullability (+10) and explicit foreign-key target columns
+   (+24) — 37 tokens — on the grounds that Chinook is the fixture and not the
+   deployment target: a real schema may key on a non-primary unique column, and
+   a rendering that is only unambiguous on a tidy database is not unambiguous.
+2. **The notation needs a legend**, charged once per prompt at 49 tokens. A
+   terse form nobody explained is a guessing game, and the legend is what lets
+   the notation stay terse.
+
+Those 86 tokens are most of the gap between the sketched −37% and the measured
+−24%. The saving is real and worth having; it is simply two-thirds of what the
+spec advertised, and the honest version of that sentence belongs here rather
+than in a footnote after the A/B has run.
+
+`005` Q-A chose DDL deliberately, on the grounds that it is the shape the model
+has seen most and *"the resemblance to training data plausibly does"* matter at
+this size. That was a reasonable bet, and it was never tested against accuracy.
+Iteration 5 has an eval harness and can settle it — **and nothing above settles
+it**, because every number here is a cost and none is a benefit.
 
 ```
 album(album_id int, title str, artist_id int) PK[album_id] FK[artist_id->artist]
@@ -86,10 +160,22 @@ accuracy work the same direction; a smaller budget would not.
 Ten candidate business terms, each compared as *naive reading* against
 *conventional reading*:
 
+> **One row corrected at T3.** *Average order value* was published with its
+> columns the wrong way round — per invoice under "naive", per line under
+> "conventional". An `invoice_line` is not an order, and AOV universally means
+> revenue per order, so the glossary defines the per-invoice figure as the
+> convention and the per-line figure as the naive misreading. **Both measured
+> numbers stand; only which one is which has flipped.** Defining it as first
+> published would have taught a definition most analysts call wrong and built
+> an expert question that punishes the correct instinct.
+>
+> Every other row was re-executed at T3 through `execute_sql()` and matched
+> exactly.
+
 | Term | Naive | Conventional | Discriminates |
 |---|---|---|---|
 | revenue: invoice total vs line items | 2328.60 | 2328.60 | **no** |
-| average order value: per invoice vs per line | 5.6519 | 1.0396 | yes |
+| average order value: per line vs per invoice | 1.0396 | 5.6519 | yes |
 | catalogue tracks vs tracks ever sold | 3503 | 1984 | yes |
 | all employees vs support representatives | 8 | 3 | yes |
 | all customers vs active in final 12 months | 59 | 46 | yes |
@@ -122,14 +208,29 @@ information needed to avoid it.
 
 - **AC1** — `sample_rows` is removed from the agent's offered actions and moves
   to `EXCLUDED_ACTIONS` with its measured justification. The prompt shrinks by
-  22 tokens and the model's choice space by one.
+  **19 tokens** (corrected from 22 at T1, §2.1) and the model's choice space by
+  one.
 - **AC2** — Attempting it becomes an ordinary `unknown_action` observation, not
   an error — the recovery path `007` §2.5 already measured.
-- **AC3** — `api/db/sampling.py`, its tests and its `TOOLS` entry are **kept**
-  unless Q-B says otherwise. Deleting them buys zero tokens, and the capability
-  is the only way the agent could ever inspect a value format.
-- **AC4** — The "every registry tool is offered or explicitly excluded" test
-  still passes, so this is a reclassification rather than a hole.
+- **AC3** — `api/db/sampling.py` and its tests are **kept** (resolved Q-B).
+  Deleting them buys zero tokens, and the capability is the only way the agent
+  could ever inspect a value format. **Its `TOOLS` entry is not kept**: Q-B
+  resolved to remove the surface, and T1 measured that the registry entry is
+  load-bearing for that (see AC4a).
+- **AC4** — Every `TOOLS` entry is offered to the model or explicitly excluded,
+  so this is a reclassification rather than a hole. `EXCLUDED_ACTIONS` may now
+  name a **retired** capability that `TOOLS` no longer contains, so this is a
+  containment rule, not the set equality it was through Iteration 4.
+- **AC4a** — **Every offered action can actually dispatch.** The converse of
+  AC4, and the failure this change newly makes possible: an action described in
+  the prompt whose implementation has been withdrawn would be chosen and then
+  rejected, spending a call on a capability the prompt promised.
+- **AC4b** — **No dispatch path may survive the withdrawal of a tool.**
+  Measured at T1: removing only the `TOOLS` entry left `sample_rows` fully
+  operational, because the orchestrator dispatched it through a direct import
+  rather than through the registry — it read rows from the database with no
+  registry entry present. Removal is complete only when no code path reaches
+  the implementation.
 
 ### Token cost
 
@@ -162,6 +263,15 @@ information needed to avoid it.
   that scores correct under either reading is not measuring the glossary.
 - **AC13** — Accuracy is reported **with and without the glossary**. The
   difference is the only evidence that the glossary does anything.
+
+  > **NOT SATISFIED as of T7.** The glossary-off control arm was dropped from
+  > the T7 matrix on 2026-09-04 so that D-2 could be settled inside one day's
+  > quota, so this iteration currently reports accuracy **with** the glossary
+  > only. The obligation is not discharged, and is recorded here rather than
+  > carried in memory. The one data point that exists is a three-question
+  > pre-flight probe in which `expert-001` was correct with the glossary and
+  > `wrong_result` without it - a signal at n=1, not the measurement this
+  > criterion asks for.
 
 ### The dataset extension
 
@@ -208,7 +318,10 @@ information needed to avoid it.
 
 ```python
 # api/agent/prompts.py
-SCHEMA_RENDERINGS = ("ddl", "compact")
+# Three, not two: resolved at T2, where all three compact fields (view
+# marking, nullability, explicit FK targets) were kept and `compact-abbrev`
+# was built alongside `compact`. This line still said two until T7.
+SCHEMA_RENDERINGS = ("ddl", "compact", "compact-abbrev")
 
 def render_schema(schema, rendering: str = "ddl") -> str: ...
 def build_loop_system(schema, schema_mode, rendering="ddl", glossary=True) -> str: ...
@@ -311,6 +424,42 @@ becoming a free point.
   specified a rate for. *My lean: accuracy wins outright at this stage* — the
   project is not yet cost-constrained in production, only in a free-tier
   benchmark, and Iteration 7 owns cost.
+
+  **Resolved 2026-09-03 as the plan's D-2 — pre-registered before T7 runs, and
+  recorded here rather than in the plan so the criterion sits with the
+  acceptance criteria it governs:**
+
+  > **Adopt the most compact rendering whose dev-split accuracy is within one
+  > question of DDL. Otherwise keep DDL.**
+
+  One question is the smallest difference a 30-question dev split can resolve
+  (plan §3), so a tolerance narrower than that would be deciding on noise, and
+  one wider would trade accuracy the project has not priced. T7 applies the
+  rule **mechanically** and reports the arithmetic — including, explicitly, a
+  case where the rule adopts a rendering that scored lower than DDL.
+
+  Writing the criterion down while the outcome is still unknown is the same
+  ordering discipline `006` used when it wrote all 40 gold queries before the
+  runner existed. The value is lost entirely if the rule is revisited once the
+  numbers are visible.
+
+  **The token half of this trade must be measured, not estimated** (§2.2). A
+  rule that trades accuracy against tokens is meaningless if the token figure
+  is `chars // 4`.
+
+  > **APPLIED 2026-09-04 at T7: `compact` is adopted.** On the 30-question dev
+  > split, two passes each: `compact` 100.0% (30/30, 30/30), `ddl` 98.3%
+  > (29/30, 30/30). The delta is +0.5 questions a pass in `compact`'s favour,
+  > inside the one-question tolerance, so the rule adopts the more compact
+  > rendering. `ddl`'s single miss was `rate_limited` rather than wrong;
+  > excluding it makes both arms 100% and the delta zero, which is the same
+  > decision. **The trade this rule was written to arbitrate never arose** -
+  > no accuracy was given up for the saving.
+  >
+  > `compact-abbrev` was withdrawn from the matrix before it ran (plan
+  > section 8), so *most compact* here means most compact **of the two arms
+  > tested**. That rendering still exists and is still tested; it has simply
+  > never been scored, and this entry is not evidence against it.
 
 ---
 

@@ -23,7 +23,7 @@
 #   - Never edit a question because the model got it wrong. That is the one
 #     change this whole iteration exists to prevent.
 
-version: 2
+version: 3
 dataset: chinook
 
 # Withdrawn question ids. **Never reused** — the loader refuses a collision,
@@ -71,6 +71,7 @@ questions:
 
   - id: easy-001
     tier: easy
+    split: dev
     question: How many tracks are in the library?
     gold_sql: SELECT count(*) FROM track
     ordered: false
@@ -81,6 +82,7 @@ questions:
 
   - id: easy-002
     tier: easy
+    split: dev
     question: How many artists are there?
     gold_sql: SELECT count(*) FROM artist
     ordered: false
@@ -91,6 +93,7 @@ questions:
 
   - id: easy-003
     tier: easy
+    split: dev
     question: How many albums are there?
     gold_sql: SELECT count(*) FROM album
     ordered: false
@@ -101,6 +104,7 @@ questions:
 
   - id: easy-004
     tier: easy
+    split: dev
     question: List every genre name in alphabetical order.
     gold_sql: SELECT name FROM genre ORDER BY name
     ordered: true
@@ -110,6 +114,7 @@ questions:
 
   - id: easy-005
     tier: easy
+    split: test
     question: What media types are available?
     gold_sql: SELECT name FROM media_type
     ordered: false
@@ -119,6 +124,7 @@ questions:
 
   - id: easy-006
     tier: easy
+    split: dev
     question: How many customers are there?
     gold_sql: SELECT count(*) FROM customer
     ordered: false
@@ -129,6 +135,7 @@ questions:
 
   - id: easy-007
     tier: easy
+    split: dev
     question: List the first and last name of every employee.
     gold_sql: SELECT first_name, last_name FROM employee
     ordered: false
@@ -138,6 +145,7 @@ questions:
 
   - id: easy-008
     tier: easy
+    split: dev
     question: What is the total value of all invoices?
     gold_sql: SELECT sum(total) FROM invoice
     ordered: false
@@ -148,6 +156,7 @@ questions:
 
   - id: easy-009
     tier: easy
+    split: test
     question: How many invoice line items are there?
     gold_sql: SELECT count(*) FROM invoice_line
     ordered: false
@@ -163,6 +172,7 @@ questions:
   # "the names of all playlists". Asking for the id as well removes the choice.
   - id: easy-010
     tier: easy
+    split: test
     question: List the id and name of every playlist.
     gold_sql: SELECT playlist_id, name FROM playlist
     ordered: false
@@ -172,6 +182,7 @@ questions:
 
   - id: easy-011
     tier: easy
+    split: test
     question: How many playlist-to-track assignments are there in total?
     gold_sql: SELECT count(*) FROM playlist_track
     ordered: false
@@ -186,6 +197,7 @@ questions:
   # rather than reading the schema will avoid it.
   - id: easy-012
     tier: easy
+    split: dev
     question: What is the largest number of line items on a single invoice?
     gold_sql: SELECT max(line_count) FROM invoice_totals
     ordered: false
@@ -196,6 +208,7 @@ questions:
 
   - id: easy-013
     tier: easy
+    split: test
     question: How many tracks have no composer listed?
     gold_sql: SELECT count(*) FROM track WHERE composer IS NULL
     ordered: false
@@ -206,6 +219,7 @@ questions:
 
   - id: easy-014
     tier: easy
+    split: test
     question: How many different countries do customers come from?
     gold_sql: SELECT count(DISTINCT country) FROM customer
     ordered: false
@@ -223,6 +237,7 @@ questions:
   # and 11, with rank 4 at 10 — no tie inside the answer, none at the boundary.
   - id: medium-001
     tier: medium
+    split: dev
     question: Which 3 artists have the most albums? Show the artist name and the
       album count, highest first.
     gold_sql: >-
@@ -235,6 +250,7 @@ questions:
 
   - id: medium-002
     tier: medium
+    split: dev
     question: How many tracks are on the album 'Let There Be Rock'?
     gold_sql: >-
       SELECT count(*) FROM track t
@@ -245,6 +261,7 @@ questions:
 
   - id: medium-003
     tier: medium
+    split: dev
     question: Show the 10 genres with the most tracks, giving the genre name and
       the track count, highest first.
     gold_sql: >-
@@ -257,6 +274,7 @@ questions:
 
   - id: medium-004
     tier: medium
+    split: dev
     question: How many tracks use each media type? Show the media type name and
       the number of tracks.
     gold_sql: >-
@@ -268,6 +286,7 @@ questions:
 
   - id: medium-005
     tier: medium
+    split: dev
     question: Which customer has spent the most in total? Give their first name,
       last name and total spend.
     gold_sql: >-
@@ -280,6 +299,7 @@ questions:
 
   - id: medium-006
     tier: medium
+    split: dev
     question: How many invoice lines belong to invoices billed to Germany?
     gold_sql: >-
       SELECT count(*) FROM invoice_line il
@@ -290,6 +310,7 @@ questions:
 
   - id: medium-007
     tier: medium
+    split: dev
     question: What is the total revenue from tracks whose listed unit price is
       1.99?
     gold_sql: >-
@@ -310,6 +331,7 @@ questions:
   # tested less.
   - id: medium-017
     tier: medium
+    split: test
     question: How many customers does each employee support? Include employees
       who support no customers, showing them with a count of zero. Show the
       first name, last name and the count.
@@ -329,6 +351,7 @@ questions:
   # which was meant. 'Heavy Metal Classic' occurs exactly once.
   - id: medium-009
     tier: medium
+    split: dev
     question: How many tracks are assigned to the 'Heavy Metal Classic' playlist?
     gold_sql: >-
       SELECT count(*) FROM playlist_track pt
@@ -339,6 +362,7 @@ questions:
 
   - id: medium-010
     tier: medium
+    split: dev
     question: How many tracks longer than five minutes appear in at least one
       playlist?
     gold_sql: >-
@@ -350,6 +374,7 @@ questions:
 
   - id: medium-011
     tier: medium
+    split: dev
     question: What was the total invoice revenue in 2023?
     gold_sql: >-
       SELECT sum(total) FROM invoice
@@ -360,6 +385,7 @@ questions:
 
   - id: medium-012
     tier: medium
+    split: test
     question: Which customer countries generated more than 100 in total sales?
       Show the country and the total, highest first.
     gold_sql: >-
@@ -373,6 +399,7 @@ questions:
 
   - id: medium-013
     tier: medium
+    split: test
     question: Which invoices have a total above 20? Show the invoice id and the
       total.
     gold_sql: SELECT invoice_id, total FROM invoice WHERE total > 20
@@ -381,6 +408,7 @@ questions:
 
   - id: medium-014
     tier: medium
+    split: test
     question: Which employees were hired in 2003? Give their first and last
       names.
     gold_sql: >-
@@ -392,6 +420,7 @@ questions:
 
   - id: medium-015
     tier: medium
+    split: test
     question: What is the average track length in milliseconds for the Jazz
       genre?
     gold_sql: >-
@@ -415,6 +444,7 @@ questions:
   # construction rather than by tolerance.
   - id: medium-018
     tier: medium
+    split: test
     question: For each customer country, what is the average number of line items
       per invoice, rounded to two decimal places? Show the country and the
       average.
@@ -430,6 +460,7 @@ questions:
   # correlated subquery
   - id: hard-001
     tier: hard
+    split: dev
     question: How many tracks are longer than the average track length of their
       own genre?
     gold_sql: >-
@@ -443,6 +474,7 @@ questions:
   # scalar subquery in a HAVING clause
   - id: hard-002
     tier: hard
+    split: dev
     question: Which customers have spent more than the average customer's total
       spend? Give their first and last names.
     gold_sql: >-
@@ -461,6 +493,7 @@ questions:
   # question can reach
   - id: hard-003
     tier: hard
+    split: dev
     question: List each employee's first and last name together with their
       manager's first and last name. Skip employees who have no manager.
     gold_sql: >-
@@ -474,6 +507,7 @@ questions:
   # the answer would be ambiguous and a correct response could score wrong.
   - id: hard-004
     tier: hard
+    split: dev
     question: For each genre, show the genre name and the name of its longest
       track. If two tracks tie for longest, use the one with the lower track id.
     gold_sql: >-
@@ -492,6 +526,7 @@ questions:
   # end to end, since both branches must be inspected by Gate 2
   - id: hard-005
     tier: hard
+    split: dev
     question: List every city that appears either as a customer city or as an
       employee city.
     gold_sql: SELECT city FROM customer UNION SELECT city FROM employee
@@ -501,6 +536,7 @@ questions:
   # HAVING with an aggregate predicate
   - id: hard-006
     tier: hard
+    split: dev
     question: Which genres have an average track length of more than five
       minutes? Show the genre name and the average length in milliseconds.
     gold_sql: >-
@@ -514,6 +550,7 @@ questions:
   # four-table join
   - id: hard-007
     tier: hard
+    split: test
     question: Which 10 artists have the most tracks in the Rock genre? Show the
       artist name and the track count, highest first.
     gold_sql: >-
@@ -531,6 +568,7 @@ questions:
   # is not being asked to guess wording the scorer will compare literally.
   - id: hard-008
     tier: hard
+    split: test
     question: Counting a track as 'short' when it is under three minutes and
       'long' otherwise, how many tracks fall into each bucket? Show the label and
       the count.
@@ -543,6 +581,7 @@ questions:
   # DISTINCT inside an aggregate
   - id: hard-009
     tier: hard
+    split: test
     question: Which 5 genres feature the most distinct artists? Show the genre
       name and the number of distinct artists, highest first.
     gold_sql: >-
@@ -558,6 +597,7 @@ questions:
   # date-range aggregate
   - id: hard-010
     tier: hard
+    split: test
     question: What was the total invoice value for each year, earliest year
       first? Show the year and the total.
     gold_sql: >-
@@ -565,3 +605,152 @@ questions:
       GROUP BY yr ORDER BY yr
     ordered: true
     covers: [invoice]
+
+  # ---- expert: hard because of interpretation, not syntax ------------------
+  #
+  # Added at Iteration 5 T6 (`008-prompt-tuning.md` AC14, AC15). The `hard` tier
+  # already scores 100%, so more window functions would measure nothing new.
+  # What these measure is whether the agent applies a *stated business
+  # convention* rather than the everyday reading of an ordinary English phrase.
+  #
+  # `naive_sql` is the reading a competent analyst produces WITHOUT the
+  # glossary. It is never scored. It exists so a test can execute both and prove
+  # they differ (AC12) -- the direct analogue of `006`'s duplicate-row check.
+  # Every pair below was executed before these questions were written.
+  #
+  # AC16 still binds: given the glossary, exactly one answer is defensible.
+  # These are not ambiguous questions, they are questions with a convention.
+
+  - id: expert-001
+    tier: expert
+    split: dev
+    question: How many active customers are there?
+    gold_sql: >-
+      SELECT count(DISTINCT i.customer_id) FROM invoice i
+      WHERE i.invoice_date >= (SELECT max(invoice_date) FROM invoice)
+      - INTERVAL '12 months'
+    naive_sql: SELECT count(*) FROM customer
+    glossary: [active customer]
+    ordered: false
+    covers: [invoice]
+
+  # The ambiguity that got `medium-008` retired in Iteration 3 as unfair. It was
+  # unfair without a stated convention and is fair with one, and having both in
+  # the record is a better argument for the glossary than any amount of prose.
+  - id: expert-002
+    tier: expert
+    split: dev
+    question: How many support representatives are there?
+    gold_sql: >-
+      SELECT count(DISTINCT support_rep_id) FROM customer
+      WHERE support_rep_id IS NOT NULL
+    naive_sql: SELECT count(*) FROM employee
+    glossary: [support representative]
+    ordered: false
+    covers: [customer]
+
+  - id: expert-003
+    tier: expert
+    split: dev
+    question: How many sold tracks are there?
+    gold_sql: SELECT count(DISTINCT track_id) FROM invoice_line
+    naive_sql: SELECT count(*) FROM track
+    glossary: [sold track]
+    ordered: false
+    covers: [invoice_line]
+
+  - id: expert-004
+    tier: expert
+    split: dev
+    question: How many charting artists are there?
+    gold_sql: >-
+      SELECT count(DISTINCT al.artist_id) FROM invoice_line il
+      JOIN track t ON t.track_id = il.track_id
+      JOIN album al ON al.album_id = t.album_id
+    naive_sql: SELECT count(*) FROM artist
+    glossary: [charting artist]
+    ordered: false
+    covers: [invoice_line, track, album]
+
+  - id: expert-005
+    tier: expert
+    split: test
+    question: How many active genres are there?
+    gold_sql: >-
+      SELECT count(DISTINCT t.genre_id) FROM invoice_line il
+      JOIN track t ON t.track_id = il.track_id
+      WHERE t.genre_id IS NOT NULL
+    naive_sql: SELECT count(*) FROM genre
+    glossary: [active genre]
+    ordered: false
+    covers: [invoice_line, track]
+
+  - id: expert-006
+    tier: expert
+    split: test
+    question: How many curated playlists are there?
+    gold_sql: SELECT count(DISTINCT playlist_id) FROM playlist_track
+    naive_sql: SELECT count(*) FROM playlist
+    glossary: [curated playlist]
+    ordered: false
+    covers: [playlist_track]
+
+  - id: expert-007
+    tier: expert
+    split: dev
+    question: What is the average order value, rounded to four decimal places?
+    gold_sql: SELECT round(avg(total), 4) FROM invoice
+    naive_sql: SELECT round(avg(unit_price * quantity), 4) FROM invoice_line
+    glossary: [average order value]
+    ordered: false
+    covers: [invoice]
+
+  - id: expert-008
+    tier: expert
+    split: dev
+    question: How many credited tracks are there?
+    gold_sql: SELECT count(*) FROM track WHERE composer IS NOT NULL
+    naive_sql: SELECT count(*) FROM track
+    glossary: [credited track]
+    ordered: false
+    covers: [track]
+
+  # The last two combine terms. Their value is that a model applying one
+  # convention but not the other still scores wrong: measured, expert-009 gives
+  # 5.6631 for both, 5.6519 for per-invoice-without-active, and 1.0396 for
+  # neither; expert-010 gives 132, 165 (charting only), 168 (credited only) and
+  # 275 (neither). Four distinct readings, so partial credit is not available.
+  - id: expert-009
+    tier: expert
+    split: test
+    question: >-
+      Across all invoices belonging to active customers, what is the average
+      order value, rounded to four decimal places?
+    gold_sql: >-
+      SELECT round(avg(i2.total), 4) FROM invoice i2
+      WHERE i2.customer_id IN (
+      SELECT DISTINCT i.customer_id FROM invoice i
+      WHERE i.invoice_date >= (SELECT max(invoice_date) FROM invoice)
+      - INTERVAL '12 months')
+    naive_sql: SELECT round(avg(unit_price * quantity), 4) FROM invoice_line
+    glossary: [active customer, average order value]
+    ordered: false
+    covers: [invoice]
+
+  - id: expert-010
+    tier: expert
+    split: test
+    question: How many charting artists have at least one credited track?
+    gold_sql: >-
+      SELECT count(*) FROM artist a
+      WHERE EXISTS (SELECT 1 FROM album al
+      JOIN track t ON t.album_id = al.album_id
+      JOIN invoice_line il ON il.track_id = t.track_id
+      WHERE al.artist_id = a.artist_id)
+      AND EXISTS (SELECT 1 FROM album al2
+      JOIN track t2 ON t2.album_id = al2.album_id
+      WHERE al2.artist_id = a.artist_id AND t2.composer IS NOT NULL)
+    naive_sql: SELECT count(*) FROM artist
+    glossary: [charting artist, credited track]
+    ordered: false
+    covers: [artist, album, track, invoice_line]

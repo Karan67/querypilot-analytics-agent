@@ -33,10 +33,46 @@ import pathlib
 import statistics
 import sys
 
-from api.agent.prompts import SCHEMA_FULL, SCHEMA_MODES, SYSTEM_TEMPLATE
+from api.agent.prompts import (
+    ADOPTED_RENDERING,
+    SCHEMA_DDL,
+    SCHEMA_FULL,
+    SCHEMA_MODES,
+    SCHEMA_RENDERINGS,
+    SYSTEM_TEMPLATE,
+    build_loop_system,
+    render_schema,
+)
+from api.db.introspection import get_schema as _introspect_schema
 from api.agent.single_shot import answer_question
+from api.agent.single_shot import CATEGORY_RATE_LIMITED
 from api.db.execution import CATEGORY_REJECTED, execute_sql
-from evals.dataset import Dataset, DatasetError, Question, load_dataset, verify_fingerprint
+from api.llm.base import TokenUsage
+from api.llm.counting import (
+    TokenCountingUnavailable,
+    count_tokens,
+    project_worst_case,
+)
+from api.db.introspection import (
+    KIND_TABLE,
+    KIND_VIEW,
+    Column,
+    ForeignKey,
+    Schema,
+    Table,
+)
+from evals.dataset import (
+    SPLIT_TEST,
+    SPLITS,
+    TIERS,
+    Dataset,
+    DatasetError,
+    Question,
+    load_dataset,
+    questions_in_split,
+    split_fingerprint,
+    verify_fingerprint,
+)
 from evals.scoring import (
     CATEGORY_BROKEN_GOLD,
     CATEGORY_WRONG_RESULT,
@@ -81,7 +117,7 @@ def prompt_fingerprint(template: str = SYSTEM_TEMPLATE) -> str:
     return hashlib.sha256(template.encode("utf-8")).hexdigest()[:FINGERPRINT_LENGTH]
 
 
-def fingerprint_for(strategy: str) -> str:
+def fingerprint_for(strategy: str, glossary: bool = False) -> str:
     """The prompt fingerprint for one strategy (AC24, resolved D-1).
 
     Single-shot hashes `SYSTEM_TEMPLATE` alone, exactly as Iteration 3 did, so
@@ -95,19 +131,131 @@ def fingerprint_for(strategy: str) -> str:
     fingerprint -- precisely the silent mismatch AC24 exists to prevent. The
     cost is that editing a comment in that function changes the fingerprint,
     which is a far cheaper failure than the one it rules out.
+
+    **The glossary is folded in here, unlike the schema rendering** (T3), and
+    the asymmetry is deliberate rather than an inconsistency:
+
+    - A rendering change leaves the DDL prompt byte-identical, so churning the
+      hash would falsely signal a change that did not happen. It got its own
+      `schema_fingerprint` field at T2 to keep Iteration 4's entries comparable.
+    - The glossary genuinely **adds 178 tokens to the prompt**. A glossary-on
+      run is not the same prompt as Iteration 4's, and recording it under
+      `0d280c367c5e` would file an incomparable number as comparable.
+
+    The default is therefore `False`: it is Iteration 4's configuration, and
+    calling this with no glossary argument reproduces the recorded value
+    exactly. `tests/test_glossary.py` pins both.
     """
     if strategy == STRATEGY_SINGLE_SHOT:
         return prompt_fingerprint(SYSTEM_TEMPLATE)
 
+    from api.agent.glossary import render_glossary
     from api.agent.prompts import LOOP_SYSTEM_TEMPLATE, render_transcript
 
-    return prompt_fingerprint(
-        LOOP_SYSTEM_TEMPLATE + inspect.getsource(render_transcript)
+    material = LOOP_SYSTEM_TEMPLATE + inspect.getsource(render_transcript)
+    if glossary:
+        material += render_glossary()
+    return prompt_fingerprint(material)
+
+
+#: A tiny hand-built schema, hashed to fingerprint a rendering (spec AC7).
+#:
+#: **Not the live database.** Hashing the real schema would fold the *contents*
+#: of Chinook into a number that is supposed to identify the *renderer*, so a
+#: reseed would masquerade as a prompt change. Reseeds are already caught, and
+#: caught better, by the dataset row-count fingerprint (`006` AC12).
+#:
+#: It exercises every feature the compact form can emit, which is what makes the
+#: hash sensitive to a renderer change rather than merely to its name: a view
+#: and a base table, a nullable and a NOT NULL column, a composite primary key,
+#: a foreign key naming its target column, and a type that abbreviates.
+_FINGERPRINT_SCHEMA = Schema(
+    tables=(
+        Table(
+            name="parent",
+            kind=KIND_TABLE,
+            columns=(
+                Column(name="parent_id", type="INTEGER", nullable=False, primary_key=True),
+                Column(name="label", type="VARCHAR(40)", nullable=True, primary_key=False),
+            ),
+            foreign_keys=(),
+        ),
+        Table(
+            name="child",
+            kind=KIND_TABLE,
+            columns=(
+                Column(name="parent_id", type="INTEGER", nullable=False, primary_key=True),
+                Column(name="seq", type="INTEGER", nullable=False, primary_key=True),
+                Column(name="amount", type="NUMERIC(10, 2)", nullable=True, primary_key=False),
+            ),
+            foreign_keys=(
+                ForeignKey(
+                    columns=("parent_id",),
+                    referred_table="parent",
+                    referred_columns=("parent_id",),
+                ),
+            ),
+        ),
+        Table(
+            name="child_summary",
+            kind=KIND_VIEW,
+            columns=(
+                Column(name="parent_id", type="INTEGER", nullable=True, primary_key=False),
+                Column(name="total", type="NUMERIC", nullable=True, primary_key=False),
+            ),
+            foreign_keys=(),
+        ),
     )
+)
 
 
-def build_strategy(strategy: str, schema_mode: str, max_calls: int | None = None):
+def schema_fingerprint(rendering: str) -> str:
+    """A hash identifying one schema rendering (spec AC7).
+
+    **Recorded beside `prompt_fingerprint`, not folded into it** (resolved T2
+    decision). Folding would have changed the loop fingerprint for `ddl` as
+    well, and Iteration 4's three recorded runs all carry `0d280c367c5e` --
+    re-baselining them to satisfy a new field would break the comparison this
+    iteration exists to make.
+
+    **Derived from output, not from the rendering's name.** A name-only hash
+    would distinguish `compact` from `ddl` but would not notice `render_schema`
+    being edited, which is the blind spot this closes: until now, changing
+    `render_schema_ddl` produced an identical fingerprint and a silently
+    incomparable number.
+    """
+    return prompt_fingerprint(f"{rendering}\n{render_schema(_FINGERPRINT_SCHEMA, rendering)}")
+
+
+def resolve_rendering(strategy: str, rendering: str | None) -> str:
+    """The default rendering depends on the strategy, so no constant can be it.
+
+    `single-shot` uses the frozen Iteration 3 template, which renders DDL
+    unconditionally (AC1); `build_strategy` rejects anything else rather than
+    accepting a flag it would ignore. `loop` gets `ADOPTED_RENDERING`, which
+    D-2 set to `compact` at T7.
+
+    Written once and shared by the CLI, `build_strategy` and `run_pass`. Three
+    copies of a two-branch rule is how the documented no-argument invocation
+    ends up raising a ValueError from its own default -- which is exactly what
+    the first version of T7's adoption did.
+    """
+    if rendering is not None:
+        return rendering
+    return SCHEMA_DDL if strategy == STRATEGY_SINGLE_SHOT else ADOPTED_RENDERING
+
+
+def build_strategy(
+    strategy: str,
+    schema_mode: str,
+    max_calls: int | None = None,
+    rendering: str | None = None,
+    glossary: bool = False,
+):
     """Return the callable that answers one question.
+
+    `rendering=None` means "whatever this strategy ships with", resolved by
+    `resolve_rendering`.
 
     Both strategies return objects carrying the same field names, so `run_case`
     scores either through one code path rather than two that could disagree.
@@ -125,6 +273,23 @@ def build_strategy(strategy: str, schema_mode: str, max_calls: int | None = None
                 "renders the schema and has no way to look one up. Use "
                 "--strategy loop --max-calls 1 for a one-call control."
             )
+        if glossary:
+            # `answer_question` uses SYSTEM_TEMPLATE, which has no glossary
+            # block and is frozen by AC1. Accepting the flag and ignoring it
+            # would record a single-shot run as glossary-on when the model
+            # never saw one.
+            raise ValueError(
+                "single-shot cannot run with a glossary: it uses the frozen "
+                "Iteration 3 template. Use --strategy loop, or --no-glossary."
+            )
+        if rendering != SCHEMA_DDL:
+            # `answer_question` renders DDL unconditionally (AC1 keeps it
+            # untouched). Accepting the flag and ignoring it would file the
+            # run under a rendering that never ran.
+            raise ValueError(
+                f"single-shot cannot run with rendering {rendering!r}: it "
+                f"always renders DDL. Use --strategy loop."
+            )
         return lambda question, provider: answer_question(question, provider=provider)
 
     from api.agent.orchestrator import MAX_PROVIDER_CALLS
@@ -132,7 +297,12 @@ def build_strategy(strategy: str, schema_mode: str, max_calls: int | None = None
 
     budget = MAX_PROVIDER_CALLS if max_calls is None else max_calls
     return lambda question, provider: loop_answer(
-        question, provider=provider, schema_mode=schema_mode, max_calls=budget
+        question,
+        provider=provider,
+        schema_mode=schema_mode,
+        max_calls=budget,
+        rendering=rendering,
+        glossary=glossary,
     )
 
 
@@ -195,6 +365,10 @@ def run_case(question: Question, gold, provider, strategy_fn=None) -> CaseResult
             executed=False,
             category=answer.category,
             error=answer.error,
+            # `getattr` because `AnswerResult` (single-shot, frozen by AC1) has
+            # no usage field and must not grow one. A strategy that reports
+            # nothing costs an empty TokenUsage, which sums to an estimate.
+            usage=getattr(answer, "usage", TokenUsage()),
         )
 
     correct = results_match(
@@ -220,6 +394,11 @@ def run_case(question: Question, gold, provider, strategy_fn=None) -> CaseResult
             f"returned {answer.result.row_count} row(s); the reference query "
             f"returns {gold.row_count}"
         ),
+        # Recorded on the success path too, and originally was not — which made
+        # the whole of AC5 useless, because most questions succeed and every one
+        # of them reported zero cost. Caught by a test asserting a completed run
+        # carried a measured spend; the run reported nothing at all.
+        usage=getattr(answer, "usage", TokenUsage()),
     )
 
 
@@ -235,6 +414,52 @@ def execute_gold(dataset: Dataset) -> dict:
     return {question.id: execute_sql(question.gold_sql) for question in dataset.questions}
 
 
+class TokenBudgetExceeded(RuntimeError):
+    """The run would cost more than the configured ceiling (AC8).
+
+    Raised **before the first call** by the projection, and mid-run by the
+    in-flight check. Distinct from `DatasetError` so `main` can report the two
+    differently: a dataset problem means the benchmark is broken, a budget
+    problem means the benchmark is too expensive today.
+    """
+
+
+def project_run_cost(
+    dataset: Dataset,
+    split: str | None,
+    schema_mode: str,
+    rendering: str,
+    glossary: bool,
+    max_calls: int,
+) -> int:
+    """Worst-case token cost of a run, before it spends anything (AC8).
+
+    **Counted locally**, with `tiktoken`, because a projection by definition
+    precedes any provider telemetry. The instrument split is deliberate: this
+    number decides whether to start, and the provider's reported usage decides
+    whether to stop.
+
+    Worst case means every question burning its full call budget, which is what
+    a run of nothing but failures does. The plan is explicit about why: an
+    optimistic projection that lets a run die at question 31 wastes the 30 that
+    worked and produces a number that is not a measurement.
+
+    Excludes completion tokens, which cannot be known before generating them.
+    Stated rather than hidden -- it makes this a floor on the worst case, and the
+    in-flight check against reported usage is what covers the gap.
+    """
+    schema = _introspect_schema() if schema_mode == SCHEMA_FULL else None
+    system = build_loop_system(schema, schema_mode, rendering, glossary)
+
+    questions = questions_in_split(dataset, split)
+    # The longest question, not the mean: a worst case built from an average is
+    # not a worst case.
+    longest = max((q.question for q in questions), key=len, default="")
+
+    per_call = count_tokens(system) + count_tokens(longest)
+    return project_worst_case(per_call, len(questions), max_calls)
+
+
 def run_pass(
     dataset: Dataset,
     provider,
@@ -242,17 +467,58 @@ def run_pass(
     strategy: str = STRATEGY_SINGLE_SHOT,
     schema_mode: str = SCHEMA_FULL,
     max_calls: int | None = None,
+    rendering: str | None = None,
+    glossary: bool = False,
+    split: str | None = None,
+    token_budget: int | None = None,
 ) -> EvalReport:
-    """One full pass over the dataset, in file order (AC22)."""
-    strategy_fn = build_strategy(strategy, schema_mode, max_calls)
-    cases = [
-        run_case(question, gold[question.id], provider, strategy_fn)
-        for question in dataset.questions
-    ]
+    """One full pass over the selected split, in file order (AC22).
+
+    `split=None` scores the whole corpus. The runner's own default is
+    `dev` (see `main`), so reaching the held-out questions takes typing
+    `--split test` rather than forgetting a flag.
+    """
+    rendering = resolve_rendering(strategy, rendering)
+    strategy_fn = build_strategy(strategy, schema_mode, max_calls, rendering, glossary)
+
+    cases = []
+    spent = TokenUsage(measured=True)
+    for question in questions_in_split(dataset, split):
+        case = run_case(question, gold[question.id], provider, strategy_fn)
+        cases.append(case)
+        spent = spent + case.usage
+
+        # The in-flight half of AC8, checked against what the provider actually
+        # billed rather than what we projected.
+        #
+        # This should never fire: the pre-flight projection is worst-case, so a
+        # run that was allowed to start cannot legitimately exceed the ceiling.
+        # It fires only when the two instruments disagree -- when `tiktoken`
+        # under-counts against Groq's tokenizer -- which is precisely the risk
+        # D-1 created by using two. A guard against our own measurement being
+        # wrong, not redundancy.
+        #
+        # Only enforced on *measured* spend. Stopping a run because a local
+        # estimate crossed a line would be the estimate policing the ceiling it
+        # is not denominated in.
+        if token_budget is not None and spent.measured and spent.total_tokens > token_budget:
+            raise TokenBudgetExceeded(
+                f"Stopped after {len(cases)} of "
+                f"{len(questions_in_split(dataset, split))} questions: "
+                f"{spent.total_tokens:,} tokens billed exceeds the "
+                f"{token_budget:,} ceiling. The pre-flight projection allowed "
+                f"this run, so the local tokenizer under-counted against the "
+                f"provider's -- the projection is the thing to fix."
+            )
     return aggregate(
         cases,
         model=describe_model(provider),
-        prompt_fingerprint=fingerprint_for(strategy),
+        prompt_fingerprint=fingerprint_for(strategy, glossary),
+        schema_fingerprint=schema_fingerprint(rendering),
+        rendering=rendering,
+        glossary=glossary,
+        split=split,
+        split_fingerprint=split_fingerprint(dataset),
         temperature=_temperature(),
     )
 
@@ -271,6 +537,10 @@ def run_evaluation(
     strategy: str = STRATEGY_SINGLE_SHOT,
     schema_mode: str = SCHEMA_FULL,
     max_calls: int | None = None,
+    rendering: str | None = None,
+    glossary: bool = False,
+    split: str | None = None,
+    token_budget: int | None = None,
 ) -> list[EvalReport]:
     """Run the benchmark `repeat` times and return one report per pass.
 
@@ -284,7 +554,10 @@ def run_evaluation(
 
     gold = execute_gold(dataset)
     return [
-        run_pass(dataset, provider, gold, strategy, schema_mode, max_calls)
+        run_pass(
+            dataset, provider, gold, strategy, schema_mode, max_calls,
+            rendering, glossary, split, token_budget,
+        )
         for _ in range(repeat)
     ]
 
@@ -302,6 +575,10 @@ def format_report(
     strategy: str = STRATEGY_SINGLE_SHOT,
     schema_mode: str = SCHEMA_FULL,
     max_calls: int | None = None,
+    rendering: str | None = None,
+    glossary: bool = False,
+    split: str | None = None,
+    revealed: bool = False,
 ) -> str:
     """The `EVALS.md` block for one run (AC23).
 
@@ -322,8 +599,12 @@ def format_report(
     else:
         spread = ""
 
+    rendering = resolve_rendering(strategy, rendering)
+    recorded = total_usage(reports)
+
     lines = [
-        f"## {stamp} — {strategy}, schema {schema_mode}",
+        f"## {stamp} — {strategy}, schema {schema_mode}, rendering {rendering}, "
+        f"split {split or 'all'}",
         "",
         "| | |",
         "|---|---|",
@@ -332,6 +613,28 @@ def format_report(
         f"| Model | `{first.model}` |",
         f"| Temperature | {first.temperature} |",
         f"| Prompt fingerprint | `{first.prompt_fingerprint}` |",
+        f"| Schema rendering | `{first.rendering}` |",
+        f"| Schema fingerprint | `{first.schema_fingerprint}` |",
+        f"| Glossary | {'on' if first.glossary else 'off'} |",
+        f"| Split | `{first.split or 'all'}` |",
+        f"| Split fingerprint | `{first.split_fingerprint}` |",
+        # D-3's audit trail. Reading which held-out questions failed is what
+        # makes question-level overfitting possible, so obtaining that
+        # detail is recorded beside the number it was obtained for.
+        f"| Test failures revealed | {'YES' if revealed else 'no'} |",
+        # Every pass, not the first: this row sits three lines above
+        # `Passes`, and a per-pass figure filed under an unqualified "Tokens"
+        # beside it under-reports a repeated run by (passes - 1) / passes.
+        # Found at T7; entries written before then are single-pass, where the
+        # two readings coincide.
+        f"| Tokens (all passes) | {recorded.total_tokens:,} "
+        f"({recorded.prompt_tokens:,} prompt + "
+        f"{recorded.completion_tokens:,} completion) |",
+        # AC5, and D-1's requirement that a figure says which instrument
+        # produced it. A billed number and a local count are different
+        # quantities; a table that mixed them silently would be unreadable.
+        f"| Token source | {'provider (billed)' if recorded.measured else 'local tiktoken (estimated)'} |",
+        f"| Provider calls | {recorded.calls:,} |",
         f"| Dataset | `questions.yaml` v{dataset.version}, {first.total} questions |",
         "| Authorship | agent-derived from schema coverage, human-reviewed |",
         f"| Provider-call budget | {max_calls if max_calls is not None else _default_budget(strategy)} |",
@@ -348,7 +651,7 @@ def format_report(
         "|---|---|",
     ]
 
-    for tier in ("easy", "medium", "hard"):
+    for tier in TIERS:
         if tier in first.per_tier:
             count = len(dataset.by_tier(tier))
             lines.append(f"| {tier} ({count}) | {_percent(first.per_tier[tier])} |")
@@ -380,25 +683,67 @@ def _default_budget(strategy: str) -> int:
     return MAX_PROVIDER_CALLS
 
 
-def append_to_evals(block: str, path: pathlib.Path = EVALS_PATH) -> None:
+def append_to_evals(block: str, path: pathlib.Path | None = None) -> None:
     """Append one run to `EVALS.md` (AC25).
 
     Append, never rewrite. Nothing in this module reads the existing content,
     so there is no code path that can drop an earlier entry.
+
+    **`path` resolves `EVALS_PATH` at call time, not at import time.** It was a
+    default argument, which bound the module constant once when the module was
+    first imported -- so `monkeypatch.setattr(run_evals, "EVALS_PATH", tmp)` had
+    no effect and a test that believed it was writing to a temporary file wrote
+    to the real record instead. That is exactly how a fabricated entry
+    (`model: fake-model`, accuracy 0.0%) reached `EVALS.md` during T5's mutation
+    run, and it had to be reverted by hand.
+
+    The append-only rule (`006` AC25) is only as strong as the isolation around
+    it: a record every test can accidentally write to is not append-only, it is
+    merely usually-untouched.
     """
+    path = EVALS_PATH if path is None else path
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     separator = "\n---\n\n" if existing.strip() else ""
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(separator + block)
 
 
-def print_report(reports: list[EvalReport], dataset: Dataset, verbose: bool) -> None:
+def total_usage(reports: list[EvalReport]) -> TokenUsage:
+    """Billed usage across every pass of a run.
+
+    `TokenUsage.__add__` makes zero-call usage the identity, so an empty run
+    sums to an estimate-free zero rather than silently degrading `measured` --
+    the bug T5 shipped and caught.
+    """
+    spent = TokenUsage()
+    for report in reports:
+        spent = spent + report.usage
+    return spent
+
+
+def print_report(
+    reports: list[EvalReport],
+    dataset: Dataset,
+    verbose: bool,
+    reveal_test_failures: bool = False,
+) -> None:
     first = reports[0]
     accuracies = [r.accuracy for r in reports]
 
     print()
     print(f"  model              {first.model}")
     print(f"  prompt             {first.prompt_fingerprint}")
+    # AC7 in the terminal, added at T7. Two arms of the rendering A/B share a
+    # prompt fingerprint -- the template and the glossary are identical and only
+    # the schema block differs -- so without these three lines the `ddl` and
+    # `compact` runs printed byte-identical headers. A comparison whose output
+    # cannot say which configuration produced it is not a comparison.
+    print(
+        f"  rendering          {first.rendering or 'ddl'}  "
+        f"({first.schema_fingerprint})"
+    )
+    print(f"  glossary           {'on' if first.glossary else 'off'}")
+    print(f"  split              {first.split or 'all'}  ({first.split_fingerprint})")
     print(f"  dataset            v{dataset.version}, {first.total} questions")
     print(f"  passes             {len(reports)}")
     print()
@@ -410,7 +755,7 @@ def print_report(reports: list[EvalReport], dataset: Dataset, verbose: bool) -> 
     print(f"  gate 2 pass rate   {_percent(first.gate2_pass_rate)}")
     print(f"  execution rate     {_percent(first.execution_rate)}")
     print()
-    for tier in ("easy", "medium", "hard"):
+    for tier in TIERS:
         if tier in first.per_tier:
             in_tier = [c for c in first.cases if c.tier == tier]
             passed = sum(1 for c in in_tier if c.correct)
@@ -419,7 +764,42 @@ def print_report(reports: list[EvalReport], dataset: Dataset, verbose: bool) -> 
         print()
         for name, count in first.breakdown.items():
             print(f"  {name:18} {count}")
-    if verbose and first.failures:
+
+    # AC5 in the terminal, added at T7 on the first real run of this iteration.
+    # `format_report` has carried these figures into `EVALS.md` since T5, but
+    # `print_report` never showed them -- so a run without `--record`, which is
+    # every tuning run by design, reported no cost at all. That is exactly the
+    # blindness Iteration 4 had when it discovered the daily ceiling as 31
+    # provider errors with no visibility.
+    #
+    # Summed over passes rather than taken from the first, because the quota is
+    # charged for all of them and a per-pass figure is the wrong denominator
+    # for deciding whether the next arm fits in the day.
+    spent = total_usage(reports)
+    print()
+    print(
+        f"  tokens             {spent.total_tokens:,}"
+        f"   ({spent.prompt_tokens:,} prompt + "
+        f"{spent.completion_tokens:,} completion)"
+    )
+    if len(reports) > 1:
+        print(f"  per pass           {spent.total_tokens // len(reports):,} mean")
+    print(f"  provider calls     {spent.calls:,}")
+    # Which instrument produced the figure, never left to be inferred: a local
+    # count and a billed count are different quantities (D-1).
+    source = "provider (billed)" if spent.measured else "local tiktoken (estimated)"
+    print(f"  token source       {source}")
+    # D-3's guard. Aggregate and per-tier numbers above always print; the
+    # per-question case list is what makes question-level overfitting possible,
+    # so on the held-out split obtaining it takes an explicit flag that is then
+    # recorded in EVALS.md beside the number.
+    #
+    # **Not a hard block, deliberately.** A block would eventually be worked
+    # around by querying the database by hand, and an unlogged bypass is worse
+    # than a logged look. This makes looking auditable, not impossible.
+    withheld = first.split == SPLIT_TEST and not reveal_test_failures
+
+    if verbose and first.failures and not withheld:
         print()
         for case in first.failures:
             print(f"  --- {case.id} [{case.category}] {case.question}")
@@ -427,6 +807,16 @@ def print_report(reports: list[EvalReport], dataset: Dataset, verbose: bool) -> 
                 print(f"      SQL: {case.generated_sql.strip()}")
             if case.error:
                 print(f"      {case.error.strip()}")
+    elif withheld and first.failures:
+        print()
+        print(
+            f"  {len(first.failures)} failing question(s) on the held-out split. "
+            f"Per-question detail is withheld;"
+        )
+        print(
+            "  pass --reveal-test-failures to see it. Doing so is recorded in "
+            "EVALS.md."
+        )
     print()
 
 
@@ -489,6 +879,91 @@ def build_parser() -> argparse.ArgumentParser:
             "same prompt, same protocol, budget as the only variable."
         ),
     )
+    parser.add_argument(
+        "--rendering",
+        choices=SCHEMA_RENDERINGS,
+        default=None,
+        help=(
+            "how the schema is rendered into the prompt (spec AC6). `ddl` is "
+            "the default because every earlier number was measured against "
+            "it. Each rendering has its own schema fingerprint, so runs "
+            "cannot be compared across renderings by accident (AC7)."
+        ),
+    )
+    glossary_group = parser.add_mutually_exclusive_group()
+    glossary_group.add_argument(
+        "--glossary",
+        action="store_true",
+        dest="glossary",
+        default=None,
+        help=(
+            "inject the business-term block (spec AC10). Defaults to on for "
+            "--strategy loop, which is what a deployment ships, and off for "
+            "single-shot, which uses the frozen Iteration 3 template and "
+            "cannot carry one."
+        ),
+    )
+    glossary_group.add_argument(
+        "--no-glossary",
+        action="store_false",
+        dest="glossary",
+        help=(
+            "omit the block. A glossary-off loop run reproduces Iteration "
+            "4's prompt byte for byte, which is what makes it AC13's "
+            "control rather than merely a cheaper run."
+        ),
+    )
+    parser.add_argument(
+        "--split",
+        choices=(*SPLITS, "all"),
+        default="dev",
+        help=(
+            "which half of the corpus to score (spec Q-A). Defaults to `dev`, "
+            "so tuning runs cannot touch the held-out questions by omission — "
+            "reaching them takes typing `--split test`. `all` scores the whole "
+            "corpus, which is what earlier iterations' numbers were taken over."
+        ),
+    )
+    parser.add_argument(
+        "--reveal-test-failures",
+        action="store_true",
+        dest="reveal_test_failures",
+        help=(
+            "print per-question failure detail for a `test` run. Aggregate and "
+            "per-tier numbers always print; only the case list is gated, "
+            "because knowing *which* held-out questions failed is what enables "
+            "question-level overfitting. Using this is recorded in EVALS.md."
+        ),
+    )
+    parser.add_argument(
+        "--token-budget",
+        type=int,
+        default=None,
+        dest="token_budget",
+        help=(
+            "the live circuit breaker: stop a pass once the provider has "
+            "billed this many tokens (AC8). Denominated in the provider's "
+            "count, which is the one the 200000-a-day free tier is charged "
+            "in. Also supplies the pre-flight ceiling unless "
+            "--max-projection overrides it."
+        ),
+    )
+    parser.add_argument(
+        "--max-projection",
+        type=int,
+        default=None,
+        dest="max_projection",
+        help=(
+            "override the pre-flight ceiling only, leaving --token-budget to "
+            "police billed spend. The two guards are denominated differently "
+            "-- the projection is a local worst case over the whole "
+            "invocation, the breaker is the provider's bill for one pass -- "
+            "so a single number cannot set both without making one of them "
+            "vacuous. Raising this authorises a run the projection would "
+            "refuse, and is the only way to keep a meaningful breaker while "
+            "doing so."
+        ),
+    )
     parser.add_argument("--dataset", type=pathlib.Path, default=None, help="dataset path")
     parser.add_argument(
         "--verbose", action="store_true", help="print every failing case with its SQL"
@@ -541,15 +1016,101 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Provider error: {exc}", file=sys.stderr)
         return 2
 
+    # Resolved here rather than by argparse: the sensible default depends on the
+    # strategy. Loop runs ship with the glossary; single-shot cannot carry one at
+    # all, and defaulting it on would break the documented no-argument
+    # invocation with a ValueError.
+    glossary = args.glossary
+    if glossary is None:
+        glossary = args.strategy == STRATEGY_LOOP
+
+    # Same reason, same shape (T7). `single-shot` renders DDL unconditionally
+    # and `build_strategy` refuses any other rendering, so defaulting the flag
+    # to the adopted `compact` would break the documented no-argument run with
+    # a ValueError from its own default.
+    rendering = resolve_rendering(args.strategy, args.rendering)
+
+    split = None if args.split == "all" else args.split
+
     try:
-        build_strategy(args.strategy, args.schema_mode, args.max_calls)
+        build_strategy(
+            args.strategy, args.schema_mode, args.max_calls, rendering, glossary
+        )
     except ValueError as exc:
         print(f"Invalid combination: {exc}", file=sys.stderr)
         return 2
 
+    try:
+        selected = questions_in_split(dataset, split)
+    except DatasetError as exc:
+        print(f"Dataset error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.reveal_test_failures and split != SPLIT_TEST:
+        # Not an error, but worth saying: the flag only gates the held-out
+        # split, and a reader of EVALS.md should not see it recorded against a
+        # run where it did nothing.
+        print(
+            "Note: --reveal-test-failures only affects --split test; ignoring.",
+            file=sys.stderr,
+        )
+
+    # AC8's two guards, given two knobs. Before T7 they shared one, which made
+    # the authorisation the plan anticipated -- raise the ceiling past the
+    # projection, keep the breaker -- impossible to express: the single value
+    # had to clear a 306,720-token worst-case projection, which left the
+    # breaker with 7x headroom over a pass that actually bills ~41,000. It
+    # could not fire, so it was not a guard.
+    projection_ceiling = (
+        args.max_projection if args.max_projection is not None else args.token_budget
+    )
+
+    if projection_ceiling is not None:
+        try:
+            projected = project_run_cost(
+                dataset,
+                split,
+                args.schema_mode,
+                rendering,
+                glossary,
+                args.max_calls or _default_budget(args.strategy),
+            ) * args.repeat
+        except TokenCountingUnavailable as exc:
+            # Refuse rather than guess. A budget policed by a heuristic is
+            # the failure this iteration spent T1 correcting.
+            print(f"Cannot project cost: {exc}", file=sys.stderr)
+            return 2
+
+        if projected > projection_ceiling:
+            # AC8: nothing has been spent at this point, and nothing will be.
+            print(
+                f"Aborted before spending anything: worst case is "
+                f"{projected:,} tokens against a {projection_ceiling:,} "
+                f"ceiling. Narrow with --split, or raise --max-projection.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Projected worst case: {projected:,} tokens.", file=sys.stderr)
+        if args.max_projection is not None:
+            # Said out loud, on the run it applies to. A raised ceiling is a
+            # deliberate act and should not be inferable only from shell
+            # history.
+            print(
+                f"Pre-flight ceiling raised to {args.max_projection:,} by "
+                f"--max-projection; billed spend is policed at "
+                + (
+                    f"{args.token_budget:,} per pass."
+                    if args.token_budget is not None
+                    else "nothing -- no --token-budget was given."
+                ),
+                file=sys.stderr,
+            )
+
     print(
-        f"Running {len(dataset.questions)} questions x {args.repeat} "
+        f"Running {len(selected)} questions x {args.repeat} "
         f"pass(es): strategy={args.strategy}, schema={args.schema_mode}, "
+        f"rendering={rendering}, "
+        f"glossary={'on' if glossary else 'off'}, split={args.split}, "
         f"model={describe_model(provider)}...",
         file=sys.stderr,
     )
@@ -562,14 +1123,46 @@ def main(argv: list[str] | None = None) -> int:
             strategy=args.strategy,
             schema_mode=args.schema_mode,
             max_calls=args.max_calls,
+            rendering=rendering,
+            glossary=glossary,
+            split=split,
+            token_budget=args.token_budget,
         )
+    except TokenBudgetExceeded as exc:
+        print(f"Aborted: {exc}", file=sys.stderr)
+        return 1
     except DatasetError as exc:
         # AC12. Aborting is the point: an incomparable number filed alongside
         # comparable ones is wrong in a way nobody can detect later.
         print(f"Aborted: {exc}", file=sys.stderr)
         return 1
 
-    print_report(reports, dataset, verbose=args.verbose)
+    print_report(
+        reports,
+        dataset,
+        verbose=args.verbose,
+        reveal_test_failures=args.reveal_test_failures,
+    )
+
+    rate_limited = sum(
+        1 for case in reports[0].cases if case.category == CATEGORY_RATE_LIMITED
+    )
+    if args.record and rate_limited:
+        # AC18: no prompt change is accepted on a run that was rate limited,
+        # because the comparison would be against the clock rather than the
+        # prompt. Iteration 4's 82.5% was 33 correct and 7 rate-limited, and
+        # it was read as a measurement for weeks.
+        #
+        # The number still printed above. What is refused is filing it
+        # alongside comparable ones, where it would invite exactly that
+        # reading.
+        print(
+            f"Not recorded: {rate_limited} question(s) were rate limited, "
+            f"so this number is a floor rather than a measurement (AC18). "
+            f"Re-run when the quota resets.",
+            file=sys.stderr,
+        )
+        return 1
 
     if args.record:
         append_to_evals(
@@ -579,6 +1172,12 @@ def main(argv: list[str] | None = None) -> int:
                 strategy=args.strategy,
                 schema_mode=args.schema_mode,
                 max_calls=args.max_calls,
+                rendering=rendering,
+                glossary=glossary,
+                split=split,
+                # Only meaningful on a test run, and only recorded as YES when
+                # it actually revealed something.
+                revealed=args.reveal_test_failures and split == SPLIT_TEST,
             )
         )
         print(f"Recorded in {EVALS_PATH}", file=sys.stderr)

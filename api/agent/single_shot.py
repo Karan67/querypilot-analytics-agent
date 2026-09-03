@@ -21,11 +21,24 @@ from dataclasses import dataclass
 from api.agent.prompts import build_prompt
 from api.db.execution import CATEGORY_CONNECTION_ERROR, ExecutionResult, execute_sql
 from api.db.introspection import SchemaIntrospectionError, get_schema
-from api.llm.base import LLMError, LLMProvider
+from api.llm.base import LLMError, LLMProvider, RateLimitError
 
-#: The LLM call failed: network, authentication, rate limit, timeout.
+#: The LLM call failed: network, authentication, timeout.
 #: Retriable later, but not by rewriting the query.
 CATEGORY_PROVIDER_ERROR = "provider_error"
+
+#: The provider refused the call on a quota or rate limit (AC9).
+#:
+#: **Split out of `provider_error` at Iteration 5 T5**, because the two are
+#: evidence about different things: a model failure says something about the
+#: prompt, a rate limit says something about the clock. Iteration 4 reported them
+#: identically, and its 82.5% was 33 correct and 7 rate-limited -- a floor
+#: presented as a measurement, which reads wrong in both directions.
+#:
+#: Never counted as an accuracy failure by the runner, and a run containing one
+#: cannot be recorded (AC18): a prompt comparison against a rate-limited pass is
+#: a comparison against the clock.
+CATEGORY_RATE_LIMITED = "rate_limited"
 
 #: The response contained nothing that could be a statement.
 #:
@@ -142,6 +155,13 @@ def answer_question(
             from api.llm.factory import get_provider
 
             provider = get_provider()
+        except RateLimitError as exc:
+            return AnswerResult(
+                ok=False,
+                question=question,
+                category=CATEGORY_RATE_LIMITED,
+                error=str(exc),
+            )
         except LLMError as exc:
             return AnswerResult(
                 ok=False,
@@ -154,6 +174,15 @@ def answer_question(
 
     try:
         response = provider.complete(system, user)
+    # RateLimitError subclasses LLMError, so it is caught first or not at
+    # all. Ordering here is load-bearing, not stylistic.
+    except RateLimitError as exc:
+        return AnswerResult(
+            ok=False,
+            question=question,
+            category=CATEGORY_RATE_LIMITED,
+            error=str(exc),
+        )
     except LLMError as exc:
         return AnswerResult(
             ok=False,

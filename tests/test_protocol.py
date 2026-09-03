@@ -30,10 +30,26 @@ def test_an_action_with_no_argument_parses():
 
 
 def test_an_argument_on_the_same_line_parses():
-    """`ACTION: sample_rows track` is a plausible shape and costs one line to
-    support. The probe never exercised `sample_rows`, so this is the one action
-    whose formatting is unmeasured — which is a reason to be permissive, not a
-    reason to assume."""
+    """`ACTION: name argument` on one line is a plausible shape and costs one
+    line to support.
+
+    The example used `sample_rows` until Iteration 5 T1 retired that action.
+    Re-pointed at a live one rather than left referencing a capability the
+    system no longer has — the fixture should not be the only place a dead
+    action still appears to exist.
+    """
+    action = parse_action("ACTION: execute_sql SELECT 1")
+    assert action.name == "execute_sql"
+    assert action.argument == "SELECT 1"
+
+
+def test_an_unknown_action_name_still_parses():
+    """The parser does not police names; dispatch does.
+
+    A retired or hallucinated name must survive parsing intact so the loop can
+    answer it with `unknown_action` (AC2). A parser that rejected unknown names
+    would turn a recoverable turn into a malformed-response failure.
+    """
     action = parse_action("ACTION: sample_rows track")
     assert action.name == "sample_rows"
     assert action.argument == "track"

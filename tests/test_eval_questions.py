@@ -274,12 +274,13 @@ def test_every_covered_relation_exists(dataset, schema):
 
 def test_ac1_the_dataset_is_the_declared_size(dataset):
     assert MIN_QUESTIONS <= len(dataset.questions) <= MAX_QUESTIONS
-    assert len(dataset.questions) == 40
+    # 40 through Iteration 4; the expert tier added 10 at Iteration 5 T6.
+    assert len(dataset.questions) == 50
 
 
 def test_ac1_all_three_tiers_are_populated(dataset):
     counts = {tier: len(dataset.by_tier(tier)) for tier in TIERS}
-    assert counts == {"easy": 14, "medium": 16, "hard": 10}
+    assert counts == {"easy": 14, "medium": 16, "hard": 10, "expert": 10}
 
 
 def test_ac2_the_retired_questions_stay_retired(dataset):
@@ -304,7 +305,10 @@ def test_the_dataset_version_was_bumped_when_the_corpus_changed(dataset):
     """`EVALS.md` records the dataset version against every number (AC23), so a
     corpus change that kept the version would make two incomparable runs look
     comparable."""
-    assert dataset.version == 2, "retiring and replacing questions is a new version"
+    # 1 -> 2 when two questions were retired and replaced; 2 -> 3 when the
+    # expert tier arrived (AC14). A corpus that changed shape is a different
+    # corpus, and every earlier EVALS.md entry describes the old one.
+    assert dataset.version == 3, "changing the corpus is a new version"
 
 
 def test_ac2_ids_are_unique_and_name_their_tier(dataset):
