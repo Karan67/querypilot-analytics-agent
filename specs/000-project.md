@@ -246,10 +246,11 @@ this table only when it ships or when a spec records why it never will.
 
 | # | Item | Opened | Target |
 |---|---|---|---|
-| **B-1** | Rate-limit telemetry on `GroqProvider` | Iteration 5 T8 | **next task** — pulled forward |
+| ~~B-1~~ | ~~Rate-limit telemetry on `GroqProvider`~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-2** | AC13's glossary-off control arm | Iteration 5 T7 | open |
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
+| **B-5** | Re-denominate AC8's budget guards in rate, not daily tokens | B-1 | open — see below |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 
@@ -275,7 +276,81 @@ quota rather than on a projection, and a reported reset time, so the question
 only answer it as "probably 00:00 UTC, unverified", which is precisely the shape
 of claim this project spends its effort eliminating.
 
-> **PULLED FORWARD 2026-09-04 to be the next task worked, ahead of Iteration
+> **MEASURED AND DISCHARGED 2026-09-04. There are three limits, not one, and
+> the one that actually stopped Iteration 5 is invisible to every header.**
+>
+> | limit | capacity | refill | window | reported in |
+> |---|---|---|---|---|
+> | tokens per minute | 8,000 | 133.3 / second | 60.0s | headers |
+> | requests per day | 1,000 | 1 per 86.4s | 86,400s | headers |
+> | **tokens per day** | **200,000** | — | — | **only the 429 body** |
+>
+> **This entry's first version got the conclusion wrong, and the error is
+> kept here rather than tidied away.** Having measured the two header limits,
+> it concluded that the project's 200,000-a-day figure was not something
+> the provider reports and, on that evidence, not what it enforces; and that
+> Iteration 5's closing arithmetic had been measuring a quantity that did not
+> bind us. That is absence of a header read as absence of a limit — the exact
+> reasoning this project's measure-don't-assume rule exists to prevent, made
+> in the middle of a task about not assuming.
+>
+> The refusal that settled it arrived with the per-minute bucket reading a
+> full **8,000/8,000** and a body reading:
+>
+> ```
+> on tokens per day (TPD): Limit 200000, Used 199301, Requested 1279
+> ```
+>
+> **So Iteration 5's closing arithmetic was right.** Its two refused
+> multi-pass runs ended at roughly 192,000 and would have needed 237,000
+> against a real 200,000 ceiling. The decisions taken on that basis — stop,
+> do not migrate providers, do not stretch across days — were taken on a
+> correct reading, and this task briefly argued otherwise.
+>
+> **What the TPM finding is still worth.** 8,000 a minute is real and does
+> bind a sustained run: an eval call costs about 1,214 tokens, so the bucket
+> covers roughly six back-to-back calls, and an unpaced pass empties it in
+> ten seconds. It is a second constraint, not a replacement for the first.
+>
+> **The two header limits' windows are derived, never assumed:**
+>
+> ```
+> refill = (limit - remaining) / seconds_until_reset
+> window = limit / refill
+> ```
+>
+> which returns 60.0 and 86,400 to four significant figures on every sample.
+> A constant would have been quicker and would stop being true the day a tier
+> changes; this keeps working and says so in the terminal on every run.
+>
+> **Pacing helps the per-minute limit and cannot help the daily one.** A
+> daily allowance does not refill on any timescale a run can wait for, and
+> Groq answers an exhausted one with `retry-after` values of 85 and 251
+> seconds. An early version of the pacer slept through those and turned a
+> 30-question run into an eighteen-minute crawl that had produced nothing;
+> `MAX_RETRY_WAIT_SECONDS` now caps the wait and lets the refusal through,
+> because failing in a minute beats failing in two hours when AC18 will
+> refuse to record either.
+>
+> **Shipped:** `api/llm/rate_limits.py` (snapshot, derivation, duration
+> parsing), `last_rate_limit` on `GroqProvider` following `last_usage`'s
+> best-effort pattern, `api/llm/pacing.py`, and a pre-flight line in the
+> runner. `complete(system, user) -> str` is unchanged, and the deployed API
+> does not pace — sleeping inside a user's request would trade a rare refusal
+> for a guaranteed delay, so only the benchmark wraps its provider.
+>
+> **A regression this uncovered.** `tests/test_llm_live.py` skipped
+> rate-limited runs by checking `category == "provider_error"` and
+> substring-matching the message. T5 split `rate_limited` into its own
+> category, which killed the guard silently — for two iterations a
+> rate-limited live run failed red as *"prompt injection produced executable
+> DDL"*, the exact security-shaped-message-for-a-billing-condition its own
+> docstring warned about. Nothing noticed because the tier had never been
+> under enough pressure to rate-limit the suite. Now checked by constant,
+> with the substring kept only as a fallback.
+>
+> **Originally pulled forward 2026-09-04 to be the next task worked, ahead of
+> Iteration
 > 6.** Iteration 5 closed with two multi-pass held-out runs refused for rate
 > limits at 120,000 and 165,000 of a 200,000-token day — a fifth to a third of
 > the budget still unspent, with the failures appearing inside sustained runs
@@ -292,6 +367,32 @@ of claim this project spends its effort eliminating.
 > latency and cost logging, rate limiting, caching*, which names this item almost
 > literally. Recorded against 7 so the charter stays self-consistent; move it if
 > the intent was to pull it forward.
+
+### B-5 — AC8's guards are denominated in a quantity nothing enforces
+
+Opened by B-1's measurements, and narrower than it first appeared. The daily
+token ceiling the guards are denominated in **is real and is enforced**, so
+they are not guarding a phantom; the gap is that they are the *only* thing
+guarded. Three limits apply and AC8 knows about one:
+
+| limit | guarded today |
+|---|---|
+| 200,000 tokens per day | yes — `--token-budget`, `--max-projection` |
+| 8,000 tokens per minute | no — mitigated by pacing, not guarded |
+| 1,000 requests per day | **no, not at all** |
+
+Two further problems with the daily-token guard as written. It has no way to
+know what the *account* has already spent today, only what this invocation
+will spend, so `--token-budget 30000` on a run starting at 199,000 used is
+satisfied and then refused on its first call. And the request limit is
+unguarded despite being the cheaper one to exhaust: a three-pass dev run is
+90 requests, and nothing anywhere counts them.
+
+The pre-flight question worth asking is therefore not *does this run fit in
+its own budget* but *does it fit in what the account has left, across all
+three limits, at the rate it intends to spend it*. Deliberately **not**
+folded into B-1: it touches both budget guards, their tests, the CLI surface
+and two specs, and B-1 was filed as telemetry.
 
 ### B-2 — AC13's glossary-off control
 

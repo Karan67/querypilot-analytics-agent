@@ -48,6 +48,8 @@ from api.agent.single_shot import answer_question
 from api.agent.single_shot import CATEGORY_RATE_LIMITED
 from api.db.execution import CATEGORY_REJECTED, execute_sql
 from api.llm.base import TokenUsage
+from api.llm.pacing import PacedProvider
+from api.llm.rate_limits import limit_from_message
 from api.llm.counting import (
     TokenCountingUnavailable,
     count_tokens,
@@ -315,6 +317,51 @@ def describe_model(provider) -> str:
     wrong.
     """
     return str(getattr(provider, "model", None) or "unknown")
+
+
+def describe_rate_limits(provider) -> str:  # noqa: D401
+    """One line of provider rate-limit state, or "" when nothing is reported.
+
+    Read with `getattr`, like `model` and `last_usage` before it (`008` D-1).
+    The `LLMProvider` protocol stays one method; a provider that says nothing
+    about its limits simply produces no line.
+    """
+    snapshot = getattr(provider, "last_rate_limit", None)
+    if snapshot is None or not snapshot.known:
+        return ""
+    return snapshot.summary()
+
+
+def probe_rate_limits(provider) -> str:
+    """One minimal call, to learn the limits *before* the run commits to them.
+
+    Measured at 73 tokens against Groq -- under 1% of an 8,000-token bucket and
+    one of 1,000 daily requests. It buys two things that are worth more than
+    that: a pre-flight reading of how much budget is actually left, and a primed
+    pacer, so the first real call is not fired blind into a bucket that a
+    previous run may have just drained.
+
+    Uses `complete()` and nothing else, so it needs no addition to the provider
+    interface. Best-effort throughout: any failure returns "" and the run
+    proceeds, because a diagnostic must never be the thing that stops a
+    benchmark.
+    """
+    named = ""
+    try:
+        provider.complete("", "Reply with the single word: ok")
+    except Exception as exc:  # noqa: BLE001 - a probe may never break a run
+        # **Reported, not swallowed.** The first version discarded this, and the
+        # discarded text was the only place the binding limit is named -- the
+        # headers show a full per-minute bucket while the daily allowance is
+        # gone. A diagnostic that hides the diagnosis is worse than none.
+        detail = limit_from_message(str(exc))
+        if detail is not None:
+            code, limit, used = detail
+            named = f" -- refused on {code}: {used:,} of {limit:,} used"
+        else:
+            named = f" -- probe failed: {type(exc).__name__}"
+
+    return (describe_rate_limits(provider) or "rate limits: not reported") + named
 
 
 def run_case(question: Question, gold, provider, strategy_fn=None) -> CaseResult:
@@ -1041,6 +1088,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Provider error: {exc}", file=sys.stderr)
         return 2
 
+    # Pacing is opt-in by wrapping, and only the benchmark opts in (B-1). The
+    # deployed API must not sleep inside a user's request: that would trade a
+    # rare 429 for a guaranteed delay on every call. `PacedProvider` satisfies
+    # the same one-method interface, so nothing downstream can tell.
+    provider = PacedProvider(provider)
+
     # Resolved here rather than by argparse: the sensible default depends on the
     # strategy. Loop runs ship with the glossary; single-shot cannot carry one at
     # all, and defaulting it on would break the documented no-argument
@@ -1116,6 +1169,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print(f"Projected worst case: {projected:,} tokens.", file=sys.stderr)
+        # Stated next to the projection it should be read against. The
+        # projection is a local worst case in *tokens per run*; the limits below
+        # are the provider's, and Iteration 5 discovered the hard way that they
+        # are not denominated in the same thing -- 200,000 tokens a day was
+        # never the constraint, 8,000 a minute was.
+        limits = probe_rate_limits(provider)
+        if limits:
+            print(f"Pre-flight {limits}", file=sys.stderr)
         if args.max_projection is not None:
             # Said out loud, on the run it applies to. A raised ceiling is a
             # deliberate act and should not be inferable only from shell
@@ -1168,6 +1229,18 @@ def main(argv: list[str] | None = None) -> int:
         verbose=args.verbose,
         reveal_test_failures=args.reveal_test_failures,
     )
+
+    # After the run, because the interesting number is what the run *left* --
+    # a pass that finishes with the bucket near empty is one that was about to
+    # start failing, and that is invisible in an accuracy figure.
+    limits = describe_rate_limits(provider)
+    if limits:
+        print(f"\n  {limits}")
+    if getattr(provider, "waits", 0):
+        print(
+            f"  paced             {provider.waits} wait(s), "
+            f"{provider.total_slept:.0f}s total"
+        )
 
     # Every pass, not the first. A three-pass run whose second pass hit the
     # quota would have been recorded as a clean measurement, because this read
