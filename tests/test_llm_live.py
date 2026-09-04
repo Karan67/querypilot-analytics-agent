@@ -34,8 +34,28 @@ def skip_if_unavailable(result) -> None:
     Skipping is also the honest outcome for the assertion itself. When the call
     never reached the model, the safety claim below was not tested — and an
     untested claim should say so loudly rather than pass quietly.
+
+    **This guard was dead from T5 until B-1 and nobody noticed.** T5 split
+    `rate_limited` out of `provider_error` into its own category (AC9), and this
+    check still asked for the old one — so from that point a rate-limited live
+    run failed red again, with precisely the security-shaped message the
+    paragraph above describes. Nothing caught it because the free tier had not
+    been under enough pressure to rate-limit the suite until B-1's measurements
+    started competing with it for an 8,000-token minute.
+
+    It is also the text-matching antipattern `003` argued against, in a file
+    that had a typed alternative available. The category is checked by constant
+    first; the substring survives only as a fallback for a provider whose errors
+    never reach `RateLimitError` and so stay `provider_error`.
     """
-    if result.category == "provider_error" and "rate_limit" in result.error:
+    from api.agent.single_shot import CATEGORY_PROVIDER_ERROR, CATEGORY_RATE_LIMITED
+
+    if result.category == CATEGORY_RATE_LIMITED:
+        pytest.skip(f"provider rate-limited; claim untested: {result.error[:120]}")
+
+    if result.category == CATEGORY_PROVIDER_ERROR and "rate_limit" in (
+        result.error or ""
+    ):
         pytest.skip(f"provider rate-limited; claim untested: {result.error[:120]}")
 
 

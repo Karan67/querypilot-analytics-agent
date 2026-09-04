@@ -19,6 +19,7 @@ from api.llm.base import (
     RateLimitError,
     TokenUsage,
 )
+from api.llm.rate_limits import RateLimitSnapshot, snapshot_from_headers
 
 #: Default model (resolved D-1).
 #:
@@ -58,6 +59,7 @@ class GroqProvider:
         self._model = model
         self._client = groq.Groq(api_key=api_key, timeout=timeout)
         self._last_usage: TokenUsage | None = None
+        self._last_rate_limit: RateLimitSnapshot | None = None
 
     @property
     def model(self) -> str:
@@ -105,23 +107,45 @@ class GroqProvider:
         """
         return self._last_usage
 
+    @property
+    def last_rate_limit(self) -> RateLimitSnapshot | None:
+        """What the provider said about its limits on the most recent call (B-1).
+
+        **Best-effort and off the protocol**, on the same terms as `last_usage`:
+        `complete()` stays one method returning one string, and a caller reads
+        this with `getattr`. A provider that reports no limits never grows the
+        attribute, and a call that came back without limit headers leaves it
+        `None`.
+
+        Populated on **both** outcomes, and the failing one matters more. A
+        429 carries the headers that say how long to wait, so discarding them
+        would throw away the only authoritative answer to "when can I retry"
+        precisely when it is needed.
+
+        Reset at the start of every call, so a stale snapshot can never be read
+        as current -- the same reasoning as `last_usage`, and a worse failure
+        here, since a stale `remaining` would pace against a bucket that has
+        since drained.
+        """
+        return self._last_rate_limit
+
     def complete(self, system: str, user: str) -> str:
         """One call. No retries -- see AC16; retry policy is Iteration 4's."""
         # Cleared first. If the call raises, `last_usage` must not still hold the
         # previous call's cost -- a caller accumulating per call would otherwise
         # bill a successful call twice and a failed one at someone else's rate.
         self._last_usage = None
+        self._last_rate_limit = None
 
         try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=TEMPERATURE,
-            )
+            response = self._create(system, user)
         except groq.RateLimitError as exc:
+            # The headers on a 429 are the ones worth having: they carry
+            # `retry-after` and the reset times. Read before re-raising, because
+            # after the translation below the vendor response is gone.
+            self._last_rate_limit = snapshot_from_headers(
+                getattr(getattr(exc, "response", None), "headers", None)
+            )
             # AC9. Split out *before* the general handler, because a quota
             # refusal is evidence about the clock rather than about the prompt,
             # and Iteration 4 reported the two identically -- which is what made
@@ -148,6 +172,36 @@ class GroqProvider:
         # interface returns content only.
         content = response.choices[0].message.content
         return content or ""
+
+    def _create(self, system: str, user: str):
+        """Make the call, capturing rate-limit headers when the SDK allows it.
+
+        `with_raw_response` returns the transport response, so the headers are
+        readable on a **successful** call -- which is the only way to know how
+        much budget is left *before* being refused. Without it, limits could
+        only ever be learned from a 429, which is to say after the damage.
+
+        Falls back to the plain call if the SDK does not offer it. The
+        capability is checked rather than assumed: this is a vendor surface the
+        project does not control, and a telemetry feature must not be able to
+        break generation. Verified present in groq 0.37.1.
+        """
+        kwargs = dict(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=TEMPERATURE,
+        )
+
+        raw_api = getattr(self._client.chat.completions, "with_raw_response", None)
+        if raw_api is None:  # pragma: no cover - exercised by mutation
+            return self._client.chat.completions.create(**kwargs)
+
+        raw = raw_api.create(**kwargs)
+        self._last_rate_limit = snapshot_from_headers(getattr(raw, "headers", None))
+        return raw.parse()
 
     @staticmethod
     def _read_usage(response) -> TokenUsage | None:
