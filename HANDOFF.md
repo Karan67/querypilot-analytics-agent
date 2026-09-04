@@ -119,6 +119,14 @@ docker compose up -d
 `QUERYPILOT_DATABASE_URL` must be set for host runs; the eval runner loads
 `.env` itself, the test suite loads it via `conftest.py`.
 
+**`.env.example` did not carry that key until Iteration 5 closed**, so a
+host run of `python -m evals.run_evals` failed with a
+`SchemaIntrospectionError` naming a variable that nothing set. Compose
+supplies it to the *container* as `@db:5432`, which the host cannot reach;
+from the host it is the read-only role on the mapped port. Copy the line
+from `.env.example` and fill it in, or the documented command in the README
+will not run outside Docker.
+
 ---
 
 ## 6. Traps that cost real time — do not rediscover these

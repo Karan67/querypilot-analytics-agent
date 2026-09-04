@@ -28,17 +28,25 @@ require knowing the business rather than knowing SQL.
 > **Iteration 5 — Done when:** accuracy improves against Iteration 4's numbers,
 > and the improvement is attributable.
 >
-> **NOT DONE as of 2026-09-04.** Two obligations remain, both recorded rather
-> than carried in memory:
+> **CLOSED 2026-09-04, with one criterion knowingly unmet.**
 >
-> 1. **T8's held-out run must be repeated on a clean quota.** It ran, scored
-> 85.0%, and was refused by the `rate_limited` guard, so `EVALS.md` still has
-> no Iteration 5 entry (plan section 12).
-> 2. **AC13 is unmet** — the glossary-off control arm was dropped from T7 and
-> accuracy is reported with the glossary only (see AC13 below).
+> Settled: `sample_rows` is gone; the corpus is v3 with a frozen 30/20 split
+> (`ec65d5ba81d6`); D-2 selected `compact`, which is the deployed default; and
+> `EVALS.md` carries a held-out **100.0%** on 20 questions the tuning never
+> touched, `expert` tier included.
 >
-> What *is* settled: `sample_rows` is gone, the corpus is v3 with a frozen
-> 30/20 split, and D-2 selected `compact`, which is now the deployed default.
+> **Read that 100.0% as one pass, not as the accuracy.** Eight passes of the
+> same configuration produced 0 to 2 wrong answers each (plan section 12), so
+> the honest statement is *between 90% and 100%, measured once at 100%*. The
+> iteration's own bar — *accuracy improves against Iteration 4 and the
+> improvement is attributable* — is met on the first half and only partly on
+> the second: `compact` is attributably **cheaper** (188 tokens a call), but
+> the accuracy difference that selected it is inside the noise.
+>
+> **AC13 remains unmet**, deferred rather than satisfied — the glossary-off
+> control was never run, so the 178-token block that ships on every call is
+> still unjustified by measurement. It is carried as charter backlog **B-2**
+> rather than quietly closed with the iteration.
 
 ---
 

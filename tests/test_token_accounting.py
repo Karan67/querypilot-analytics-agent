@@ -473,6 +473,159 @@ def test_the_recorded_block_states_whether_the_glossary_was_on():
     assert "| Glossary | off |" in off
 
 
+# --- D-3: the recorded block is the path that persists -----------------------
+
+
+def _held_out_report(*, split="test", failures=1):
+    """A report with a failing case, on whichever split is asked for."""
+    from evals.scoring import CaseResult, aggregate
+
+    cases = [CaseResult(id="easy-001", tier="easy", question="fine", correct=True)]
+    for i in range(failures):
+        cases.append(
+            CaseResult(
+                id=f"expert-{i + 10:03d}",
+                tier="expert",
+                question="How many charting artists have a credited track?",
+                generated_sql="SELECT count(*) FROM artist",
+                category="wrong_result",
+                passed_validation=True,
+                executed=True,
+            )
+        )
+    return aggregate(cases, split=split, rendering="compact", glossary=True)
+
+
+def test_d3_the_recorded_block_withholds_held_out_failures():
+    """**The defect T8 shipped into an append-only file.**
+
+    `print_report` has always gated this list; `format_report` never did. The
+    consequence was worse in the recorded path than in the terminal, because a
+    terminal leak scrolls away and a recorded one is permanent -- and it sat
+    three rows below the `Test failures revealed | no` that the same block
+    asserted, so the entry contradicted itself.
+    """
+    from evals.dataset import load_dataset
+    from evals.run_evals import format_report
+
+    block = format_report(
+        [_held_out_report()], load_dataset(), split="test", revealed=False
+    )
+
+    assert "| Test failures revealed | no |" in block
+    assert "expert-010" not in block, "the failing question id reached the record"
+    assert "charting artists" not in block, "the question text reached the record"
+    assert "SELECT count(*) FROM artist" not in block, "the generated SQL did"
+    assert "withheld" in block, "the absence must be stated, not silent"
+
+
+def test_the_flag_still_records_the_detail_it_audits():
+    """D-3 is an audit trail, not a block. Passing the flag must actually
+    produce the list -- otherwise the flag records an intent it never carried
+    out, which is worse than either alternative."""
+    from evals.dataset import load_dataset
+    from evals.run_evals import format_report
+
+    block = format_report(
+        [_held_out_report()], load_dataset(), split="test", revealed=True
+    )
+
+    assert "| Test failures revealed | YES |" in block
+    assert "expert-010" in block
+    assert "SELECT count(*) FROM artist" in block
+
+
+def test_dev_split_failures_are_never_withheld():
+    """The gate is the *held-out* split, not failure detail in general. The dev
+    list is the tuning backlog and withholding it would remove the one thing a
+    tuning run is for."""
+    from evals.dataset import load_dataset
+    from evals.run_evals import format_report
+
+    block = format_report(
+        [_held_out_report(split="dev")], load_dataset(), split="dev", revealed=False
+    )
+
+    assert "expert-010" in block, "a dev failure was withheld"
+
+
+def test_the_recorded_tier_counts_are_the_scored_split():
+    """`easy (14)` on a run that scored 6 easy questions overstates what was
+    measured by more than twice, permanently, in the file whose only job is
+    making numbers comparable."""
+    from evals.dataset import load_dataset, questions_in_split
+    from evals.run_evals import format_report
+
+    dataset = load_dataset()
+    block = format_report(
+        [_held_out_report()], dataset, split="test", revealed=False
+    )
+
+    in_test = questions_in_split(dataset, "test")
+    easy_in_test = sum(1 for q in in_test if q.tier == "easy")
+    easy_in_corpus = len(dataset.by_tier("easy"))
+
+    assert easy_in_test != easy_in_corpus, "fixture cannot discriminate"
+    assert f"| easy ({easy_in_test}) |" in block
+    assert f"| easy ({easy_in_corpus}) |" not in block
+
+
+def test_a_whole_corpus_run_still_counts_the_whole_corpus():
+    """`split=None` scores everything, so there the two readings coincide --
+    and the fix must not have quietly narrowed that case."""
+    from evals.dataset import load_dataset
+    from evals.run_evals import format_report
+
+    dataset = load_dataset()
+    block = format_report(
+        [_held_out_report(split=None)], dataset, split=None, revealed=False
+    )
+    assert f"| easy ({len(dataset.by_tier('easy'))}) |" in block
+
+
+def test_a_rate_limit_in_any_pass_refuses_the_record(monkeypatch, tmp_path, capsys):
+    """**AC18 applies to the run, not to its first pass.**
+
+    A three-pass run whose *second* pass hit the quota was recorded as a clean
+    measurement, because the guard read `reports[0]`. That is the same pass-one
+    blind spot as the token total (T7) and the held-out failure leak (T8), and
+    it is the most consequential of the three: the other two mis-describe an
+    entry, this one files a floor as a measurement.
+
+    Asserting the file is never created also re-proves the `EVALS_PATH`
+    isolation that T5 had to fix after a mutation run wrote a fake entry into
+    the real record.
+    """
+    import evals.run_evals as runner
+    from evals.scoring import CaseResult, aggregate
+
+    clean = aggregate(
+        [CaseResult(id="easy-001", tier="easy", question="q", correct=True)],
+        split="test",
+    )
+    limited = aggregate(
+        [
+            CaseResult(
+                id="easy-001",
+                tier="easy",
+                question="q",
+                category=CATEGORY_RATE_LIMITED,
+            )
+        ],
+        split="test",
+    )
+
+    target = tmp_path / "EVALS.md"
+    monkeypatch.setattr(runner, "EVALS_PATH", target)
+    monkeypatch.setattr(runner, "run_evaluation", lambda *a, **k: [clean, limited])
+
+    exit_code = runner.main(["--split", "test", "--record", "--repeat", "2"])
+
+    assert exit_code == 1
+    assert not target.exists(), "a rate-limited run reached the record"
+    assert "rate limited" in capsys.readouterr().err
+
+
 # --- AC8: the two budget guards ---------------------------------------------
 
 

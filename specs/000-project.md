@@ -238,7 +238,105 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 
 ---
 
-## 8. Open questions
+## 8. Carried debt
+
+Work that a completed iteration knowingly deferred. Distinct from §9's open
+questions: nothing here is undecided, it is decided and unbuilt. An item leaves
+this table only when it ships or when a spec records why it never will.
+
+| # | Item | Opened | Target |
+|---|---|---|---|
+| **B-1** | Rate-limit telemetry on `GroqProvider` | Iteration 5 T8 | **next task** — pulled forward |
+| **B-2** | AC13's glossary-off control arm | Iteration 5 T7 | open |
+| ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
+| **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
+
+### B-1 — Rate-limit telemetry on `GroqProvider`
+
+**The pre-flight budget check reads a local heuristic and never asks the
+provider what is actually left.** `project_run_cost` counts the worst case with
+`tiktoken`, which is the right instrument for a decision that must be
+reproducible offline, but it is blind to the one number that decides whether a
+run can start: how much of today's quota the account has already spent. Iteration
+5 met this twice — T7's `ddl` arm and T8's held-out run each lost one question to
+a rate limit that nothing saw coming, and the second cost the iteration its
+`EVALS.md` entry.
+
+Groq returns the answer on every response: `x-ratelimit-limit-tokens`,
+`x-ratelimit-remaining-tokens` and `x-ratelimit-reset-tokens`, plus `retry-after`
+on a 429. Exposing them follows D-1's settled precedent exactly — a best-effort
+attribute on the concrete provider, read with `getattr`, alongside `last_usage`.
+**`complete(system, user) -> str` does not change**, which is the whole reason
+that precedent exists.
+
+Two things it would buy: a pre-flight check that refuses on *measured* remaining
+quota rather than on a projection, and a reported reset time, so the question
+*when does the quota clear* stops being answered from memory. Iteration 5 could
+only answer it as "probably 00:00 UTC, unverified", which is precisely the shape
+of claim this project spends its effort eliminating.
+
+> **PULLED FORWARD 2026-09-04 to be the next task worked, ahead of Iteration
+> 6.** Iteration 5 closed with two multi-pass held-out runs refused for rate
+> limits at 120,000 and 165,000 of a 200,000-token day — a fifth to a third of
+> the budget still unspent, with the failures appearing inside sustained runs
+> and worsening as runs lengthened. That is a burst ceiling, not daily
+> exhaustion, and **every guard the project owns polices a daily quantity**, so
+> none of them can see it. Until the headers are read, the project cannot say
+> which limit binds it, and no infrastructure decision that depends on the
+> answer should be taken. B-4 is the immediate case in point.
+>
+> **Originally filed against Iteration 7, and the discrepancy is deliberate.**
+> The
+> instruction was to file this in the Iteration 6 backlog, but §7's map assigns
+> Iteration 6 to *Frontend* and Iteration 7 to *Hardening — history, feedback,
+> latency and cost logging, rate limiting, caching*, which names this item almost
+> literally. Recorded against 7 so the charter stays self-consistent; move it if
+> the intent was to pull it forward.
+
+### B-2 — AC13's glossary-off control
+
+Specified in [`008-prompt-tuning.md`](008-prompt-tuning.md) at AC13. **Iteration
+5 closed without it**, which is a knowing exception rather than an oversight:
+the 178-token glossary ships on every call and nothing measures whether it pays
+for itself. B-3 was discharged at the same close — `EVALS.md` now carries a
+held-out 100.0%.
+
+### B-4 — Alternative LLM provider, deferred as its own milestone
+
+Raised at Iteration 5's close, when the free tier's rate limiting made a
+5x-larger daily quota elsewhere look attractive. **Deferred, for two reasons
+that are worth keeping written down**, because they will look weaker later than
+they do now:
+
+1. **It probably solves the wrong problem.** The evidence points at a burst
+   ceiling, not a daily one (B-1). A larger daily bucket does not widen a
+   per-minute pipe, and the migration would reproduce the same failure
+   somewhere new.
+2. **It retires three iterations of comparability.** Every `EVALS.md` entry
+   names its model because a number is only comparable to another taken the
+   same way, and Iteration 4 already records what a model switch costs. A swap
+   retires the Iteration 3 baseline, Iteration 4's figures, T7's A/B and
+   Iteration 5's held-out number in one move.
+
+**The swap itself is cheap; the re-baselining is not.** §6's swappable-provider
+commitment means a new provider is one module in `api/llm/` plus a branch in
+the factory, and the Iteration 4 decision to use a text action protocol rather
+than vendor tool schemas means nothing above `api/llm/` moves. What is not
+cheap: re-running the Iteration 3 baseline and the T7 rendering A/B to
+re-establish comparability, and re-measuring the prompt-size pins under a
+different tokenizer.
+
+Two specifics for whoever picks this up. `test_ac2_no_vendor_sdk_outside_the_llm_package`
+scans only for `groq` imports, so **adding a provider without widening it
+silently narrows the swappability guarantee to one vendor**. And the prompt-size
+pins are `o200k_base` figures: T1 measured `o200k_base` against `cl100k_base`
+as a control and they agree within 6 tokens on a 944-token prompt, so a
+different real tokenizer moves the pins by single digits rather than
+invalidating the method.
+
+---
+
+## 9. Open questions
 
 Tracked here rather than assumed. Each is resolved by the spec of the iteration
 that first depends on it.
