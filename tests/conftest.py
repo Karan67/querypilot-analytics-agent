@@ -127,3 +127,25 @@ def _load_dotenv() -> None:
 
 
 _load_dotenv()
+
+
+@pytest.fixture(autouse=True)
+def isolated_spend_ledger(tmp_path, monkeypatch):
+    """Never let a test write the real daily-spend ledger.
+
+    **Autouse, and structural on purpose.** The B-5 tests isolate the ledger
+    explicitly, but two tests elsewhere drive `main()` end to end and reach the
+    ledger write without knowing it exists -- and they wrote 6,800 tokens and 40
+    requests of fake spend into the real file on the first full run after B-5
+    landed. Gitignored, so it would never have shown up in review; and read at
+    the next real run's pre-flight, where it would have silently moved the
+    daily guard by the size of a small benchmark.
+
+    This is the `EVALS_PATH` trap of T5 in a second place, and per-test
+    discipline is what failed there too. A test that has to remember to isolate
+    shared state is a test that will one day forget, so the isolation is applied
+    to every test whether it asks or not.
+    """
+    from evals import ledger
+
+    monkeypatch.setattr(ledger, "DEFAULT_PATH", tmp_path / "spend.json")
