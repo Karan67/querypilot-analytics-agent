@@ -250,7 +250,7 @@ this table only when it ships or when a spec records why it never will.
 | **B-2** | AC13's glossary-off control arm | Iteration 5 T7 | open |
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
-| **B-5** | Re-denominate AC8's budget guards in rate, not daily tokens | B-1 | open — see below |
+| **B-5** | Guard all three limits, and count the day not the invocation | B-1 | **built 2026-09-04**, live check owed |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 
@@ -393,6 +393,48 @@ its own budget* but *does it fit in what the account has left, across all
 three limits, at the rate it intends to spend it*. Deliberately **not**
 folded into B-1: it touches both budget guards, their tests, the CLI surface
 and two specs, and B-1 was filed as telemetry.
+
+> **BUILT 2026-09-04. Live end-to-end verification is still owed** — the
+> account was at roughly 199,000 of 200,000 tokens when this landed, so
+> every test is against fakes and a temporary ledger. That is the weaker
+> half of the usual standard and is recorded as such rather than glossed.
+>
+> **Only one limit needed a ledger, and that asymmetry is the design.**
+> Where the provider reports what is left, asking it beats bookkeeping:
+>
+> | limit | how the guard knows | outcome |
+> |---|---|---|
+> | 8,000 tokens per minute | live, from headers | advisory note, never a refusal |
+> | 1,000 requests per day | live, from headers | refuses before the first question |
+> | 200,000 tokens per day | `evals/ledger.py`, corrected by any 429 | refuses before the first question |
+>
+> The minute bucket is deliberately **not** a refusal. Pacing owns that
+> limit, and blocking on it would refuse every run larger than 8,000 tokens,
+> which is every run worth making. It reports the projected wall clock
+> instead. A mutation that turned the note into a refusal was caught by five
+> tests, two of them end to end.
+>
+> **The ledger is a floor, not the truth.** It counts what this project
+> spent through the eval runner; the deployed API, another checkout or a
+> colleague sharing the key are invisible to it. Under-counting fails the
+> safe way round -- the guard approves a run the provider then refuses,
+> which is today's behaviour and no worse. A 429 is authoritative and
+> overwrites the estimate with the provider's own `Used` figure, so a
+> refusal is not only a failure but a free correction.
+>
+> Keyed by UTC date, because that is when the limit resets and the machine's
+> local date is not necessarily it. Iteration 5 nearly mis-planned a day on
+> exactly that gap: local time was already the 4th while UTC was the 3rd.
+>
+> **A test wrote real state, and that is why the fix is structural.** The
+> first full run after B-5 landed put 6,800 tokens and 40 requests of fake
+> spend into the real ledger, from two tests elsewhere that drive `main()`
+> end to end and had no reason to know a ledger existed. Gitignored, so it
+> would never have appeared in review, and read at the next real run's
+> pre-flight, where it would have moved the daily guard by the size of a
+> small benchmark. This is T5's `EVALS_PATH` trap in a second place, and
+> per-test discipline is what failed there too, so isolation is now an
+> autouse fixture applied to every test whether it asks or not.
 
 ### B-2 — AC13's glossary-off control
 
