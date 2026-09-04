@@ -528,3 +528,42 @@ was too little evidence to remove a tool; the full runs now agree with the
 probe. That is a fact for Iteration 5 to act on — either the prompt never gives
 the model a reason to want example values, or the questions never need them.
 Removing it is now a defensible option; it was not before.
+
+---
+
+## 2026-09-04 15:08 — loop, schema full, rendering compact, split test
+
+| | |
+|---|---|
+| Strategy | `loop` |
+| Schema | `full` |
+| Model | `openai/gpt-oss-120b` |
+| Temperature | 0.0 |
+| Prompt fingerprint | `91036a089282` |
+| Schema rendering | `compact` |
+| Schema fingerprint | `e0b31c713530` |
+| Glossary | on |
+| Split | `test` |
+| Split fingerprint | `ec65d5ba81d6` |
+| Test failures revealed | no |
+| Tokens (all passes) | 24,276 (20,413 prompt + 3,863 completion) |
+| Token source | provider (billed) |
+| Provider calls | 20 |
+| Dataset | `questions.yaml` v3, 20 questions |
+| Authorship | agent-derived from schema coverage, human-reviewed |
+| Provider-call budget | 3 |
+| Passes | 1 |
+
+**Execution accuracy: 100.0%**
+
+| Metric | Value |
+|---|---|
+| Gate 2 pass rate | 100.0% |
+| Execution rate | 100.0% |
+
+| Tier | Accuracy |
+|---|---|
+| easy (6) | 100.0% |
+| medium (6) | 100.0% |
+| hard (4) | 100.0% |
+| expert (4) | 100.0% |

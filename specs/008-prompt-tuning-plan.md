@@ -473,6 +473,25 @@ record is a better argument for the glossary than any amount of prose.
 > projection is a local worst case and the in-flight check is the provider's
 > actual bill.
 
+> **T8 FINDING 2026-09-04: the limit that stopped us is probably not the one
+> this section is denominated in.** Both multi-pass held-out runs were refused
+> for rate limits, at **120,000 and 165,000 of a 200,000-token daily budget** —
+> that is, with a fifth to a third of the day still unspent. Single passes
+> earlier the same day were clean; the failures appeared *inside* sustained
+> multi-pass runs and got worse as the runs got longer (2 rate limits in 3
+> passes, then 3 in 2 passes).
+>
+> That signature is a **burst / per-minute** ceiling, not daily exhaustion.
+> Every guard in this section polices a *daily* quantity, so none of them can
+> see it, and no amount of budget arithmetic will.
+>
+> **This is why B-1 was pulled forward** (charter §8). Groq returns
+> `x-ratelimit-remaining-tokens`, `x-ratelimit-reset-tokens` and `retry-after`
+> on every response, and reading them settles TPM-versus-TPD in one run. It is
+> also why the provider migration was **not** taken: a larger daily bucket
+> does not fix a per-minute ceiling, and switching would have retired three
+> iterations of baseline comparability to chase the wrong limit.
+
 > **AMENDED at T7, 2026-09-04 - one knob could not drive two guards.** The
 > authorisation this section anticipated - raise the pre-flight ceiling, keep
 > the billed guard - turned out to be inexpressible. `--token-budget` fed
@@ -653,7 +672,50 @@ than a logged look.
 | **T7** | Run the A/B on the **dev split only**, apply D-2's rule | Four configurations, decision applied mechanically |
 | **T8** | **One test-split run**, recorded | A number in `EVALS.md` with its split fingerprint |
 
-> **T8 RUN 2026-09-04, NOT RECORDED — re-run owed.** The held-out run
+> **T8 CLOSED 2026-09-04. Filed: 100.0% on the held-out split, one pass.**
+>
+> `compact`, glossary on, `--split test`, split fingerprint `ec65d5ba81d6`,
+> schema fingerprint `e0b31c713530`, `openai/gpt-oss-120b`, 20/20, zero rate
+> limits, 24,276 tokens billed over 20 calls. `--reveal-test-failures` was
+> **not** passed. Every tier 100%, including `expert` 4/4 on questions nothing
+> was tuned against.
+>
+> **That headline is a point estimate, and eight passes say the point moves.**
+> Five runs of the identical configuration on the identical 20 questions, all
+> at temperature 0:
+>
+> | run | passes | genuine wrong | rate limited | filed |
+> |---|---|---|---|---|
+> | 2026-09-03 late | 1 | 2 | 1 | no — AC18 |
+> | 2026-09-04 #1 | 1 | 1 (`expert-010`) | 0 | no — D-3 leak, see below |
+> | 2026-09-04 #2 | 1 | **0** | 0 | **yes** |
+> | 2026-09-04 #3 | 3 | 2 of 60 (pass 1 was 20/20), spread 90.0–100.0% | 2 | no — AC18 |
+> | 2026-09-04 #4 | 2 | 1 of 40, spread 85.0–95.0% | 3 | no — AC18 |
+>
+> **Six genuine wrong answers across eight passes — 0 to 2 per pass, and
+> `007`'s measured 0.0% spread across three passes does not survive this.**
+> That claim is what AC18 leans on when it says *a difference of one question
+> is a real difference*. On a 20-question split the noise is at least two.
+>
+> **This reaches back into D-2.** `compact` was adopted over `ddl` on a
+> 0.5-question dev margin — comfortably inside the noise band measured here.
+> The rule was pre-registered and applied mechanically, and the adoption
+> stands: `compact` was never *worse*, and it is 188 measured tokens a call
+> cheaper. But **the accuracy half of that comparison is not supported**, and
+> anywhere this plan reads as though `compact` is more accurate, it is
+> overclaiming. It is cheaper and not worse. That is the whole claim.
+>
+> **The first attempt at this run leaked held-out detail into the record.**
+> `format_report` wrote every failing question's text and generated SQL into
+> `EVALS.md` unconditionally, three rows below the `Test failures revealed |
+> no` that the same block asserted — `print_report` had always gated it and
+> the recorded path never did. The append was uncommitted and was reverted,
+> the gate was added, and the run was repeated through the corrected path.
+> **The assistant had by then seen that `expert-010` was the failing
+> question**; nothing about the prompt, the glossary or the dataset was
+> changed in response, and this is recorded so a later reader can weigh it.
+>
+> **Superseded note — the original T8 attempt:** The held-out run
 > happened and produced a number; `--record` was refused by T5's rule because
 > one of the 20 questions was rate limited, which makes the figure a floor
 > rather than a measurement. `EVALS.md` is unchanged and the iteration stays

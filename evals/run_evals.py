@@ -651,16 +651,30 @@ def format_report(
         "|---|---|",
     ]
 
+    # Counted over the questions this run actually scored, not the whole
+    # corpus. A `--split test` run scores 6 easy questions out of 14, and
+    # recording `easy (14) 100.0%` overstates what was measured by more than
+    # twice -- permanently, in a file whose only job is to make numbers
+    # comparable. Found at T8 alongside the D-3 leak above.
+    scored = questions_in_split(dataset, first.split)
     for tier in TIERS:
         if tier in first.per_tier:
-            count = len(dataset.by_tier(tier))
+            count = sum(1 for question in scored if question.tier == tier)
             lines.append(f"| {tier} ({count}) | {_percent(first.per_tier[tier])} |")
 
     if first.breakdown:
         lines += ["", "| Failure | Count |", "|---|---|"]
         lines += [f"| {name} | {count} |" for name, count in first.breakdown.items()]
 
-    if first.failures:
+    # D-3, which `print_report` has always applied and this function never did.
+    # The consequence was worse here than in the terminal: `format_report` is the
+    # path that *persists*, so a held-out run wrote every failing question's text
+    # and generated SQL permanently into an append-only file, three rows below a
+    # `Test failures revealed | no` that the same block had just asserted.
+    # Found at T8 by reading back what was recorded.
+    withheld = first.split == SPLIT_TEST and not revealed
+
+    if first.failures and not withheld:
         # AC18. This list is Iteration 5's backlog; a run that printed only a
         # percentage would throw away the one thing that says what to fix.
         lines += ["", "<details>", "<summary>Failing cases (first pass)</summary>", ""]
@@ -671,6 +685,17 @@ def format_report(
             if case.error:
                 lines.append(f"  - {case.error.strip()}")
         lines += ["", "</details>"]
+    elif first.failures:
+        # The count is already in the breakdown above; what is withheld is
+        # *which* questions, which is the part that enables overfitting. Saying
+        # so in the record makes the absence deliberate rather than an omission
+        # a later reader has to guess at.
+        lines += [
+            "",
+            f"{len(first.failures)} failing question(s). Per-question detail is "
+            f"withheld: this is the held-out split and "
+            f"`--reveal-test-failures` was not passed (D-3).",
+        ]
 
     return "\n".join(lines) + "\n"
 
@@ -1144,8 +1169,16 @@ def main(argv: list[str] | None = None) -> int:
         reveal_test_failures=args.reveal_test_failures,
     )
 
+    # Every pass, not the first. A three-pass run whose second pass hit the
+    # quota would have been recorded as a clean measurement, because this read
+    # `reports[0]` -- the same pass-one blind spot as the token total fixed at
+    # T7 and the D-3 leak fixed at T8, in the same function. The guard is only
+    # worth having if it sees the whole run it is guarding.
     rate_limited = sum(
-        1 for case in reports[0].cases if case.category == CATEGORY_RATE_LIMITED
+        1
+        for report in reports
+        for case in report.cases
+        if case.category == CATEGORY_RATE_LIMITED
     )
     if args.record and rate_limited:
         # AC18: no prompt change is accepted on a run that was rate limited,
