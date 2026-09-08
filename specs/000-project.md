@@ -247,10 +247,11 @@ this table only when it ships or when a spec records why it never will.
 | # | Item | Opened | Target |
 |---|---|---|---|
 | ~~B-1~~ | ~~Rate-limit telemetry on `GroqProvider`~~ | Iteration 5 T8 | **discharged 2026-09-04** |
-| **B-2** | AC13's glossary-off control arm | Iteration 5 T7 | open |
+| ~~B-2~~ | ~~AC13's glossary-off control arm~~ | Iteration 5 T7 | **discharged 2026-09-08** |
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
 | **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | open — accepted debt |
+| **B-7** | Which `expert` questions the glossary actually rescues | B-2 | open |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
@@ -501,6 +502,108 @@ Specified in [`008-prompt-tuning.md`](008-prompt-tuning.md) at AC13. **Iteration
 the 178-token glossary ships on every call and nothing measures whether it pays
 for itself. B-3 was discharged at the same close — `EVALS.md` now carries a
 held-out 100.0%.
+
+> **MEASURED AND DISCHARGED 2026-09-08. The glossary pays for itself, and the
+> effect is confined entirely to the tier it was built for.**
+>
+> Three passes, `--split dev`, `--rendering ddl`, `openai/gpt-oss-120b`, one
+> variable between the arms. Prompt `0d280c367c5e`, schema `f289a58e7ef7`,
+> split `ec65d5ba81d6`, dataset v3.
+>
+> | arm | pass | overall | easy | medium | hard | **expert** | failures | billed |
+> |---|---|---|---|---|---|---|---|---|
+> | glossary on | 1 | 96.7% | 8/8 | 9/10 | 6/6 | **6/6** | 1 `no_sql_returned` (`medium`) | 40,502 |
+> | glossary off | 1 | 93.3% | 8/8 | 10/10 | 6/6 | **4/6** | 2 `wrong_result` (`expert`) | 34,950 |
+> | glossary off | 2 | 90.0% | 8/8 | 10/10 | 6/6 | **3/6** | 3 `wrong_result` (`expert`) | 34,901 |
+>
+> **The headline numbers prove nothing and are not the evidence.** A spread of
+> 96.7 / 93.3 / 90.0 sits inside the noise this project has already measured —
+> eight passes of one Iteration 5 configuration produced 0 to 2 wrong answers
+> each. Read the tiers instead.
+>
+> **Every non-`expert` question is correct in both control passes — 24/24,
+> twice — and all five control failures are `wrong_result` in `expert`.** That
+> is the mechanism AC15 and AC16 predicted, observed: an `expert` question is
+> hard because of *interpretation*, so removing the definitions produces a
+> confident wrong answer rather than a broken one. Pooled, glossary-off
+> `expert` is **7/12**; glossary-on `expert` is 6/6 here, and 6/6 again in T7's
+> dev run and B-5's 30/30 dev run — though **both of those vary a second
+> variable**, T7's being `compact` and B-5's rendering never having been
+> written down. The single-variable comparison is the `ddl` pair above.
+>
+> **The cost, counted rather than recalled: 179 tokens a call** — 1,104 against
+> 925 for the assembled system prompt, `o200k_base`. That is **not** a
+> disagreement with the 178 recorded in `glossary.py` and quoted above: the
+> block still counts 178 standalone, re-measured today, and the two figures are
+> different quantities — 178 is the block on its own, 179 is what it adds to
+> the prompt it is concatenated into, and the extra token is the join. The
+> in-situ figure is the one a cost decision wants. Over a 30-question pass that
+> is 5,370 tokens. The arms' billed gap was 5,552, and
+> **that number is not attributed to the glossary**: the treatment run's call
+> count was not recorded and its `no_sql_returned` may have spent extra calls.
+>
+> **Two limits on this conclusion, stated rather than buried.** The tier holds
+> six questions, and two passes over the same six are not twelve independent
+> trials, so 7/12 must not be read as an n of 12. And **neither control pass
+> recorded which questions failed**, so *the same two questions failing every
+> time plus one flake* and *the glossary lifting the tier broadly* both fit this
+> data. Pass 2 was run without `--verbose`, which costs nothing and would have
+> separated them. That specific question is now **B-7** rather than a caveat
+> inside a discharged row.
+>
+> **Nothing was appended to `EVALS.md`, deliberately.** These are dev-split
+> tuning runs, and both earlier arms went unrecorded; recording only the third
+> would have made the file's account of this experiment less honest, not more.
+> The measurement lives here and in `HANDOFF.md` §8.
+>
+> **A projection error is what had made this look unaffordable**, and it is
+> kept here because it is the same shape of mistake as B-1's. The pre-flight
+> worst case had been quoted once, as 102,240, as though it described the
+> experiment. It describes *one arm*: the projection scales with the prompt, so
+> the 179-token-lighter control arm projects **86,130**, and against a ledger of
+> 110,763 that is 196,893 — inside the 200,000 ceiling. Only the treatment arm
+> was ever refused. The control pass therefore ran with **the daily guard
+> untouched at its measured 200,000**; `--max-projection 90000` raised only that
+> run's own pre-flight ceiling, which is what lets a `--token-budget 50000`
+> breaker exist alongside it. **A projection that varies with the configuration
+> must be recomputed per arm.**
+>
+> **The ledger confirmed itself again.** The day moved 110,763 → 145,778, a
+> delta of 35,015 against 34,901 billed: the 114-token difference and the 31st
+> request are the single pre-flight probe, which is exactly what B-5 moved the
+> counting to `PacedProvider` to capture.
+
+### B-7 — Which `expert` questions the glossary actually rescues
+
+Opened by B-2's discharge, and deliberately narrower than the row it descends
+from. B-2 answered AC13: the glossary is worth its 179 tokens, and the whole of
+its effect sits in the `expert` tier. What B-2 cannot say is **which questions**.
+
+Five `wrong_result` failures across two glossary-off passes, and **no run
+recorded their ids**. Two readings fit that equally well:
+
+1. Two or three `expert` questions are genuinely glossary-dependent and fail
+   every time, with the pass-to-pass difference being ordinary noise.
+2. The glossary lifts the tier broadly, and a different subset fails each pass.
+
+The distinction matters beyond bookkeeping. Under (1) the glossary is doing a
+narrow, nameable job that a shorter block might do as well, and the tier's
+`expert` label is carried by a couple of questions. Under (2) it is doing what
+AC16 describes — making a class of question answerable — and shortening it is a
+regression waiting to happen. **`008` AC16's test is that a competent analyst
+produces one answer given the glossary and cannot without it**; naming the
+questions is what would let that be checked case by case rather than inferred
+from a count.
+
+**The cheap fix is a flag, not an experiment.** A glossary-off dev pass with
+`--verbose` prints every failing case with its SQL, at no token cost over a
+plain pass — the omission on B-2's pass 2 is the only reason this is open.
+Roughly 35,000 tokens on a day with room, and the answer is the terminal
+output; nothing new needs building.
+
+**Do not run it against a ledger that cannot hold it.** The worst-case
+projection for a glossary-off dev pass is 86,130, which is the figure the daily
+guard checks — not the ~35,000 such a run actually bills.
 
 ### B-4 — Alternative LLM provider, deferred as its own milestone
 
