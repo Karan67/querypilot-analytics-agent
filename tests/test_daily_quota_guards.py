@@ -356,3 +356,56 @@ def test_the_real_ledger_is_isolated_from_the_whole_suite():
         f"the ledger is not redirected: {ledger.DEFAULT_PATH}"
     )
     assert ledger.DEFAULT_PATH.name == "spend.json"
+
+
+def test_the_ledger_records_the_wrapper_not_the_reports(monkeypatch, tmp_path):
+    """**Found by the first live run**, which recorded 30 requests against
+    Groq's 32.
+
+    `EvalReport`s cover scored questions. The day's quota is charged for every
+    call the process made, and the pre-flight probe makes one that no report
+    ever sees. The two figures are deliberately different here so that a ledger
+    reading the reports cannot pass.
+    """
+    import evals.run_evals as runner
+    from api.llm.base import TokenUsage
+    from evals.scoring import CaseResult, aggregate
+
+    path = tmp_path / "spend.json"
+    monkeypatch.setattr(ledger, "DEFAULT_PATH", path)
+
+    # Usage is set on the *inner* fake, because `main` wraps it in a
+    # `PacedProvider` and that wrapper is what does the counting. Setting
+    # `spent` on the inner object instead looks right and tests nothing -- the
+    # first version of this test did exactly that.
+    provider = QuotaFake()
+    provider.last_usage = TokenUsage(
+        prompt_tokens=60, completion_tokens=13, calls=1, measured=True
+    )
+    _patch_provider(monkeypatch, provider)
+
+    report = aggregate(
+        [CaseResult(id="easy-001", tier="easy", question="q", correct=True)],
+        split="test",
+    )
+    import dataclasses
+
+    report = dataclasses.replace(
+        report,
+        usage=TokenUsage(
+            prompt_tokens=900, completion_tokens=100, calls=5, measured=True
+        ),
+    )
+    monkeypatch.setattr(runner, "run_evaluation", lambda *a, **k: [report])
+
+    runner.main(["--split", "test", "--strategy", "loop"])
+
+    spend = ledger.load(path)
+
+    # The wrapper made exactly one call here -- the pre-flight probe, since
+    # `run_evaluation` is faked -- and that call is invisible to the report,
+    # which claims five. The ledger must follow the wrapper.
+    assert (spend.tokens, spend.requests) == (73, 1), (
+        "the ledger took the reports' figures, missing the calls no report covers"
+    )
+    assert spend.tokens != 1_000, "1,000 is the reports' figure"

@@ -250,7 +250,7 @@ this table only when it ships or when a spec records why it never will.
 | **B-2** | AC13's glossary-off control arm | Iteration 5 T7 | open |
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
-| **B-5** | Guard all three limits, and count the day not the invocation | B-1 | **built 2026-09-04**, live check owed |
+| ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 
@@ -394,10 +394,43 @@ three limits, at the rate it intends to spend it*. Deliberately **not**
 folded into B-1: it touches both budget guards, their tests, the CLI surface
 and two specs, and B-1 was filed as telemetry.
 
-> **BUILT 2026-09-04. Live end-to-end verification is still owed** — the
-> account was at roughly 199,000 of 200,000 tokens when this landed, so
-> every test is against fakes and a temporary ledger. That is the weaker
-> half of the usual standard and is recorded as such rather than glossed.
+> **VERIFIED LIVE 2026-09-08, and the run found three defects.**
+>
+> A 30-question dev run on a fresh quota: **100.0%, 30/30, zero rate
+> limits**, 35,083 tokens over 30 calls, with the pacer taking **20 waits
+> totalling 135 seconds**. A run of that size had been rate-limited on every
+> previous attempt, so pacing is doing what it was built for.
+>
+> **The ledger's token figure is Groq's own.** It is the sum of the per-call
+> `usage` the provider reports, so there is nothing to reconcile: 35,083
+> billed, 35,083 recorded.
+>
+> **The request figure was wrong, and the run is what showed it.** The
+> ledger recorded 30 against Groq's own count of 32. The two missing calls
+> were the runner's *own* pre-flight probes -- real spend, charged to the
+> day, and structurally invisible to a ledger that summed `EvalReport`s,
+> because a probe produces no report. Counting moved to `PacedProvider`,
+> which sees every call by construction. Two further defects fell out of the
+> same reading: the probe ran **twice** per invocation, once in the
+> projection block and once in the quota block, spending a request to learn
+> something it already knew; and the wall-clock estimate read *at least 11
+> minutes* from the worst-case projection when the real run took four, since
+> a worst case is the right basis for a refusal threshold and the wrong one
+> for a duration someone plans around.
+>
+> **The guard was then tripped on purpose, which is the part that matters.**
+> With 35,083 already spent, a `--daily-token-limit 100000` is a ceiling the
+> run's own 85,320-token projection passes comfortably -- and the day's
+> 120,403 does not. Before B-5 that run would have started, burned the
+> remaining allowance and produced a rate-limited result AC18 refuses to
+> record. It now refuses before the first question, names all three figures,
+> spends only the single probe, and leaves the ledger untouched.
+>
+> **Still unexercised live: reconciliation.** The path that overwrites the
+> estimate with the provider's `Used` figure only runs when a 429 actually
+> names TPD, which requires a run late enough in the day to be refused --
+> the opposite of what a verification run wants. It is covered by fakes
+> against a real captured 429 body and has not been seen end to end.
 >
 > **Only one limit needed a ledger, and that asymmetry is the design.**
 > Where the provider reports what is left, asking it beats bookkeeping:

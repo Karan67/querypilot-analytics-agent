@@ -590,7 +590,7 @@ def check_quota(
             reasons.append(
                 f"NOTE tokens per minute: {projected_tokens:,} projected against "
                 f"an {tokens.limit:,}/minute bucket, so pacing will stretch this "
-                f"run over at least {minutes:.0f} minutes. Not a refusal."
+                f"run over up to {minutes:.0f} minutes. Not a refusal."
             )
 
     return reasons
@@ -1281,14 +1281,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print(f"Projected worst case: {projected:,} tokens.", file=sys.stderr)
-        # Stated next to the projection it should be read against. The
-        # projection is a local worst case in *tokens per run*; the limits below
-        # are the provider's, and Iteration 5 discovered the hard way that they
-        # are not denominated in the same thing -- 200,000 tokens a day was
-        # never the constraint, 8,000 a minute was.
-        limits = probe_rate_limits(provider)
-        if limits:
-            print(f"Pre-flight {limits}", file=sys.stderr)
+        # The provider's own limits are reported by the B-5 block below rather
+        # than here. Probing in both places cost two requests where one does,
+        # which the first live run made visible as a two-request gap between
+        # the ledger and Groq's count.
         if args.max_projection is not None:
             # Said out loud, on the run it applies to. A raised ceiling is a
             # deliberate act and should not be inferable only from shell
@@ -1422,9 +1418,15 @@ def main(argv: list[str] | None = None) -> int:
     # B-5: the day's running total, written whether or not the run is
     # recorded. `EVALS.md` is about accuracy and refuses a rate-limited run; the
     # ledger is about quota, and a rate-limited run spent it just the same.
-    spent_now = total_usage(reports)
+    # Taken from the provider wrapper rather than from the reports. The
+    # reports cover scored questions; the wrapper covers every call the process
+    # made, which is what the day's quota was actually charged for. The
+    # difference is the pre-flight probe, and the first live run found it as a
+    # two-request gap against Groq's own count.
+    spent_now = getattr(provider, "spent", None) or total_usage(reports)
+    calls_made = getattr(provider, "calls_made", 0) or total_usage(reports).calls
     if not args.ignore_daily_spend and spent_now.measured:
-        after = ledger.record(spent_now.total_tokens, spent_now.calls)
+        after = ledger.record(spent_now.total_tokens, calls_made)
         print(f"  {after.describe(args.daily_token_limit)}")
 
     rate_limited = sum(
