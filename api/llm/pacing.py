@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import time
 
-from api.llm.base import RateLimitError
+from api.llm.base import RateLimitError, TokenUsage
 
 #: Fraction of the token bucket kept in reserve.
 #:
@@ -89,6 +89,15 @@ class PacedProvider:
         self._retry_after: float | None = None
         self.total_slept = 0.0
         self.waits = 0
+        #: Everything spent through this wrapper, including calls no eval
+        #: report ever sees. The first live B-5 run recorded 30 requests
+        #: against Groq's 32, and the missing two were the runner's own
+        #: pre-flight probes -- spend the ledger is meant to track and had
+        #: no way to learn about, because it was summing `EvalReport`s and
+        #: a probe produces none. The wrapper sees every call by
+        #: construction, which is what makes it the right place to count.
+        self.spent = TokenUsage()
+        self.calls_made = 0
 
     # --- pass-through surface ------------------------------------------------
 
@@ -129,6 +138,10 @@ class PacedProvider:
             raise
         finally:
             self._snapshot_at = self._monotonic()
+            self.calls_made += 1
+            usage = self.last_usage
+            if usage is not None:
+                self.spent = self.spent + usage
 
     def _wait_seconds(self) -> float:
         """How long to pause before the next call.

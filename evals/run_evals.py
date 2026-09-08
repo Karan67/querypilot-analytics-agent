@@ -50,6 +50,7 @@ from api.db.execution import CATEGORY_REJECTED, execute_sql
 from api.llm.base import TokenUsage
 from api.llm.pacing import PacedProvider
 from api.llm.rate_limits import limit_from_message
+from evals import ledger
 from api.llm.counting import (
     TokenCountingUnavailable,
     count_tokens,
@@ -505,6 +506,94 @@ def project_run_cost(
 
     per_call = count_tokens(system) + count_tokens(longest)
     return project_worst_case(per_call, len(questions), max_calls)
+
+
+#: The daily token allowance, which **no provider header reports** (B-1).
+#:
+#: Every other limit in this file is read live from the provider, because asking
+#: is more truthful than believing. This one cannot be: it is named only in a
+#: 429 body, and by then the run is already refused. 200,000 is Groq's free tier
+#: as stated in that body -- `Limit 200000` -- so it is a measured figure rather
+#: than a documentation figure, but it is the one number here that goes stale
+#: silently if the tier changes. `--daily-token-limit` overrides it.
+DEFAULT_DAILY_TOKEN_LIMIT = 200_000
+
+
+def project_requests(dataset: Dataset, split: str | None, max_calls: int, repeat: int) -> int:
+    """Worst-case provider calls for a run.
+
+    Worst case for the same reason `project_run_cost` is (AC8): a run that dies
+    at question 31 wastes the 30 that worked. Measured reality is close to one
+    call per question -- 60 calls for 60 attempts in Iteration 5's `compact` arm
+    -- so this over-states a healthy run threefold and will refuse some runs
+    that would have fitted. That is the trade AC8 already made for tokens, kept
+    here rather than quietly reversed for requests.
+    """
+    return len(questions_in_split(dataset, split)) * max_calls * repeat
+
+
+class QuotaExceeded(RuntimeError):
+    """A limit would be crossed. Distinct from `TokenBudgetExceeded`, which is
+    about *this run's* ceiling; this is about the account's day."""
+
+
+def check_quota(
+    *,
+    projected_tokens: int,
+    projected_requests: int,
+    spend,
+    snapshot,
+    daily_token_limit: int,
+) -> list[str]:
+    """Every reason this run should not start. Empty means go.
+
+    Returns all of them rather than the first. A run refused three times in a
+    row, each for a different limit, is a worse experience than one told at the
+    outset that it needs a smaller split, a fresh day and a slower pace.
+
+    Each check is skipped when the figure it needs is unavailable, because an
+    unknown limit must not become a refusal -- the same rule the pacer follows.
+    """
+    reasons = []
+
+    # 1. Tokens per day. The ledger, because nothing reports it.
+    if spend is not None:
+        after = spend.tokens + projected_tokens
+        if after > daily_token_limit:
+            source = "provider-reconciled" if spend.reconciled else "local estimate"
+            reasons.append(
+                f"tokens per day: {spend.tokens:,} already spent today "
+                f"({source}) plus {projected_tokens:,} projected = {after:,}, "
+                f"over the {daily_token_limit:,} limit. This is the limit that "
+                f"stopped Iteration 5, and it is not reported in any header."
+            )
+
+    if snapshot is None or not snapshot.known:
+        return reasons
+
+    # 2. Requests per day. Read live -- the provider reports what is left.
+    requests = snapshot.requests
+    if requests.remaining is not None and projected_requests > requests.remaining:
+        reasons.append(
+            f"requests per day: {projected_requests:,} projected against "
+            f"{requests.remaining:,} remaining of {requests.limit:,}. "
+            f"Unguarded before B-5, and the cheaper limit to exhaust: a "
+            f"three-pass dev run is 90 calls."
+        )
+
+    # 3. Tokens per minute. Not a refusal -- pacing exists for exactly this --
+    #    but the projected wall clock is worth knowing before committing to it.
+    tokens = snapshot.tokens
+    if tokens.limit and projected_tokens > tokens.limit:
+        minutes = projected_tokens / tokens.limit
+        if minutes > 1:
+            reasons.append(
+                f"NOTE tokens per minute: {projected_tokens:,} projected against "
+                f"an {tokens.limit:,}/minute bucket, so pacing will stretch this "
+                f"run over up to {minutes:.0f} minutes. Not a refusal."
+            )
+
+    return reasons
 
 
 def run_pass(
@@ -1036,6 +1125,29 @@ def build_parser() -> argparse.ArgumentParser:
             "doing so."
         ),
     )
+    parser.add_argument(
+        "--daily-token-limit",
+        type=int,
+        default=DEFAULT_DAILY_TOKEN_LIMIT,
+        dest="daily_token_limit",
+        help=(
+            "the account's tokens-per-day allowance (B-5). Distinct from "
+            "--token-budget, which is this run's own ceiling: this is checked "
+            "against what the whole day has already spent. A constant rather "
+            "than a live reading because no header reports it -- it is named "
+            "only in a 429 body, by which point the run is already refused."
+        ),
+    )
+    parser.add_argument(
+        "--ignore-daily-spend",
+        action="store_true",
+        dest="ignore_daily_spend",
+        help=(
+            "skip the accumulated-spend guard and the ledger write. For a run "
+            "against a different key than the ledger was built from, where its "
+            "totals describe someone else's day."
+        ),
+    )
     parser.add_argument("--dataset", type=pathlib.Path, default=None, help="dataset path")
     parser.add_argument(
         "--verbose", action="store_true", help="print every failing case with its SQL"
@@ -1169,14 +1281,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print(f"Projected worst case: {projected:,} tokens.", file=sys.stderr)
-        # Stated next to the projection it should be read against. The
-        # projection is a local worst case in *tokens per run*; the limits below
-        # are the provider's, and Iteration 5 discovered the hard way that they
-        # are not denominated in the same thing -- 200,000 tokens a day was
-        # never the constraint, 8,000 a minute was.
-        limits = probe_rate_limits(provider)
-        if limits:
-            print(f"Pre-flight {limits}", file=sys.stderr)
+        # The provider's own limits are reported by the B-5 block below rather
+        # than here. Probing in both places cost two requests where one does,
+        # which the first live run made visible as a two-request gap between
+        # the ledger and Groq's count.
         if args.max_projection is not None:
             # Said out loud, on the run it applies to. A raised ceiling is a
             # deliberate act and should not be inferable only from shell
@@ -1192,6 +1300,66 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+    # B-5. Three limits apply to this account and AC8 knew about one. The probe
+    # below is the same call the pre-flight telemetry makes, so it costs one
+    # request rather than two.
+    spend = None if args.ignore_daily_spend else ledger.load()
+    limits_line = probe_rate_limits(provider)
+    snapshot = getattr(provider, "last_rate_limit", None)
+
+    if limits_line:
+        print(f"Pre-flight {limits_line}", file=sys.stderr)
+    if spend is not None:
+        print(f"Pre-flight {spend.describe(args.daily_token_limit)}", file=sys.stderr)
+
+    # A refusal names the provider's own total, which is worth more than the
+    # ledger's estimate. Taking it here means even a blocked run improves the
+    # figure the next one is judged against.
+    named = limit_from_message(limits_line)
+    if named is not None and named[0] == "TPD" and not args.ignore_daily_spend:
+        spend = ledger.reconcile(named[2])
+        print(
+            f"Ledger reconciled from the provider: {spend.tokens:,} used today.",
+            file=sys.stderr,
+        )
+
+    try:
+        projected_tokens = project_run_cost(
+            dataset,
+            split,
+            args.schema_mode,
+            rendering,
+            glossary,
+            args.max_calls or _default_budget(args.strategy),
+        ) * args.repeat
+    except TokenCountingUnavailable:
+        projected_tokens = 0
+
+    reasons = check_quota(
+        projected_tokens=projected_tokens,
+        projected_requests=project_requests(
+            dataset,
+            split,
+            args.max_calls or _default_budget(args.strategy),
+            args.repeat,
+        ),
+        spend=spend,
+        snapshot=snapshot,
+        daily_token_limit=args.daily_token_limit,
+    )
+    for reason in reasons:
+        print(f"  {reason}", file=sys.stderr)
+
+    blocking = [r for r in reasons if not r.startswith("NOTE")]
+    if blocking:
+        # Nothing has been spent beyond the probe. Refusing here is the point:
+        # crossing these mid-run produces a rate-limited result that AC18 then
+        # refuses to record, so the run costs quota and buys nothing.
+        print(
+            f"Aborted before the run: {len(blocking)} limit(s) would be crossed.",
+            file=sys.stderr,
+        )
+        return 1
     print(
         f"Running {len(selected)} questions x {args.repeat} "
         f"pass(es): strategy={args.strategy}, schema={args.schema_mode}, "
@@ -1247,6 +1415,20 @@ def main(argv: list[str] | None = None) -> int:
     # `reports[0]` -- the same pass-one blind spot as the token total fixed at
     # T7 and the D-3 leak fixed at T8, in the same function. The guard is only
     # worth having if it sees the whole run it is guarding.
+    # B-5: the day's running total, written whether or not the run is
+    # recorded. `EVALS.md` is about accuracy and refuses a rate-limited run; the
+    # ledger is about quota, and a rate-limited run spent it just the same.
+    # Taken from the provider wrapper rather than from the reports. The
+    # reports cover scored questions; the wrapper covers every call the process
+    # made, which is what the day's quota was actually charged for. The
+    # difference is the pre-flight probe, and the first live run found it as a
+    # two-request gap against Groq's own count.
+    spent_now = getattr(provider, "spent", None) or total_usage(reports)
+    calls_made = getattr(provider, "calls_made", 0) or total_usage(reports).calls
+    if not args.ignore_daily_spend and spent_now.measured:
+        after = ledger.record(spent_now.total_tokens, calls_made)
+        print(f"  {after.describe(args.daily_token_limit)}")
+
     rate_limited = sum(
         1
         for report in reports

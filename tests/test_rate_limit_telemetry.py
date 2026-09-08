@@ -435,3 +435,56 @@ def test_a_daily_refusal_is_not_slept_through():
 
     assert clock.slept[-1] == MAX_RETRY_WAIT_SECONDS
     assert clock.slept[-1] < 251.0, "slept through a daily allowance"
+
+
+# --- what the wrapper spent, including calls no report sees -----------------
+
+
+def test_the_wrapper_counts_every_call_it_makes():
+    """**Found by the first live B-5 run.**
+
+    The ledger recorded 30 requests against Groq's 32. The missing two were the
+    runner's own pre-flight probes: real spend, charged to the day, and
+    invisible to a ledger that was summing `EvalReport`s -- because a probe
+    produces no report. The wrapper sees every call by construction, which is
+    what makes it the right place to count.
+    """
+    billed = TokenUsage(prompt_tokens=100, completion_tokens=20, calls=1, measured=True)
+    paced = PacedProvider(StubProvider(_snapshot(7_900), billed))
+
+    paced.complete("", "probe")          # the kind of call no report covers
+    paced.complete("s", "question one")
+    paced.complete("s", "question two")
+
+    assert paced.calls_made == 3
+    assert paced.spent.total_tokens == 360
+    assert paced.spent.measured is True
+
+
+def test_a_failed_call_still_counts_against_the_day():
+    """The provider charges for what it processed, and a refusal or an error
+    does not undo a request. A counter that only advanced on success would
+    drift low in exactly the runs where knowing the number matters."""
+    inner = StubProvider(_snapshot(200), None, raises=RateLimitError("429"))
+    paced = PacedProvider(inner, sleep=lambda s: None, monotonic=lambda: 0.0)
+
+    with pytest.raises(RateLimitError):
+        paced.complete("s", "u")
+
+    assert paced.calls_made == 1
+
+
+def test_an_unbilled_call_does_not_degrade_the_total():
+    """A provider that reports nothing contributes no tokens but still a call.
+    `TokenUsage.__add__` makes zero-call usage the identity, so `measured` must
+    survive a provider that goes quiet mid-run."""
+    inner = StubProvider(_snapshot(7_900), TokenUsage(prompt_tokens=100, calls=1, measured=True))
+    paced = PacedProvider(inner)
+    paced.complete("s", "u")
+
+    inner.last_usage = None
+    paced.complete("s", "u")
+
+    assert paced.calls_made == 2
+    assert paced.spent.total_tokens == 100
+    assert paced.spent.measured is True
