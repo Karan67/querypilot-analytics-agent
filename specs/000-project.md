@@ -250,6 +250,7 @@ this table only when it ships or when a spec records why it never will.
 | **B-2** | AC13's glossary-off control arm | Iteration 5 T7 | open |
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
+| **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | open — accepted debt |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
@@ -426,11 +427,9 @@ and two specs, and B-1 was filed as telemetry.
 > record. It now refuses before the first question, names all three figures,
 > spends only the single probe, and leaves the ledger untouched.
 >
-> **Still unexercised live: reconciliation.** The path that overwrites the
-> estimate with the provider's `Used` figure only runs when a 429 actually
-> names TPD, which requires a run late enough in the day to be refused --
-> the opposite of what a verification run wants. It is covered by fakes
-> against a real captured 429 body and has not been seen end to end.
+> **One path remains unexercised live and is now tracked as B-6** rather
+> than left inside a discharged entry, where it would stop being visible the
+> moment this row was struck through.
 >
 > **Only one limit needed a ledger, and that asymmetry is the design.**
 > Where the provider reports what is left, asking it beats bookkeeping:
@@ -468,6 +467,32 @@ and two specs, and B-1 was filed as telemetry.
 > small benchmark. This is T5's `EVALS_PATH` trap in a second place, and
 > per-test discipline is what failed there too, so isolation is now an
 > autouse fixture applied to every test whether it asks or not.
+
+### B-6 — 429 to ledger reconciliation, never seen against the live API
+
+`ledger.reconcile()` replaces the local estimate with the provider's own
+`Used` figure, parsed from a 429 body. It is the mechanism that turns the
+ledger from a floor into the truth, and the only one that can correct for
+spend this project cannot see -- the deployed API, another checkout, a
+colleague sharing the key.
+
+**Covered by fakes against a real captured 429 payload**, including the
+exact body measured on 2026-09-04 (`on tokens per day (TPD): Limit 200000,
+Used 199301`). What has never happened is the whole path running end to end
+against Groq: refusal, parse, overwrite, and the next run's pre-flight
+reading the corrected figure.
+
+**Accepted as debt on 2026-09-08, deliberately.** Reaching it requires the
+account to be genuinely at its daily ceiling, so exercising it on purpose
+means burning roughly 165,000 tokens to reach a state worth reaching --
+spending most of a day's allowance to watch an error handler work. The
+cheap way to close it is opportunistic: the next time a run is refused for
+TPD in the ordinary course of work, check that the ledger was corrected and
+that the following run's pre-flight reports `provider-reconciled`.
+
+Filed here rather than left inside B-5's entry because a discharged row is
+read as finished, and an unverified edge case buried in one stops being
+visible the moment the row is struck through.
 
 ### B-2 — AC13's glossary-off control
 

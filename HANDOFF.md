@@ -78,29 +78,71 @@ because a measurement contradicted the premise.
 | 2 Single-shot | Done — one call, schema in prompt, through the safety layer |
 | 3 Evals | Done — 40 reference queries, execution accuracy, `EVALS.md` |
 | 4 Agent loop | Done — hand-written ReAct loop, 3-call budget, text protocol |
-| **5 Prompt tuning** | **Specified and approved, not started.** Start at T1 |
+| **5 Prompt tuning** | **Closed 2026-09-04**, with AC13 knowingly unmet |
 | 6 Frontend | Not started |
 | 7 Latency/cost | Not started |
 | 8 CI | Not started |
 
-**697 tests, 2 skipped** (live provider tests skip when rate-limited).
+**911 tests** (live provider tests skip when rate-limited, which is now a
+working guard rather than a red failure -- see the traps below).
+
+### The backlog board, in `specs/000-project.md` section 8
+
+| | | |
+|---|---|---|
+| ~~B-1~~ | rate-limit telemetry and pacing | discharged 2026-09-04 |
+| ~~B-3~~ | T8's held-out run | discharged 2026-09-04 |
+| ~~B-5~~ | three-limit guards and the daily ledger | verified live 2026-09-08 |
+| **B-2** | AC13's glossary-off control | **in progress** -- see section 8 |
+| **B-4** | alternative LLM provider | deferred, own milestone |
+| **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
 
 ### The numbers that matter
 
-- **97.5%** single-shot, full schema, dataset v2, `gpt-oss-120b`
-- **82.5%** loop, schema withheld, `gpt-oss-20b` — against **0.0%** for the
-  one-call control. That contrast is Iteration 4's whole justification.
-- The loop shows **no gain** on the full-schema benchmark, because Iteration 3
-  measured 100% Gate 2 pass and 100% execution rate — there is nothing for a
-  retry loop to repair. This is stated plainly in `EVALS.md` rather than papered
-  over.
+- **100.0%** held out — `compact` + glossary, `--split test`, 20/20, the only
+  Iteration 5 entry in `EVALS.md`. **Read it as one pass, not as the
+  accuracy**: eight passes of the identical configuration produced 0 to 2
+  wrong answers each, so the honest statement is *between 90% and 100%,
+  measured once at 100%*.
+- **`007`'s claim of a 0.0% spread across three passes does not survive**
+  that. AC18's *a difference of one question is a real difference* needs
+  recalibrating: on a 20-question split the noise is at least two.
+- **D-2 adopted `compact`** on a 0.5-question dev margin — inside that noise.
+  The adoption stands because `compact` was never *worse* and is **188
+  measured tokens a call cheaper**. It is cheaper and not worse; it is *not*
+  more accurate, and any text implying otherwise is overclaiming.
+- **97.5%** single-shot, full schema, dataset v2 — the Iteration 3 baseline.
+- **82.5%** loop, schema withheld, `gpt-oss-20b`, against **0.0%** for the
+  one-call control. Iteration 4's whole justification. That figure is a
+  floor: 33 correct and 7 rate-limited.
 
-### Immediate gotcha
+### The rate limits, measured — there are three, and one is invisible
 
-The Groq free tier allows **200,000 tokens/day**. A blind-harness pass costs up
-to ~98,000. Iteration 4's last runs were degraded by rate limiting — several
-`EVALS.md` numbers are floors, not measurements, and say so. Iteration 5's AC5
-and AC8 exist because of this.
+| limit | capacity | reported where |
+|---|---|---|
+| tokens per minute | 8,000 | headers |
+| requests per day | 1,000 | headers |
+| **tokens per day** | **200,000** | **only a 429 body** |
+
+B-1 measured these and B-5 guards them. Two things worth carrying:
+
+- **Absence of a header is not absence of a limit.** B-1's first conclusion was
+  that the 200,000 daily figure was unenforced because nothing reported it. It
+  is enforced; a refusal arrives with the *minute* bucket reading a full
+  8,000/8,000 and a body naming `tokens per day (TPD)`. That mistake is
+  preserved in the charter's B-1 entry rather than tidied away.
+- **The worst-case projection is roughly 3x reality**, because AC8 assumes three
+  calls a question and the loop uses one. It has already refused work it should
+  have allowed. Real dev-split runs cost ~35,000–40,500 tokens.
+
+`evals/ledger.py` tracks the day's spend in `.querypilot/spend.json`
+(gitignored, UTC-keyed). It is a **floor**: it sees only what the eval runner
+spent, not the API or another checkout. `PacedProvider` keeps runs under the
+minute bucket — a 30-question run takes ~20–29 waits and ~150 seconds of
+sleeping, and no rate limits.
+
+Iteration 4's last runs were degraded by rate limiting — several `EVALS.md`
+numbers are floors, not measurements, and say so.
 
 ---
 
@@ -112,7 +154,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest tests/ -q          # 697 tests, ~70s
+.venv/Scripts/python.exe -m pytest tests/ -q          # 911 tests, ~2m15s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 
@@ -169,6 +211,24 @@ customers) discriminate; metric definitions do not.
 
 ---
 
+**Shared state a test can reach will eventually be written by one.** It has
+happened twice. T5's `EVALS_PATH` was bound as a default argument, so
+`monkeypatch` had no effect and a mutation run filed a fake entry in the real
+`EVALS.md`. B-5's spend ledger was then written by two tests that drive `main()`
+end to end and had no reason to know a ledger existed — gitignored, so invisible
+in review, and read by the next real run's pre-flight. Per-test discipline
+failed both times; isolation is now an autouse fixture. **Resolve paths at call
+time, and isolate shared state for every test whether it asks or not.**
+
+**The recorded path and the terminal path drift apart.** Four defects of one
+shape reached `EVALS.md` or its report before anyone noticed: the recorded block
+read `reports[0]` where it had to read the whole run — for the token total, for
+the rate-limit guard, and for held-out failure detail that D-3 says must be
+withheld. Nothing exercised `run_evaluation` at `repeat > 1` all the way to a
+file. `tests/test_multi_pass_recording.py` exists for exactly that seam.
+
+---
+
 ## 7. Benchmark integrity — the rule that matters most
 
 `EVALS.md` is **append-only**. Bad numbers stay. A regression quietly deleted
@@ -189,18 +249,46 @@ before any prompt tuning begins.
 
 ---
 
-## 8. Starting Iteration 5
+## 8. Picking up: B-2, mid-measurement
 
-Everything needed is in
-[`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md). It is
-approved; begin at **T1**.
+**A decision is waiting.** AC13 asks for accuracy with and without the glossary.
+Both arms ran on 2026-09-08, one pass each, `--split dev`, same rendering so
+they differ in exactly one bit:
 
-Three decisions in its §10 are still open — **D-1** (how token usage reaches the
-runner), **D-2** (pre-registering the A/B decision rule before running it), and
-**D-3** (whether the test-split audit trail is a strong enough guard). Ask
-before assuming; that is rule 4.
+| arm | overall | easy | medium | hard | **expert** | failures | tokens |
+|---|---|---|---|---|---|---|---|
+| `ddl` + glossary | 96.7% | 8/8 | 9/10 | 6/6 | **6/6** | 1 `no_sql_returned` | 40,502 |
+| `ddl` no glossary | 93.3% | 8/8 | 10/10 | 6/6 | **4/6** | 2 `wrong_result` | 34,950 |
 
-Task order is load-bearing: **T4 (freeze the split) and T6 (author the expert
-questions) both land before T7 (tune).** The split must be fixed before anything
-is tuned against it, and the questions must be written before their score is
-known.
+**The headline is one question and proves nothing** — it sits inside the 0–2
+noise. **The tier breakdown is the interesting part**: `expert` is the only tier
+that moved, and it is the only tier the glossary is supposed to touch. The
+failure *categories* differ as the mechanism predicts — with the glossary the
+single miss is a generation hiccup in `medium`; without it both misses are
+`wrong_result` in `expert`, which is what a naive reading of an ambiguous term
+produces. Suggestive, one pass, not proven.
+
+**The follow-up is blocked by our own guard, and that is the open question.** A
+second pass of each would settle it, but with ~110,763 spent the daily guard
+checks the *worst-case* projection (102,240), sees 213,003 and refuses — while
+the realistic pair costs ~75,000 and would land at ~186,000. Three options were
+put to the user and none chosen yet:
+
+1. raise `--daily-token-limit` for these two runs, keeping pacing and the
+   in-flight `--token-budget`;
+2. re-run the control arm only, since the treatment's `expert` 6/6 is
+   corroborated by two other runs;
+3. stop, and report AC13 as suggestive with the tier evidence.
+
+**Do not quietly raise the limit.** It is a guard built this week, and stepping
+over it is the user's call, not a convenience.
+
+### The rest of the board
+
+**B-6** needs a 429 that names TPD, which only happens near the daily ceiling.
+Accepted as debt; close it opportunistically the next time a run is refused in
+the ordinary course of work, rather than burning ~165,000 tokens to reach a
+state worth reaching.
+
+**B-4** stays deferred as its own milestone. A model change retires every
+recorded number at once, so it never rides along with other work.
