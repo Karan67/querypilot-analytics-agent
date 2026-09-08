@@ -47,6 +47,16 @@ require knowing the business rather than knowing SQL.
 > control was never run, so the 178-token block that ships on every call is
 > still unjustified by measurement. It is carried as charter backlog **B-2**
 > rather than quietly closed with the iteration.
+>
+> **AC13 satisfied 2026-09-08, after the close, as backlog B-2.** The control
+> arm ran twice against the treatment's once, all `ddl` on `--split dev`. The
+> glossary is worth its measured 179 tokens a call and **its entire effect is
+> in the `expert` tier**: both control passes score 24/24 on everything else
+> and put all five of their failures in `expert`, every one a `wrong_result`.
+> Pooled `expert` is 7/12 without it against 6/6 with it. Two limits stand —
+> six questions is a small tier, and no run recorded *which* questions failed,
+> which is now charter backlog **B-7**. The table and the caveats are in
+> `000-project.md` §8 under B-2.
 
 ---
 
@@ -280,6 +290,20 @@ information needed to avoid it.
   > pre-flight probe in which `expert-001` was correct with the glossary and
   > `wrong_result` without it - a signal at n=1, not the measurement this
   > criterion asks for.
+
+  > **SATISFIED 2026-09-08 as charter backlog B-2**, four days after the
+  > iteration closed. Three `ddl` dev passes — glossary on once at `expert`
+  > 6/6, glossary off twice at 4/6 and 3/6 — with every non-`expert` question
+  > correct in both control passes and all five control failures
+  > `wrong_result` in `expert`. The difference this criterion asks for exists
+  > and is **localised to the tier the glossary was built for**, which is a
+  > stronger result than the headline spread (96.7 / 93.3 / 90.0), all of
+  > which sits inside the documented noise. The n=1 probe recorded above
+  > pointed the right way, which is worth noting only because it so easily
+  > might not have.
+  >
+  > The measurement does **not** identify which `expert` questions the
+  > glossary rescues; no pass recorded failing ids. Carried as **B-7**.
 
 ### The dataset extension
 

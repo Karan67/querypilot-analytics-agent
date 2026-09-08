@@ -13,7 +13,8 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 |---|---|
 | [`specs/000-project.md`](specs/000-project.md) | The charter. §4 safety rules and §5 architectural commitments bind every iteration |
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
-| [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | The next thing to build, approved and unstarted |
+| [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
+| §8 of this file, and §8 of the charter | What is actually next: **B-7**, then Iteration 6 |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -78,7 +79,7 @@ because a measurement contradicted the premise.
 | 2 Single-shot | Done — one call, schema in prompt, through the safety layer |
 | 3 Evals | Done — 40 reference queries, execution accuracy, `EVALS.md` |
 | 4 Agent loop | Done — hand-written ReAct loop, 3-call budget, text protocol |
-| **5 Prompt tuning** | **Closed 2026-09-04**, with AC13 knowingly unmet |
+| **5 Prompt tuning** | **Closed 2026-09-04**; its last open criterion, AC13, satisfied 2026-09-08 as B-2 |
 | 6 Frontend | Not started |
 | 7 Latency/cost | Not started |
 | 8 CI | Not started |
@@ -93,9 +94,10 @@ working guard rather than a red failure -- see the traps below).
 | ~~B-1~~ | rate-limit telemetry and pacing | discharged 2026-09-04 |
 | ~~B-3~~ | T8's held-out run | discharged 2026-09-04 |
 | ~~B-5~~ | three-limit guards and the daily ledger | verified live 2026-09-08 |
-| **B-2** | AC13's glossary-off control | **in progress** -- see section 8 |
+| ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
+| **B-7** | which `expert` questions the glossary rescues | open, one flag away |
 
 ### The numbers that matter
 
@@ -111,6 +113,13 @@ working guard rather than a red failure -- see the traps below).
   The adoption stands because `compact` was never *worse* and is **188
   measured tokens a call cheaper**. It is cheaper and not worse; it is *not*
   more accurate, and any text implying otherwise is overclaiming.
+- **`expert` 7/12 without the glossary against 6/6 with it** (B-2, three `ddl`
+  dev passes). The tier-level split is the finding; the overall spread
+  (96.7 / 93.3 / 90.0) is inside the noise and proves nothing on its own.
+  Both control passes were **24/24 on every other tier**, so the glossary's
+  whole measured effect is in `expert` — which is what it was built for. It
+  costs **179 measured tokens a call**. Unlike `compact`, this one *is* an
+  accuracy claim, and it is a claim about one six-question tier.
 - **97.5%** single-shot, full schema, dataset v2 — the Iteration 3 baseline.
 - **82.5%** loop, schema withheld, `gpt-oss-20b`, against **0.0%** for the
   one-call control. Iteration 4's whole justification. That figure is a
@@ -249,41 +258,80 @@ before any prompt tuning begins.
 
 ---
 
-## 8. Picking up: B-2, mid-measurement
+## 8. B-2, discharged — and the one question it left
 
-**A decision is waiting.** AC13 asks for accuracy with and without the glossary.
-Both arms ran on 2026-09-08, one pass each, `--split dev`, same rendering so
-they differ in exactly one bit:
+**Closed 2026-09-08. Nothing here is waiting on a decision.** AC13 asked for
+accuracy with and without the glossary. Three passes ran on `--split dev`, all
+`ddl`, so the arms differ in exactly one bit:
 
-| arm | overall | easy | medium | hard | **expert** | failures | tokens |
-|---|---|---|---|---|---|---|---|
-| `ddl` + glossary | 96.7% | 8/8 | 9/10 | 6/6 | **6/6** | 1 `no_sql_returned` | 40,502 |
-| `ddl` no glossary | 93.3% | 8/8 | 10/10 | 6/6 | **4/6** | 2 `wrong_result` | 34,950 |
+| arm | pass | overall | easy | medium | hard | **expert** | failures | tokens |
+|---|---|---|---|---|---|---|---|---|
+| `ddl` + glossary | 1 | 96.7% | 8/8 | 9/10 | 6/6 | **6/6** | 1 `no_sql_returned` (`medium`) | 40,502 |
+| `ddl` no glossary | 1 | 93.3% | 8/8 | 10/10 | 6/6 | **4/6** | 2 `wrong_result` (`expert`) | 34,950 |
+| `ddl` no glossary | 2 | 90.0% | 8/8 | 10/10 | 6/6 | **3/6** | 3 `wrong_result` (`expert`) | 34,901 |
 
-**The headline is one question and proves nothing** — it sits inside the 0–2
-noise. **The tier breakdown is the interesting part**: `expert` is the only tier
-that moved, and it is the only tier the glossary is supposed to touch. The
-failure *categories* differ as the mechanism predicts — with the glossary the
-single miss is a generation hiccup in `medium`; without it both misses are
-`wrong_result` in `expert`, which is what a naive reading of an ambiguous term
-produces. Suggestive, one pass, not proven.
+**The headline proves nothing** — 96.7 / 93.3 / 90.0 sits inside the documented
+0–2 noise, and anyone quoting the 6.7-point gap as the result is overclaiming.
+**The tier breakdown is the finding**: `expert` is the only tier that moves, and
+it is the only tier the glossary is supposed to touch. The failure *categories*
+follow the mechanism — with the glossary the single miss is a generation hiccup
+in `medium`; without it every miss is `wrong_result` in `expert`, which is what
+a naive reading of an ambiguous term produces rather than what a broken query
+does.
 
-**The follow-up is blocked by our own guard, and that is the open question.** A
-second pass of each would settle it, but with ~110,763 spent the daily guard
-checks the *worst-case* projection (102,240), sees 213,003 and refuses — while
-the realistic pair costs ~75,000 and would land at ~186,000. Three options were
-put to the user and none chosen yet:
+**The follow-up was thought to be blocked by our own guard, and it was not.**
+The earlier reading quoted a single worst-case projection (102,240) for both
+arms and concluded that either arm would be refused at 213,003 against the
+200,000 ceiling. **The projection is per-arm, and the two arms differ**: the
+glossary block is 179 tokens a call, so over 30 questions at a worst case of
+three calls each the control arm projects **86,130**, not 102,240. Against a
+ledger of 110,763 that is 196,893 — inside the limit. Only the treatment arm
+was ever refused.
 
-1. raise `--daily-token-limit` for these two runs, keeping pacing and the
-   in-flight `--token-budget`;
-2. re-run the control arm only, since the treatment's `expert` 6/6 is
-   corroborated by two other runs;
-3. stop, and report AC13 as suggestive with the tier evidence.
+The lesson generalises past this run: **a projection that varies with the
+configuration must be recomputed per arm, not quoted once for a matrix.** The
+figure had been carried forward as though it described the experiment rather
+than one arm of it.
 
-**Do not quietly raise the limit.** It is a guard built this week, and stepping
-over it is the user's call, not a convenience.
+The user chose the control arm, and it ran on 2026-09-08 with the daily guard
+untouched at its measured 200,000. `--max-projection 90000` raised only *this
+run's own* pre-flight ceiling, which is what allows a `--token-budget 50000`
+breaker to exist at all — the two guards are denominated differently and a
+single number makes one of them vacuous. The daily guard is unaffected by that
+flag; it compares the real projection against `--daily-token-limit`.
+
+**The deficit replicated and deepened, and it is confined to one tier.** Across
+both control passes every non-`expert` question is correct — 24/24, twice — and
+all five failures are `wrong_result` in `expert`. Pooled, glossary-off `expert`
+is **7/12**; glossary-on `expert` is 6/6 in the matched arm and 6/6 again in
+T7's dev run and B-5's 30/30 dev run. Those two corroborating runs are
+glossary-on but **not necessarily `ddl`** — T7's dev run was `compact`, and
+B-5's rendering was never written down — so they corroborate the glossary bit
+while varying a second one. The clean single-variable comparison is the matched
+`ddl` pair in the table above.
+
+**What it still does not establish, and this is the honest limit.** The tier
+holds six questions, and two passes over the same six are not twelve
+independent trials. More decisively, **neither control pass recorded which
+questions failed**, so *the same two questions failing every time plus one
+flake* and *the glossary lifting the tier broadly* both fit the data. Pass 2
+was run without `--verbose`, which costs nothing and would have settled it;
+that omission is the single thing to fix if a third pass is ever authorised.
+
+**Do not quietly raise the daily limit.** It is a guard built this week, and
+stepping over it is the user's call, not a convenience. A third control pass
+projects 86,130 against a ledger now at 145,778, so it *is* refused — genuinely
+this time.
 
 ### The rest of the board
+
+**B-7 is the cheapest open item and the natural next pickup.** It is B-2's
+leftover: which `expert` questions the glossary actually rescues. No code, no
+experiment — a glossary-off dev pass with `--verbose`, which prints the failing
+cases and their SQL at no cost over a plain pass. Needs ~35,000 tokens of real
+spend against a **worst-case projection of 86,130**, which is the number the
+daily guard checks, so it wants a day with genuine room rather than a day with
+54,000 left.
 
 **B-6** needs a 429 that names TPD, which only happens near the daily ceiling.
 Accepted as debt; close it opportunistically the next time a run is refused in
