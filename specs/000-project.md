@@ -17,6 +17,35 @@ plain English, and returns three things together:
 2. **The SQL that produced it** — so the answer is auditable rather than trusted.
 3. **A chart** — chosen automatically from the shape of the result set.
 
+> **AMENDED 2026-09-09, at Iteration 6. Point 3 was written before anyone
+> measured what the answers look like, and the measurement does not support
+> it.** The original text is kept above rather than rewritten, because a
+> promise quietly edited to match what was built is exactly the failure
+> `EVALS.md`'s append-only rule exists to prevent.
+>
+> Every one of the 50 gold queries, executed through `execute_sql()`
+> (`009-frontend.md` §2.3–2.5):
+>
+> - **28 of 50 — 56.0% — return a single scalar.** One row, one column. There
+>   is no chart of a single number; the honest rendering is the number.
+> - **29 of 50 return exactly one row.**
+> - **0 of 50 contain a date or timestamp column.** Not one. There is no time
+>   series anywhere in this corpus, so a line chart has no question to draw.
+> - **At most 10 are chartable by shape, and at least one of those is a false
+>   positive** — `easy-010` is *"List the id and name of every playlist"*,
+>   whose numeric column is a playlist **id**. A bar chart of 18 identifiers
+>   passes every shape test. The real figure is **9 or fewer, under 18%**.
+>
+> **What point 3 now promises:** the result is rendered by its shape — a scalar
+> as the number, anything else as a table — and **where a result is plausibly
+> chartable, a chart is offered as a toggle the user controls, defaulting to
+> off.** *Chosen automatically* is retired as a promise. Shape can identify a
+> candidate; it cannot tell a measure from an identifier, and a rule that
+> confidently charts playlist ids is worse than no rule.
+>
+> This is a narrowing of scope taken on evidence, and it is the user's decision
+> (`009-frontend.md` Q-B and Q-C), not a quiet reinterpretation.
+
 The intended user understands the *business* but not the *schema*. They can ask
 "which genres sold the most in 2013?" but cannot write the four-table join that
 answers it.
@@ -80,12 +109,47 @@ regressions are bugs; safety regressions are stop-the-line events.
 - **A hand-written agent loop** over an explicit tool set: `get_schema()`,
   `sample_rows(table)`, `validate_sql(sql)`, `execute_sql(sql)`, `final_answer(...)`.
 - **A non-bypassable safety layer** (see §4).
-- **An eval suite** — 30–50 questions across easy/medium/hard tiers, scored by
-  execution accuracy, runnable locally and in CI.
+- **An eval suite** — ~~30–50 questions across easy/medium/hard tiers~~, scored
+  by execution accuracy, runnable locally ~~and in CI~~.
+
+  > **CORRECTED 2026-09-09, at Iteration 6 T1.** Two stale claims, fixed here
+  > rather than carried because the charter was already open for surgery.
+  >
+  > **The corpus is 50 questions across four tiers**, not three: `easy`,
+  > `medium`, `hard` and **`expert`**, the last added at Iteration 5 T6 with
+  > dataset v3. `expert` questions are hard by *interpretation* rather than
+  > syntax — they turn on a business term defined in `api/agent/glossary.py` —
+  > and they are the tier the glossary measurably protects (B-2, B-7). A tier
+  > list that omits them understates what the benchmark tests.
+  >
+  > The corpus is also **split 30 `dev` / 20 `test`**, frozen before any prompt
+  > tuning began and identified by the fingerprint `ec65d5ba81d6`. That split is
+  > the reason Iteration 5's held-out number means anything.
+  >
+  > **CI is an Iteration 8 target and does not exist.** The suite runs locally,
+  > on the host, against the container. Writing *"runnable locally and in CI"*
+  > in the present tense described an intention as a capability — the same
+  > failure mode as §1's chart promise, in a quieter register.
 - **A metadata store** — query history, agent steps, eval runs, feedback, latency
   and token cost.
 - **A streaming frontend** — Next.js chat UI, SSE-streamed agent steps, SQL
   viewer, results table, auto-selected Recharts visualisation.
+
+  > **AMENDED 2026-09-09, at Iteration 6.** Three of the five nouns in that
+  > bullet were retired by decisions taken before implementation began, and the
+  > original is kept visible rather than rewritten.
+  >
+  > | written | delivered | why |
+  > |---|---|---|
+  > | Next.js chat UI | server-rendered HTML, vanilla JS, **no npm** | Q-A. An npm build pipeline to render a scalar and a SQL string breaks the *"only setup instruction is `docker compose up`"* property. **No new dependency is added at all** |
+  > | SSE-streamed agent steps | synchronous request | Q-D. Measured 1.20–2.51s over one provider call; the loop emits its SQL in one shot, so there is nothing meaningful to stream |
+  > | auto-selected Recharts | hand-rolled SVG bars, user-toggled | Q-B and plan D-3. One chart type, ≤55 rows, no time axis. A CDN script would make the setup claim false |
+  > | SQL viewer | **kept, and always visible** | AC8. Auditability is the point |
+  > | results table | **kept** | at ≤55 rows, no pagination or virtualisation |
+  >
+  > *Chat UI* is also narrower than it sounds: charter §3 already lists
+  > conversational memory as a non-goal, so this is one question and one
+  > answer, not a thread.
 - **Deployment** — Vercel (frontend), Render or Fly.io (API), Supabase (Postgres).
 
 ### Non-goals
@@ -103,7 +167,7 @@ not "later" — they are **out**, unless a future spec deliberately reverses one
 | **Agent frameworks** | No LangChain, LlamaIndex, CrewAI, AutoGen, or equivalent — see §5 |
 | **Conversational memory across turns** | Each question is independent. Follow-ups such as "and for 2014?" are out until a spec explicitly adds them |
 | **LLM-written prose summaries of the result set** | The answer is the data. Narrating results is a separate, later decision |
-| **User-customisable charts** | Chart type is auto-selected from result shape. No chart editor |
+| **User-customisable charts** | ~~Chart type is auto-selected from result shape.~~ **Amended 2026-09-09:** the user chooses *whether* to draw a chart, never *which* — there is one chart type, a horizontal bar. Still no chart editor, no axis or colour controls, no chart-type picker. The non-goal stands; only its stated reason changed (see §1's amendment) |
 | **Cost and latency optimisation ahead of accuracy** | Caching and cost work is Iteration 7, after accuracy is measured and improved |
 | **A general classifier for unanswerable questions** | The agent should decline rather than invent columns, but detecting unanswerability in general is out |
 
