@@ -251,7 +251,8 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
 | **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | open — accepted debt |
-| **B-7** | Which `expert` questions the glossary actually rescues | B-2 | open |
+| ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
+| **B-8** | `naive_sql` records an assumption AC12 cannot check | B-7 | open |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
@@ -604,6 +605,99 @@ output; nothing new needs building.
 **Do not run it against a ledger that cannot hold it.** The worst-case
 projection for a glossary-off dev pass is 86,130, which is the figure the daily
 guard checks — not the ~35,000 such a run actually bills.
+
+> **MEASURED 2026-09-09. The set is `expert-001`, `expert-003`, `expert-004`,
+> and reading (1) is right: the glossary does a narrow, nameable job.**
+>
+> Two `--verbose` glossary-off dev passes on a fresh quota, flags otherwise
+> identical to B-2's control arm. **The same three questions failed in both**,
+> and — the part that settles it — **with the same wrong readings, to the
+> value**:
+>
+> | id | question | gold | dataset `naive_sql` | model, both passes |
+> |---|---|---|---|---|
+> | `expert-001` | active customers | **46** | 59 | **59** |
+> | `expert-003` | sold tracks | **1984** | 3503 | **2240** |
+> | `expert-004` | charting artists | **165** | 275 | **204** |
+>
+> `expert-001`'s generated SQL was byte-identical across the two passes;
+> `expert-003` differed only in a column alias; `expert-004` differed in alias
+> and join order but is semantically the same query. This is not a tier that
+> wobbles — it is three questions the model reliably reads one specific wrong
+> way.
+>
+> **The three it does not need help with are `expert-002` (support
+> representatives), `expert-007` (average order value) and `expert-008`
+> (credited tracks)**, correct unaided in both passes. Since B-2's glossary-on
+> pass scored `expert` 6/6, all six pass *with* the glossary, so the rescued
+> set is exactly the three above and no further run is needed on that side.
+>
+> **`naive_sql` predicts the wrong failure, and that is a finding about the
+> dataset rather than the model.** AC12 records a naive query per `expert`
+> question on the assumption that a model without the definition ignores the
+> ambiguous term — `count(*) FROM customer`, `FROM track`, `FROM artist`. It
+> does not. In two of three it invents a *third* reading: 2240 counts units
+> sold where gold counts 1984 distinct tracks and naive counts 3503 rows of
+> `track`; 204 counts artists with a catalogue where gold counts 165 with
+> sales and naive counts 275 rows of `artist`. `expert-001` is the exception
+> and only by arithmetic accident — its SQL is the sales-derived reading, but
+> every Chinook customer has an invoice, so it returns the naive 59 anyway.
+>
+> **This strengthens AC16 rather than weakening it.** Without the glossary the
+> model does not fail to answer; it answers a *different question*, with a
+> number that looks entirely plausible. 204 charting artists and 2240 sold
+> tracks are not detectable as wrong without knowing the intended definition,
+> which is precisely the failure mode a business-term block exists to prevent.
+>
+> **One loose end, unrecoverable.** B-2's first control pass scored `expert`
+> 4/6 with ids unrecorded, so on that occasion one of these three was answered
+> correctly. The set is stable across the two passes that recorded ids, not
+> invariant across all four. Pooled across every glossary-off pass the tier is
+> **13/24** — 4/6, 3/6, 3/6, 3/6.
+>
+> Cost: 35,324 and 35,450 tokens, 30 calls each, no rate limits, nothing
+> appended to `EVALS.md` for the reasons B-2 records.
+
+### B-8 — `naive_sql` records an assumption AC12 cannot check
+
+Opened by B-7's measurement. `evals/dataset.py` documents `naive_sql` as *"the
+reading a competent analyst produces without the glossary"*, and AC12 uses it
+to prove a question discriminates: the check is `naive_sql != gold_sql`, so a
+question whose two readings return the same rows cannot become a free point.
+It is **never scored**, which is why nothing here affects any recorded number.
+
+**B-7 measured what the model actually produces without the glossary, and it is
+not the recorded naive query.** In two of three cases it is a third reading —
+2240 units sold against a recorded naive of 3503 rows of `track` and a gold of
+1984 distinct tracks; 204 catalogued artists against 275 and 165. The third,
+`expert-001`, agrees with the recorded naive on the *value* only because every
+Chinook customer has an invoice.
+
+**The guard is therefore checking a query no model writes.** AC12 proves that
+*the assumed* naive reading differs from gold. What makes a question a real
+test is that *the reading actually produced* differs from gold. Those came
+apart in all three observed cases without harm — 59, 2240 and 204 all differ
+from their golds — but the guard cannot see that, and a question could pass
+AC12 while the model's real unaided reading happens to coincide with gold. That
+would be a free point of exactly the kind AC12 exists to prevent, scored as
+evidence the glossary is unnecessary.
+
+Three ways to close it, none obviously right, which is why this is a backlog
+item rather than an edit:
+
+1. **Leave the field and correct its documentation** to say it is a design-time
+   prediction rather than an observation. Cheapest, and honest.
+2. **Record the observed reading alongside it**, from B-7's runs, so the
+   dataset carries what actually happens as well as what was assumed.
+3. **Strengthen AC12** to check the observed reading where one exists, falling
+   back to the assumed one otherwise.
+
+**The benchmark-integrity rules bear on this and should be read first.**
+`naive_sql` is metadata rather than a question or a gold query, and it is never
+scored, so changing it does not touch a recorded number. But the standing rule
+is that dataset content is not edited in response to a score, and this finding
+arrived *from* a scored run. Whoever picks this up should say plainly which of
+those two facts governs before touching `questions.yaml`.
 
 ### B-4 — Alternative LLM provider, deferred as its own milestone
 

@@ -97,7 +97,8 @@ working guard rather than a red failure -- see the traps below).
 | ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
-| **B-7** | which `expert` questions the glossary rescues | open, one flag away |
+| ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
+| **B-8** | `naive_sql` records an assumption AC12 cannot check | open, opened by B-7 |
 
 ### The numbers that matter
 
@@ -120,6 +121,11 @@ working guard rather than a red failure -- see the traps below).
   whole measured effect is in `expert` — which is what it was built for. It
   costs **179 measured tokens a call**. Unlike `compact`, this one *is* an
   accuracy claim, and it is a claim about one six-question tier.
+- **The glossary rescues exactly `expert-001`, `expert-003`, `expert-004`**
+  (B-7, two verbose passes, same three both times with the same wrong values).
+  Pooled across all four glossary-off passes the tier is **13/24**. Quote the
+  named set rather than the tier percentage: the percentage moves with noise,
+  the set did not.
 - **97.5%** single-shot, full schema, dataset v2 — the Iteration 3 baseline.
 - **82.5%** loop, schema withheld, `gpt-oss-20b`, against **0.0%** for the
   one-call control. Iteration 4's whole justification. That figure is a
@@ -325,13 +331,21 @@ this time.
 
 ### The rest of the board
 
-**B-7 is the cheapest open item and the natural next pickup.** It is B-2's
-leftover: which `expert` questions the glossary actually rescues. No code, no
-experiment — a glossary-off dev pass with `--verbose`, which prints the failing
-cases and their SQL at no cost over a plain pass. Needs ~35,000 tokens of real
-spend against a **worst-case projection of 86,130**, which is the number the
-daily guard checks, so it wants a day with genuine room rather than a day with
-54,000 left.
+**B-7 was discharged 2026-09-09.** Two `--verbose` glossary-off dev passes on a
+fresh quota named the rescued set and found it stable: **`expert-001`,
+`expert-003`, `expert-004`** fail both times, with the *same* wrong values both
+times — 59, 2240, 204 against golds of 46, 1984, 165. `expert-001`'s SQL was
+byte-identical between passes. The glossary does a narrow, nameable job rather
+than lifting the tier broadly, and `expert-002`, `expert-007` and `expert-008`
+are read correctly without it.
+
+It also turned up something about the dataset rather than the model, now
+carried as **B-8**: `naive_sql` predicts a failure the model does not make. It
+assumes the term is ignored — `count(*) FROM artist` — where the model instead
+picks a *different* restriction, counting the 204 artists with a catalogue
+rather than the 165 with sales. Without the definition the model does not fail
+to answer; it answers a different question, plausibly. That is a stronger case
+for the glossary than the accuracy delta is.
 
 **B-6** needs a 429 that names TPD, which only happens near the daily ceiling.
 Accepted as debt; close it opportunistically the next time a run is refused in
