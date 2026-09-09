@@ -59,11 +59,19 @@ POST /ask     {"question": "How many tracks are in the library?"}
      }
 ```
 
-`shape` is computed server-side from `columns` and `rows` — `scalar`,
-`list`, `table`, or `chartable` — because the *same* classifier that produced
+`shape` is computed server-side from `columns` and `rows` — `scalar`, `list`,
+`table`, `chartable`, or `empty` — because the *same* classifier that produced
 spec §2.3's measurements should decide what the UI renders. Two
 implementations of "is this a scalar" that could disagree is exactly the drift
 `HANDOFF.md` §6 warns about.
+
+> **`empty` was added at T2 and this plan did not anticipate it.** The
+> classifier has to return *something* for a zero-row result, and no corpus
+> question produces one, so the data could not settle it. Folding it into
+> `table` makes the renderer draw a headed, bodyless grid; the user's call was
+> to give it a shape of its own so T6 can say *"no results matched"* without a
+> conditional in the UI that the classifier is better placed to answer. Zero
+> rows is a legitimate answer to a well-formed question — `ok` stays `true`.
 
 **`shape: "chartable"` does not mean "draw a chart."** Q-B settled that the
 human decides; `chartable` only means the toggle is offered. `easy-010`'s

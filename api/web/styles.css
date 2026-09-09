@@ -1,0 +1,174 @@
+/*
+ * QueryPilot. One stylesheet, no framework, no build (resolved Q-A).
+ *
+ * The design brief is the charter's own bar: *demoable to a non-technical
+ * person*. That means the answer is the largest thing on the page, the SQL is
+ * legible without being shouted, and the trace is available without being in
+ * the way.
+ */
+
+:root {
+  --ink: #14171a;
+  --muted: #5b6570;
+  --line: #dfe3e8;
+  --bg: #fbfcfd;
+  --panel: #ffffff;
+  --accent: #1f6feb;
+  --bad: #a3341f;
+  --bad-bg: #fdf2f0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+main { max-width: 52rem; margin: 0 auto; padding: 3rem 1.25rem 1rem; }
+footer { max-width: 52rem; margin: 0 auto; padding: 0 1.25rem 3rem; }
+
+h1 { font-size: 1.75rem; margin: 0 0 .35rem; letter-spacing: -.01em; }
+h2 {
+  font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); margin: 0 0 .5rem; font-weight: 600;
+}
+.tagline { color: var(--muted); margin: 0 0 1.75rem; }
+
+/* --- asking ------------------------------------------------------------- */
+
+#ask-form { display: flex; gap: .5rem; }
+
+#question {
+  flex: 1; padding: .7rem .85rem; font-size: 1rem;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  color: inherit;
+}
+#question:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+#submit {
+  padding: .7rem 1.35rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+  border: 1px solid transparent; border-radius: 8px;
+  background: var(--accent); color: #fff;
+}
+#submit:disabled { opacity: .55; cursor: default; }
+
+.examples {
+  margin: .8rem 0 0; font-size: .875rem; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline;
+}
+.example {
+  font: inherit; color: var(--accent); background: none; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 999px; padding: .2rem .7rem;
+  text-align: left;
+}
+.example:hover { border-color: var(--accent); }
+
+/* --- status ------------------------------------------------------------- */
+
+#status { margin: 1.5rem 0 0; padding: .8rem 1rem; border-radius: 8px; }
+#status.busy { background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+#status.error { background: var(--bad-bg); border: 1px solid #f0cfc7; color: var(--bad); }
+
+/* --- the answer --------------------------------------------------------- */
+
+#result { margin-top: 1.5rem; }
+
+/*
+ * 56% of questions land here, so this is the case that gets the space. The
+ * number is the largest thing on the page because for most questions it *is*
+ * the answer.
+ */
+.scalar { padding: 1.5rem 0 .5rem; text-align: center; }
+.scalar-value {
+  margin: 0; font-size: 3.25rem; font-weight: 650; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; word-break: break-all;
+}
+.scalar-label {
+  margin: .2rem 0 0; color: var(--muted); font-size: .85rem;
+  text-transform: uppercase; letter-spacing: .07em;
+}
+
+.empty { padding: 1.5rem 0; text-align: center; color: var(--muted); }
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+th, td {
+  text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line);
+}
+th {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); font-weight: 600;
+}
+td { font-variant-numeric: tabular-nums; }
+td.null { color: var(--muted); }
+.rowcount { margin: .6rem 0 0; font-size: .8rem; color: var(--muted); }
+
+/* --- SQL and trace ------------------------------------------------------ */
+
+.panel {
+  margin-top: 1.5rem; padding: 1rem 1.15rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+}
+
+pre {
+  margin: 0; padding: .75rem .85rem; overflow-x: auto;
+  background: #f6f8fa; border-radius: 6px;
+  font: .85rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+summary { cursor: pointer; font-size: .82rem; color: var(--muted); font-weight: 600; }
+summary::marker { color: var(--line); }
+
+#trace { margin-top: .9rem; display: grid; gap: .75rem; }
+.step { border-left: 3px solid var(--line); padding-left: .8rem; }
+.step.failed { border-left-color: var(--bad); }
+.step-head {
+  margin: 0 0 .4rem; font-size: .8rem; font-weight: 600; color: var(--muted);
+}
+.step.failed .step-head { color: var(--bad); }
+.step-error {
+  margin: .4rem 0 0; font-size: .82rem; color: var(--bad);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+footer p { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6edf3; --muted: #8b949e; --line: #2b3138; --bg: #0d1117;
+    --panel: #161b22; --accent: #4493f8; --bad: #f0836c; --bad-bg: #2b1512;
+  }
+  pre { background: #0d1117; }
+  #status.error { border-color: #56231b; }
+}
+
+/* --- the chart (T7, resolved D-3: hand-rolled SVG, no library) ----------- */
+
+#chart-controls { margin-top: 1rem; }
+
+#chart-toggle {
+  font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer;
+  color: var(--accent); background: none;
+  border: 1px solid var(--line); border-radius: 999px; padding: .35rem .9rem;
+}
+#chart-toggle:hover { border-color: var(--accent); }
+
+#chart { margin-top: .9rem; }
+
+.chart-label { font-size: 12px; fill: var(--muted); }
+.chart-value {
+  font-size: 12px; fill: var(--ink); font-variant-numeric: tabular-nums;
+}
+.chart-bar { fill: var(--accent); opacity: .85; }
+
+.chart-note { color: var(--muted); font-size: .85rem; margin: .5rem 0 0; }

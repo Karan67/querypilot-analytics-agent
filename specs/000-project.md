@@ -87,7 +87,7 @@ The project succeeds when all of the following are simultaneously true:
 | S2 | Accuracy is measured, not claimed | `run_evals.py` scores a held-out question set and prints an execution-accuracy figure |
 | S3 | Accuracy improved for stated reasons | `EVALS.md` records baseline → current with a diagnosis attached to each jump |
 | S4 | Unsafe SQL cannot execute | An adversarial suite (DDL, DML, stacked statements, comment injection) is blocked 100%, at both the AST gate and the database role |
-| S5 | It is demoable | A non-technical person can ask a question in the UI and watch the agent steps stream in |
+| S5 | It is demoable | A non-technical person can ask a question in the UI and ~~watch the agent steps stream in~~ **see the agent's steps, including any query that failed and the database error it read before retrying** (amended 2026-09-09 — Q-D retired streaming: the answer takes 1.20–2.51s over a single provider call, and the loop emits its SQL in one shot, so there is nothing to stream. The steps are shown, not streamed) |
 | S6 | It runs from cold | `docker compose up` on a clean machine yields a working system |
 
 **S4 has no acceptable failure rate.** A single successful write originating from
@@ -282,7 +282,7 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 3 | Evals | A baseline accuracy number exists in `EVALS.md`. It will be mediocre — that is the point |
 | 4 | The agent loop | A query failing on attempt 1 succeeds on attempt 2, and accuracy moves measurably |
 | 5 | Accuracy work | A documented accuracy climb with the reasoning behind each jump |
-| 6 | Frontend | Demoable to a non-technical person |
+| 6 | Frontend | Demoable to a non-technical person — **done 2026-09-09**, see `009-frontend.md` |
 | 7 | Hardening | History, feedback, latency and cost logging, rate limiting, caching |
 | 8 | Ship | Deployed, evals running in CI, README with honest numbers, demo video |
 
