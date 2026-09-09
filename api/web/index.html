@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!--
+  QueryPilot — Iteration 6.
+
+  Server-rendered nothing: this file is static and every render happens in
+  app.js after a fetch (resolved Q-A). No templating engine, no build step, no
+  npm. `docker compose up` remains the only setup instruction, which is the
+  property that decision was made to protect.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QueryPilot</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>QueryPilot</h1>
+      <p class="tagline">
+        Ask a question about the Chinook music store. You get the answer, the
+        SQL that produced it, and the steps taken to get there.
+      </p>
+    </header>
+
+    <form id="ask-form" autocomplete="off">
+      <label class="visually-hidden" for="question">Your question</label>
+      <input
+        id="question"
+        name="question"
+        type="text"
+        maxlength="1000"
+        required
+        placeholder="Which genres sold the most in 2013?">
+      <button id="submit" type="submit">Ask</button>
+    </form>
+
+    <!--
+      Examples are here because the intended user understands the business and
+      not the schema, so a blank box is a hard start. One per shape, so the
+      first thing a demo audience sees is not always a single number.
+    -->
+    <p class="examples">
+      Try:
+      <button class="example" type="button">How many tracks are in the library?</button>
+      <button class="example" type="button">Show the 10 genres with the most tracks, giving the genre name and the count.</button>
+      <button class="example" type="button">What is the total value of all invoices?</button>
+    </p>
+
+    <section id="status" hidden aria-live="polite"></section>
+
+    <section id="result" hidden>
+      <div id="answer"></div>
+
+      <!--
+        Resolved Q-B: the chart is a toggle the human controls, and it starts
+        off. The default lives here, in the markup, rather than only in app.js
+        -- a declarative default is one a test can assert about the served page,
+        and it cannot drift out of sync with a script that sets it later.
+
+        Why a toggle at all: shape alone cannot tell a measure from an
+        identifier. `easy-010` ("List the id and name of every playlist")
+        classifies as chartable on a column of playlist *ids*, and a rule
+        confident enough to chart that automatically is worse than no rule.
+        Measured in `009-frontend.md` §2.4.
+      -->
+      <div id="chart-controls" hidden>
+        <button id="chart-toggle" type="button" aria-expanded="false" aria-controls="chart">
+          Show chart
+        </button>
+      </div>
+      <div id="chart" hidden></div>
+
+      <!--
+        AC8: always visible, never behind a toggle. An answer nobody can check
+        is worth less than no answer, and hiding the query would make this a
+        chatbot that emits numbers.
+      -->
+      <section class="panel">
+        <h2>The SQL that produced this</h2>
+        <pre id="sql"></pre>
+      </section>
+
+      <!--
+        Resolved Q-E: returned always, collapsed by default. `<details>` needs
+        no JavaScript, which is a small but real reason to prefer it.
+      -->
+      <details id="trace-panel" class="panel">
+        <summary>How the agent got there — <span id="trace-summary"></span></summary>
+        <div id="trace"></div>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <!--
+      AC13: no accuracy claim appears anywhere in this interface. The held-out
+      number is one pass at 100.0% and honestly reads *between 90% and 100%*; a
+      product surface is exactly where that nuance dies.
+    -->
+    <p>
+      Read-only by construction — every query passes a validator and runs in a
+      read-only transaction. The model can be wrong; the SQL above is how you
+      check it.
+    </p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

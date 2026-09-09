@@ -80,11 +80,11 @@ because a measurement contradicted the premise.
 | 3 Evals | Done — 40 reference queries, execution accuracy, `EVALS.md` |
 | 4 Agent loop | Done — hand-written ReAct loop, 3-call budget, text protocol |
 | **5 Prompt tuning** | **Closed 2026-09-04**; its last open criterion, AC13, satisfied 2026-09-08 as B-2 |
-| 6 Frontend | Not started |
+| **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
 | 7 Latency/cost | Not started |
 | 8 CI | Not started |
 
-**911 tests** (live provider tests skip when rate-limited, which is now a
+**984 tests** (live provider tests skip when rate-limited, which is now a
 working guard rather than a red failure -- see the traps below).
 
 ### The backlog board, in `specs/000-project.md` section 8

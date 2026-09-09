@@ -25,3 +25,20 @@ pyyaml>=6.0,<7.0
 #
 # It exists because T1 found the spec's headline token numbers were len//4.
 tiktoken>=0.7,<1.0
+
+# FastAPI, so the host suite can import `api.main` (Iteration 6 T5).
+#
+# Unusual in this file: everything else here is dev-only, and this is a
+# *runtime* dependency being added to the dev set. The reason is AC4 -- the
+# structural test that `POST /ask` reaches the database only through
+# `execute_sql()` walks the parsed AST of `api/main.py`, and a module that
+# cannot be imported cannot be asserted about.
+#
+# Before this, no test imported `api.main` at all: `/health` was verified by
+# curl against the container and by nothing else. That blind spot would have
+# become a hole in Iteration 8's CI pipeline.
+#
+# Pinned to the same range as api/requirements.txt for the reason SQLAlchemy is
+# above: a version skew between the host suite and the image surfaces as a
+# confusing assertion failure rather than as the version problem it is.
+fastapi>=0.115,<0.116

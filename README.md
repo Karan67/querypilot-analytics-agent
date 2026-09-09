@@ -7,11 +7,16 @@ Read [`specs/000-project.md`](specs/000-project.md) first — it is the source o
 truth for intent, scope, non-goals, and the safety rules that bind every
 iteration.
 
-**Current state: Iteration 3 (Evaluations).** The stack comes up under Docker
-Compose, the four tools work, single-shot generation answers questions
-end-to-end through the safety layer, and there is now a **measured baseline**:
-see [`EVALS.md`](EVALS.md). Iteration 4 replaces single-shot with the agent
-loop, and its success criterion is a measurable jump against that number.
+**Current state: Iteration 6 (Frontend).** `docker compose up` gives you a
+working page at **<http://localhost:8000>** — ask a question, get the answer,
+the SQL that produced it, and the agent's steps. Behind it: a hand-written
+agent loop that reads its own execution errors and retries, a four-gate safety
+layer nothing bypasses, and a 50-question benchmark with a held-out split.
+
+Every accuracy number lives in [`EVALS.md`](EVALS.md) with its caveats, and the
+numbers are deliberately not repeated here — the honest reading of the held-out
+result is *between 90% and 100%, measured once at 100%*, and a README is where
+that nuance would die.
 
 ---
 
@@ -66,6 +71,32 @@ Expected:
 
 `user` must read `querypilot_ro`. If it reads anything else, the API is holding
 a privileged credential and Gate 1 of the safety layer is not in place.
+
+Then open **<http://localhost:8000>** and ask something:
+
+> *How many tracks are in the library?*
+> *Show the 10 genres with the most tracks, giving the genre name and the count.*
+
+You get the answer, the SQL that produced it — always visible, because an answer
+nobody can check is worth less than no answer — and the agent's steps in a
+collapsed panel, including any query that failed and the database error it read
+before retrying.
+
+There is no build step and nothing to install. The page is plain HTML, CSS and
+JavaScript served by the same container, so `docker compose up` really is the
+only setup instruction.
+
+Or ask it over HTTP:
+
+```bash
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is the total value of all invoices?"}'
+```
+
+Numbers from `NUMERIC` columns come back as JSON **strings** — `"2328.60"`, not
+`2328.6`. That is deliberate: a float round trip drops the trailing zero from a
+money column, and the value on screen should be the value in the database.
 
 ---
 
@@ -159,8 +190,13 @@ prints errors in a different format than real curl.)
 
 ## Running the evaluation
 
-The benchmark scores the agent against 40 hand-written reference queries. It
-needs the database up and `GROQ_API_KEY` in `.env`.
+The benchmark scores the agent against **50** hand-written reference queries
+across four tiers -- `easy`, `medium`, `hard` and `expert` -- split into a
+frozen 30-question `dev` set and a 20-question held-out `test` set. It needs
+the database up and `GROQ_API_KEY` in `.env`.
+
+`--split dev` is the default, so a tuning run cannot touch the held-out
+questions by omission; reaching them takes typing `--split test`.
 
 ```bash
 python -m evals.run_evals                       # score and print
@@ -187,12 +223,14 @@ edited because the model got it wrong**, in either direction.
 specs/          source of truth — one spec per feature
 evals/          question set + scorer (Iteration 3)
 api/
-  main.py       FastAPI app; /health lives here
-  agent/        orchestrator, tools, prompts (Iterations 1–4)
+  main.py       FastAPI app; GET /, POST /ask, /health
+  agent/        orchestrator, tools, prompts, glossary (Iterations 1–5)
   safety/       sqlglot AST gate (Iteration 1)
-  db/           read-only engine
+  db/           read-only engine, execution, introspection
+  llm/          provider behind one method, plus pacing and rate limits
+  http/         shape classifier, JSON boundary, error mapping (Iteration 6)
+  web/          the page — plain HTML, CSS and JS, no build step (Iteration 6)
 db/             dataset fetcher + Postgres init scripts
-frontend/       Next.js chat UI (Iteration 6)
 tests/          unit + integration tests
 EVALS.md        accuracy log over time (Iteration 3)
 ```
