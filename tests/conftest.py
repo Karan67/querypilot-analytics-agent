@@ -196,3 +196,20 @@ def isolated_answer_cache():
     cache.clear()
     yield
     cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_quota_snapshot():
+    """The fifth. Same rule, applied without waiting to be bitten.
+
+    `api/http/quota.py` keeps the last rate-limit reading in a module global,
+    because T4 made the provider per-request and there is nowhere else for it to
+    live. A reading left behind by one test would make another test's `/quota`
+    report limits nobody in that test observed -- and the warning it drives is
+    exactly the kind of thing that looks right until it is wrong.
+    """
+    from api.http import quota
+
+    quota.clear()
+    yield
+    quota.clear()

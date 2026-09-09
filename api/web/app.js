@@ -26,6 +26,8 @@ const traceSummary = document.getElementById("trace-summary");
 const chartControls = document.getElementById("chart-controls");
 const chartToggle = document.getElementById("chart-toggle");
 const chartBox = document.getElementById("chart");
+const quotaBox = document.getElementById("quota");
+const cacheNote = document.getElementById("cache-note");
 
 /* The result currently on screen, so the toggle can redraw without refetching. */
 let current = null;
@@ -71,8 +73,44 @@ form.addEventListener("submit", async (event) => {
     showStatus("Could not reach QueryPilot. Is the API running?", "error");
   } finally {
     setBusy(false);
+    // AC11, and the reason this runs after every question rather than on a
+    // timer: the answer that just drained the bucket is the one whose delay
+    // needs explaining. A poll on its own schedule would tell the user why
+    // they waited at some unrelated moment later on.
+    refreshQuota();
   }
 });
+
+/*
+ * AC10. Asks the server what the provider last said about its limits.
+ *
+ * Deliberately quiet about failure. This is an explanation, not a feature: if
+ * /quota is unreachable the user still gets answers, and an error banner about
+ * the *quota reader* would be a worse experience than the silence it replaced.
+ */
+async function refreshQuota() {
+  try {
+    const response = await fetch("/quota");
+    renderQuota(await response.json());
+  } catch (err) {
+    quotaBox.hidden = true;
+  }
+}
+
+function renderQuota(quota) {
+  // Shown only when there is something to say. `low` is already false when the
+  // server has no reading or when the reading has gone stale -- a warning drawn
+  // from a five-minute-old sample of a bucket that refills every minute would
+  // describe a state that no longer exists.
+  if (!quota || !quota.low || !quota.note) {
+    quotaBox.hidden = true;
+    quotaBox.textContent = "";
+    return;
+  }
+  quotaBox.hidden = false;
+  quotaBox.className = "warn";
+  quotaBox.textContent = quota.note;
+}
 
 function setBusy(busy) {
   submit.disabled = busy;
@@ -102,8 +140,34 @@ function resetChart() {
   clear(chartBox);
 }
 
+/*
+ * AC8. Marks an answer that was not computed for this request.
+ *
+ * `cache_hit` means the provider was not called -- which covers both a stored
+ * answer and one shared with a question that arrived at the same moment. The
+ * wording says what happened rather than how old the answer is, because for a
+ * coalesced request it is seconds old and for a stored one it may not be.
+ *
+ * **It must not promise that changed data invalidates it.** The key is the
+ * question plus the schema and prompt fingerprints, so an added column changes
+ * it and an added *row* does not. Telling a user their next question will pick
+ * up new data would be a claim the cache cannot honour.
+ */
+function renderCacheNote(body) {
+  if (!body.cache_hit) {
+    cacheNote.hidden = true;
+    cacheNote.textContent = "";
+    return;
+  }
+  cacheNote.hidden = false;
+  cacheNote.textContent =
+    "Cached — this answer was reused rather than recomputed, so it reflects " +
+    "the data as it was when the question was first answered.";
+}
+
 function render(body) {
   resetChart();
+  renderCacheNote(body);
   // FastAPI's own 422 for a malformed request has no `ok` field at all.
   if (typeof body.ok !== "boolean") {
     showStatus("That question could not be read. Try rephrasing it.", "error");
@@ -375,3 +439,13 @@ function drawChart(body) {
 
   chartBox.appendChild(chart);
 }
+
+/*
+ * AC10 on arrival, not only after the first question.
+ *
+ * Somebody opening the page mid-benchmark should see the warning before they
+ * type, not after they have waited ten seconds for an answer to prove it. The
+ * server returns `known: false` until a question has actually been asked, so
+ * this shows nothing on a cold process rather than guessing.
+ */
+refreshQuota();

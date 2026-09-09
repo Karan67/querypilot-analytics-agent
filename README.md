@@ -7,7 +7,7 @@ Read [`specs/000-project.md`](specs/000-project.md) first — it is the source o
 truth for intent, scope, non-goals, and the safety rules that bind every
 iteration.
 
-**Current state: Iteration 6 (Frontend).** `docker compose up` gives you a
+**Current state: Iteration 7 (Hardening).** `docker compose up` gives you a
 working page at **<http://localhost:8000>** — ask a question, get the answer,
 the SQL that produced it, and the agent's steps. Behind it: a hand-written
 agent loop that reads its own execution errors and retries, a four-gate safety
@@ -65,12 +65,18 @@ Expected:
     "user": "querypilot_ro",
     "database": "chinook",
     "public_tables": 12
-  }
+  },
+  "history": { "writable": true, "error": "" }
 }
 ```
 
 `user` must read `querypilot_ro`. If it reads anything else, the API is holding
 a privileged credential and Gate 1 of the safety layer is not in place.
+
+`history` reports whether the question log can be written. A failure there shows
+up as `degraded_history` and **still returns 200**: recording a question and
+answering it are independent, and reporting the service as down because logging
+broke would be the cascade that arrangement exists to prevent.
 
 Then open **<http://localhost:8000>** and ask something:
 
@@ -97,6 +103,28 @@ curl -X POST http://localhost:8000/ask \
 Numbers from `NUMERIC` columns come back as JSON **strings** — `"2328.60"`, not
 `2328.6`. That is deliberate: a float round trip drops the trailing zero from a
 money column, and the value on screen should be the value in the database.
+
+The answer also carries what it cost and where it came from: `usage` (the
+provider's own billed token count, with `measured` saying whether it is billed
+or locally estimated), `total_ms` and `provider_ms` kept apart, and `cache_hit`.
+Every question is recorded in a SQLite store in the `querypilot_data` volume,
+which survives `docker compose down` and is discarded only by `down -v`.
+
+Asking the same question twice costs **zero** tokens the second time, and the
+page says so rather than presenting a reused answer as a fresh one. The key is
+the exact question text plus fingerprints of the schema and the prompt, so a
+schema change or a prompt edit invalidates it — a change to the *data* does not.
+
+```bash
+curl http://localhost:8000/quota
+```
+
+reports what the provider last said about its limits. It is worth knowing that
+the free tier does not refuse when its per-minute token bucket runs low — it
+**slows down**, from about 750ms to as much as 10s, with no error and no header
+a user would ever see. That is what this endpoint and the page's banner exist to
+explain. It reports two buckets and not three: the 200,000-tokens-per-day limit
+appears in no response header at all, only in the body of a 429.
 
 ---
 
@@ -223,12 +251,13 @@ edited because the model got it wrong**, in either direction.
 specs/          source of truth — one spec per feature
 evals/          question set + scorer (Iteration 3)
 api/
-  main.py       FastAPI app; GET /, POST /ask, /health
+  main.py       FastAPI app; GET /, POST /ask, /health, /quota
   agent/        orchestrator, tools, prompts, glossary (Iterations 1–5)
   safety/       sqlglot AST gate (Iteration 1)
   db/           read-only engine, execution, introspection
   llm/          provider behind one method, plus pacing and rate limits
-  http/         shape classifier, JSON boundary, error mapping (Iteration 6)
+  http/         shape classifier, JSON boundary, errors, cache, quota
+  store/        SQLite history of every answered question (Iteration 7)
   web/          the page — plain HTML, CSS and JS, no build step (Iteration 6)
 db/             dataset fetcher + Postgres init scripts
 tests/          unit + integration tests

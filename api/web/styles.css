@@ -16,6 +16,12 @@
   --accent: #1f6feb;
   --bad: #a3341f;
   --bad-bg: #fdf2f0;
+  /* A caution, not a failure: the answer still arrives, more slowly. Amber
+     rather than the red used for errors, because AC11 is an explanation and
+     colouring it like a fault would say something the measurement does not. */
+  --warn: #7a5300;
+  --warn-bg: #fdf7e3;
+  --warn-line: #eadfae;
 }
 
 * { box-sizing: border-box; }
@@ -72,6 +78,32 @@ h2 {
 #status { margin: 1.5rem 0 0; padding: .8rem 1rem; border-radius: 8px; }
 #status.busy { background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
 #status.error { background: var(--bad-bg); border: 1px solid #f0cfc7; color: var(--bad); }
+
+/* --- AC10: the slow mode, said out loud ---------------------------------- */
+
+#quota { margin: 1.25rem 0 0; padding: .7rem 1rem; border-radius: 8px; font-size: .9rem; }
+#quota.warn {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+}
+
+/* --- AC8: a cached answer says so ---------------------------------------- */
+
+/*
+ * Above the answer and quiet. It has to be seen before the number is read --
+ * a caveat noticed afterwards has already failed -- but it is a provenance
+ * note, not a warning, and styling it as an alarm would misreport a correct
+ * answer as a problem.
+ */
+#cache-note {
+  margin: 0 0 .75rem;
+  padding: .45rem .7rem;
+  border-left: 3px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: .82rem;
+}
 
 /* --- the answer --------------------------------------------------------- */
 
@@ -147,6 +179,7 @@ footer p { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--l
   :root {
     --ink: #e6edf3; --muted: #8b949e; --line: #2b3138; --bg: #0d1117;
     --panel: #161b22; --accent: #4493f8; --bad: #f0836c; --bad-bg: #2b1512;
+    --warn: #e3b341; --warn-bg: #241d0f; --warn-line: #4a3a15;
   }
   pre { background: #0d1117; }
   #status.error { border-color: #56231b; }

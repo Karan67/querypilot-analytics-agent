@@ -48,9 +48,31 @@
       <button class="example" type="button">What is the total value of all invoices?</button>
     </p>
 
+    <!--
+      AC10 and AC11. The provider does not refuse when its per-minute token
+      bucket runs low, it slows down: `010-hardening.md` section 2.3 measured
+      latency climbing from 742ms to 10,393ms with the work held constant, with
+      no 429 and no error. Until this banner nothing in the product noticed,
+      which is what section 2.3 means by a silent penalty.
+
+      Hidden in the markup rather than only in app.js, following the chart
+      toggle: a declarative default is one a test can assert about the page as
+      served, and it cannot drift out of step with a script that sets it later.
+    -->
+    <section id="quota" hidden aria-live="polite"></section>
+
     <section id="status" hidden aria-live="polite"></section>
 
     <section id="result" hidden>
+      <!--
+        AC8: a cached answer is visibly cached. Presenting an answer computed
+        for somebody else, some time ago, as though it were computed just now
+        is the analytics equivalent of the accuracy claim AC13 kept off this
+        page. Only cached answers are marked -- labelling the fresh ones too
+        would be noise on every question to make a point about a few.
+      -->
+      <p id="cache-note" hidden></p>
+
       <div id="answer"></div>
 
       <!--

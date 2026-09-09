@@ -391,6 +391,15 @@ def test_the_accuracy_guard_is_not_vacuous():
     A regex that over-matched would empty the document and make every
     assertion pass, which is the failure mode of every "assert not present"
     test.
+
+    **Checks that the markup survived, not that the file stayed long.** The
+    first version required the stripped page to be over half the raw file, and
+    T5 broke it by adding two well-commented sections: the page became 55%
+    commentary and the guard read that as an over-matching regex. Length was
+    only ever a proxy, and a proxy that fails when someone explains their work
+    is training to write less of it down. Naming the elements that must survive
+    tests the actual property -- and it fails on a truly greedy regex, which
+    would take the page down to nothing and every landmark with it.
     """
     import re
 
@@ -398,11 +407,24 @@ def test_the_accuracy_guard_is_not_vacuous():
 
     raw = _WEB_DIR.joinpath("index.html").read_text(encoding="utf-8")
     rendered = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+
     assert "QueryPilot" in rendered
-    assert len(rendered) > len(raw) * 0.5
+    for landmark in (
+        '<form id="ask-form"',
+        'id="question"',
+        'id="result"',
+        'id="sql"',
+        'id="quota"',
+        'id="cache-note"',
+        "<footer>",
+        '<script src="/static/app.js">',
+    ):
+        assert landmark in rendered, f"stripping comments removed {landmark}"
+
     # ... and the raw file really does contain what the stripping removes,
     # so the test above is exercising the strip rather than passing by luck.
     assert "accuracy" in raw.lower()
+    assert len(rendered) < len(raw), "nothing was stripped; the test proves nothing"
     assert "accuracy" not in rendered.lower()
 
 

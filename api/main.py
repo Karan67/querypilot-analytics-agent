@@ -36,7 +36,7 @@ from api.llm.base import LLMError, TokenUsage
 from api.llm.factory import get_provider
 from api.store import history
 from api.store.history import AskRecord
-from api.http import cache
+from api.http import cache, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
 from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
@@ -240,6 +240,18 @@ def ask(request: AskRequest) -> JSONResponse:
     cache_hit = answered.cache_hit
     provider = answered.provider
 
+    # AC10/AC11. The provider is built per request and a cache hit builds none,
+    # so what it learned about the limits has to be handed somewhere that
+    # outlives the request or it is lost with it.
+    #
+    # The `is not None` check here is a readability guard, **not the protection**
+    # -- `observe` ignores a `None` snapshot, and removing this line changes no
+    # behaviour and fails no test. The load-bearing rule lives in `observe` for
+    # a reason: a provider that simply reported nothing this time reaches it too,
+    # and that path has no call-site check to lean on.
+    if provider is not None:
+        quota.observe(getattr(provider, "last_rate_limit", None))
+
     # Resolved at T4: `usage` reports what **this request** spent, so a hit
     # reports zero. The alternative -- replaying the original answer's figures --
     # makes the history column sum to more than was ever billed unless every
@@ -338,6 +350,34 @@ def ask(request: AskRequest) -> JSONResponse:
     payload["error"] = failure.message
     payload["retryable"] = failure.retryable
     return JSONResponse(status_code=failure.status, content=payload)
+
+
+@app.get("/quota", tags=["ops"])
+def quota_endpoint() -> JSONResponse:
+    """What the provider last said about its limits (AC10, AC11).
+
+    **Reports observation, not policy.** It never calls the provider — asking
+    the provider how much quota is left would spend quota — so it returns what
+    the most recent real question learned, together with how long ago that was.
+    Before any question has been asked it returns `known: false` and no numbers,
+    because a default reading is indistinguishable from a healthy one.
+
+    **Two buckets, not three.** B-1 measured a per-minute token limit and a
+    per-day request limit in the response headers, and a **200,000 tokens-per-day
+    limit that appears in no header at all** — it surfaces only in the body of a
+    429. This endpoint cannot report what the provider never sends, and does not
+    invent it.
+
+    Always 200. A low bucket is not a service failure: the answer still arrives,
+    it arrives more slowly, and the whole point of AC11 is to say so rather than
+    to start refusing.
+
+    **The API still does not pace** (resolved Q-C, `009` AC5). This endpoint
+    tells the user what is happening; it does not sleep on their behalf. A
+    request that takes ten seconds because the provider is slow is honest; one
+    that takes ten seconds because we chose to wait is not.
+    """
+    return JSONResponse(status_code=200, content=quota.snapshot())
 
 
 @app.get("/", include_in_schema=False)
