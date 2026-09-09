@@ -79,13 +79,17 @@ def test_the_payload_says_which_instrument_measured_the_cost(client, monkeypatch
     """D-1's standing rule, carried across the boundary. A billed number and a
     locally counted one are different quantities, and a payload that does not
     say which it holds is not reporting a measurement."""
+    # A distinct question per arm, because T4's cache would otherwise answer the
+    # second one from the first. That is the cache behaving correctly -- the
+    # question, schema and prompt are identical, so the answer is too -- and it
+    # would have made this test assert the first arm twice.
     for measured in (False, True):
         _answer(monkeypatch, _ok(
             ["count"], [[1]],
             usage=TokenUsage(prompt_tokens=10, completion_tokens=1, calls=1,
                              measured=measured),
         ))
-        body = client.post("/ask", json={"question": "?"}).json()
+        body = client.post("/ask", json={"question": f"measured={measured}?"}).json()
         assert body["usage"]["measured"] is measured
 
 

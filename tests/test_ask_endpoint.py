@@ -120,15 +120,31 @@ def test_ac4_the_only_database_call_in_the_module_is_execute_sql():
     )
 
 
-def test_ac4_the_endpoint_reaches_the_database_only_through_the_agent():
-    """The positive half: `ask()` delegates to `answer()`, which is the only
-    path to `execute_sql()` and therefore to Gate 2."""
-    called = {
+def _calls_in(name: str) -> set[str]:
+    """Plain function calls made inside one function of `api/main.py`."""
+    return {
         node.func.id
-        for node in ast.walk(_function_node("ask"))
+        for node in ast.walk(_function_node(name))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-    assert "answer" in called
+
+
+def test_ac4_the_endpoint_reaches_the_database_only_through_the_agent():
+    """The positive half: the endpoint's only route to the database is
+    `answer()`, which is the only route to `execute_sql()` and therefore to
+    Gate 2.
+
+    **Followed through one level of indirection since Iteration 7 T4.** The
+    cache sits between the endpoint and the agent — that is the entire point of
+    it, since an answer already paid for must not be bought twice — so `ask()`
+    calls `_answer_or_replay()`, which calls `answer()`. Asserting that `ask()`
+    itself names `answer` would now fail for a reason that has nothing to do
+    with the property being protected. Asserting the chain keeps the property
+    and still fails closed: insert another hop and this test goes red until
+    somebody looks at it.
+    """
+    assert "_answer_or_replay" in _calls_in("ask")
+    assert "answer" in _calls_in("_answer_or_replay")
 
 
 def test_ac5_the_deployed_api_does_not_pace():

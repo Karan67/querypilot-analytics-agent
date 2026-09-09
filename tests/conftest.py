@@ -171,3 +171,28 @@ def isolated_history_store(tmp_path, monkeypatch):
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "history.db")
     monkeypatch.setattr(history, "_degraded", "")
 
+
+@pytest.fixture(autouse=True)
+def isolated_answer_cache():
+    """Never let one test's answer be served to another.
+
+    **The fourth instance of the same trap, and the first where the shared state
+    is in memory rather than on disk.** `EVALS.md`, the spend ledger and the
+    history database were all files; this one is a module-level dict, which is
+    worse in one specific way -- a leaked entry does not sit there waiting to be
+    noticed, it makes a *later* test's provider call silently not happen.
+
+    Consider the failure it prevents: a test asks a question and asserts the
+    provider was called once. It passes alone and fails in a full run, or worse,
+    passes in both because a *different* test was the one that paid. The suite
+    would then be asserting the behaviour of whichever test happened to run
+    first, which is not a property anybody chose.
+
+    Cleared before and after: before, so a test never inherits; after, so a
+    failing test does not leave a primed cache behind for the next file.
+    """
+    from api.http import cache
+
+    cache.clear()
+    yield
+    cache.clear()
