@@ -79,11 +79,35 @@ SPLITS = (SPLIT_DEV, SPLIT_TEST)
 #: tell the model which questions are the ambiguous ones. It exists so a test
 #: can assert the declared terms are actually defined, and so a reader of the
 #: dataset can see which convention a question turns on.
-#: `naive_sql` is the reading a competent analyst produces *without* the
-#: glossary. **It is never scored** — it exists so a test can prove the question
-#: discriminates (AC12), the direct analogue of `006`'s duplicate-row check. A
-#: question whose two readings return the same rows is a free point: it inflates
-#: the number while measuring nothing.
+#: `naive_sql` is the reading produced *without* the glossary. **It is never
+#: scored** — it exists so a test can prove the question discriminates (AC12),
+#: the direct analogue of `006`'s duplicate-row check. A question whose two
+#: readings return the same rows is a free point: it inflates the number while
+#: measuring nothing.
+#:
+#: **Two kinds of entry live in this field, and the difference matters (B-8).**
+#: It was originally, everywhere, *the reading a competent analyst is assumed to
+#: produce* — written at authoring time, before any model saw the question.
+#: B-7 then measured what a model actually produces unaided, and it was not
+#: that: rather than ignoring the undefined term, the model applies a different
+#: restriction and returns a plausible wrong number. Where such a reading has
+#: been observed, the observation replaces the assumption and the question
+#: carries a comment naming the superseded query, the date and both values.
+#:
+#: As of 2026-09-09 that is `expert-001`, `expert-003` and `expert-004`. The
+#: rest remain assumptions, for two different reasons worth keeping straight:
+#: `expert-002`, `-007` and `-008` are answered *correctly* unaided, so no wrong
+#: reading exists to record and their entries can never become observations
+#: while that holds; `expert-005`, `-006`, `-009` and `-010` are held-out test
+#: questions, and obtaining their per-question failures means passing
+#: `--reveal-test-failures`, which D-3 gates and records precisely so that
+#: held-out detail is not collected casually — a diagnostic field is not
+#: sufficient reason to spend it.
+#:
+#: **An observed entry is model-specific in a way an assumed one is not.** These
+#: three describe `openai/gpt-oss-120b`; a provider swap (B-4) makes them stale
+#: in a way the assumptions never were, and B-4's re-baselining should re-measure
+#: them rather than trust them.
 _OPTIONAL_KEYS = frozenset({"expect", "glossary", "naive_sql"})
 
 #: Recognised sub-keys of `expect`. `rows` is an exact row count; `value` is the

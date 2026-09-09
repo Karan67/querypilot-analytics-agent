@@ -98,7 +98,7 @@ working guard rather than a red failure -- see the traps below).
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
-| **B-8** | `naive_sql` records an assumption AC12 cannot check | open, opened by B-7 |
+| ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 
 ### The numbers that matter
 
