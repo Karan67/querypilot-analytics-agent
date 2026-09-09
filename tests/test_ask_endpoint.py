@@ -45,7 +45,10 @@ def _answer(monkeypatch, result: AgentResult) -> None:
     `api.agent.orchestrator.answer` would leave the name `api.main` already
     imported pointing at the real function.
     """
-    monkeypatch.setattr("api.main.answer", lambda question: result)
+    # `**_` absorbs `provider=`, which T3 added so the endpoint can time
+    # `complete()` separately (AC2). A double that pins the old signature would
+    # fail for a reason that has nothing to do with what its test asserts.
+    monkeypatch.setattr("api.main.answer", lambda question, **_: result)
 
 
 def _ok(columns, rows, sql="SELECT 1", steps=()) -> AgentResult:
@@ -292,7 +295,7 @@ def test_a_question_containing_sql_is_not_sanitised(client, monkeypatch):
     """
     seen: list[str] = []
 
-    def capture(question: str) -> AgentResult:
+    def capture(question: str, **_) -> AgentResult:
         seen.append(question)
         return _ok(["count"], [[1]])
 
