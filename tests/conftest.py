@@ -149,3 +149,25 @@ def isolated_spend_ledger(tmp_path, monkeypatch):
     from evals import ledger
 
     monkeypatch.setattr(ledger, "DEFAULT_PATH", tmp_path / "spend.json")
+
+
+@pytest.fixture(autouse=True)
+def isolated_history_store(tmp_path, monkeypatch):
+    """Never let a test write the real history database.
+
+    **The third instance of the same trap, isolated before it can bite rather
+    than after.** T5's `EVALS_PATH` put a fabricated entry in the real
+    `EVALS.md`; B-5's ledger took 6,800 tokens of fake spend from two tests that
+    drove `main()` end to end and had no idea a ledger existed. Both were
+    gitignored, so neither would have shown up in review.
+
+    `POST /ask` now writes history, and the endpoint tests drive it without
+    caring that a store exists -- which is precisely the shape of both earlier
+    failures. Per-test discipline is what failed twice, so this is autouse and
+    applies whether a test asks for it or not.
+    """
+    from api.store import history
+
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "history.db")
+    monkeypatch.setattr(history, "_degraded", "")
+
