@@ -130,8 +130,37 @@ regressions are bugs; safety regressions are stop-the-line events.
   > on the host, against the container. Writing *"runnable locally and in CI"*
   > in the present tense described an intention as a capability — the same
   > failure mode as §1's chart promise, in a quieter register.
-- **A metadata store** — query history, agent steps, eval runs, feedback, latency
-  and token cost.
+- **A metadata store** — query history, agent steps, eval runs, ~~feedback,~~
+  latency and token cost.
+
+  > **AMENDED 2026-09-09, at Iteration 7 T1: feedback moves to Iteration 8.**
+  >
+  > It is the only one of Iteration 7's five features with **no measurement
+  > behind it**. `010-hardening.md` §2 measured the latency distribution, the
+  > per-question cost, the persistence gap and the schema's cacheability;
+  > nothing was measured about what feedback would be *for*, because there are
+  > no users to ask and no decision waiting on their opinion. Building a
+  > thumbs-up column now means guessing at a schema for data nobody will read.
+  >
+  > **`008` is the precedent for what happens otherwise.** AC13 rode along
+  > unmeasured, was knowingly unmet at the iteration's close, and then took two
+  > backlog items (B-2, B-7) and three days to discharge honestly. Deferring
+  > openly costs less than carrying an obligation quietly.
+  >
+  > **The shape survives the deferral**, and Iteration 7 builds for it: every
+  > answer is recorded with a uuid `id` that is returned in the `/ask` payload,
+  > because feedback must attach to *an answer*, never to a question string —
+  > the agent may answer the same question differently next time.
+  >
+  > Deferring is a scope decision, and it is the user's (`010-hardening.md`
+  > Q-E), recorded here rather than left in a plan.
+  >
+  > **The other half of the metadata store also changed shape.** Charter §4
+  > says the API only ever holds the `querypilot_ro` credential, and it is given
+  > no other. So this store does **not** live in the analytics database: it is
+  > SQLite in a named volume, and the Postgres target keeps exactly one
+  > read-only credential (`010-hardening.md` Q-A). *"Query history, agent steps,
+  > eval runs"* is unchanged as a requirement; only its address moved.
 - **A streaming frontend** — Next.js chat UI, SSE-streamed agent steps, SQL
   viewer, results table, auto-selected Recharts visualisation.
 
@@ -267,6 +296,21 @@ improvement cannot honestly be written down.
 read-only to the agent. History, eval runs, and feedback are written to the
 metadata store — never back into the database being analysed.
 
+> **Given an address 2026-09-09, at Iteration 7.** This commitment predates any
+> implementation of it, and Iteration 7 is where it acquires one. The metadata
+> store is **SQLite in a named volume**, not a schema in the analytics database
+> — which is what keeps §4 literally true rather than earning a second recorded
+> exemption: the API is handed one Postgres credential and it is read-only
+> (`010-hardening.md` Q-A).
+>
+> **Two details of the sentence above changed and are recorded rather than
+> quietly reinterpreted.** *Feedback* moved to Iteration 8 (see §3's amendment).
+> And *eval runs* are **not** written to this store: they already have
+> `EVALS.md` for results and `evals/ledger.py` for spend, and the plan's D-1
+> keeps benchmark and product records apart so that `EVALS.md` remains the only
+> accuracy record. The commitment's actual content — *never back into the
+> database being analysed* — holds for all three.
+
 ---
 
 ## 6. Iteration map
@@ -283,8 +327,8 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 4 | The agent loop | A query failing on attempt 1 succeeds on attempt 2, and accuracy moves measurably |
 | 5 | Accuracy work | A documented accuracy climb with the reasoning behind each jump |
 | 6 | Frontend | Demoable to a non-technical person — **done 2026-09-09**, see `009-frontend.md` |
-| 7 | Hardening | History, feedback, latency and cost logging, rate limiting, caching |
-| 8 | Ship | Deployed, evals running in CI, README with honest numbers, demo video |
+| 7 | Hardening | History, ~~feedback,~~ latency and cost logging, rate limiting, caching — see the amendment below |
+| 8 | Ship | Deployed, evals running in CI, README with honest numbers, demo video, **and feedback** |
 
 ---
 
