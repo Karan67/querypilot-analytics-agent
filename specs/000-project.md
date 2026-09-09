@@ -252,7 +252,7 @@ this table only when it ships or when a spec records why it never will.
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
 | **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | open — accepted debt |
 | ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
-| **B-8** | `naive_sql` records an assumption AC12 cannot check | B-7 | open |
+| ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
@@ -698,6 +698,48 @@ scored, so changing it does not touch a recorded number. But the standing rule
 is that dataset content is not edited in response to a score, and this finding
 arrived *from* a scored run. Whoever picks this up should say plainly which of
 those two facts governs before touching `questions.yaml`.
+
+> **DISCHARGED 2026-09-09, under an explicit authorisation recorded here
+> because the conflict above is real and was resolved by decision rather than
+> by argument.** The user's ruling, quoted: *"Updating diagnostic metadata;
+> does not alter scored gold queries or violate benchmark integrity."* The
+> reasoning given was that the rule exists to stop the goalposts moving — the
+> gold queries — and that leaving known-bad diagnostic metadata in the
+> repository is the greater harm.
+>
+> **Three of ten `expert` questions now carry an observed reading**, each with
+> a comment naming the superseded query, the date, and both values:
+>
+> | id | was (assumed) | now (observed) | naive → gold |
+> |---|---|---|---|
+> | `expert-001` | `count(*) FROM customer` | `count(DISTINCT customer_id) FROM invoice` | 59 → 46 |
+> | `expert-003` | `count(*) FROM track` | `sum(quantity) FROM invoice_line` | 2240 → 1984 |
+> | `expert-004` | `count(*) FROM artist` | `artist ⋈ album ⋈ track` | 204 → 165 |
+>
+> **The other seven stay assumptions, for two different reasons that must not
+> be conflated.** `expert-002`, `-007` and `-008` are answered *correctly*
+> unaided, so no wrong reading exists to record and none can while that holds.
+> `expert-005`, `-006`, `-009` and `-010` are held out, and obtaining their
+> per-question failures means passing `--reveal-test-failures`, which D-3 gates
+> and records so that held-out detail is not collected casually. **A diagnostic
+> field is not sufficient reason to spend held-out detail**, so those four were
+> deliberately not measured.
+>
+> The field therefore holds two kinds of entry, and `evals/dataset.py` now says
+> so rather than leaving a reader to infer it from comments.
+>
+> **Mutation-tested, and the first mutation was too weak.** Replacing
+> `expert-004`'s reading with the gold query's *text* was caught by the
+> string-identity check, which proves little — that check is satisfied by any
+> rewording. The real mutation is a textually different query returning the
+> same 165, and `test_ac12_the_naive_and_conventional_readings_differ` fails on
+> it with *"is a free point"*, so the executed comparison bites on the new
+> values rather than passing vacuously.
+>
+> **An observed entry is model-specific in a way an assumed one is not.** These
+> three describe `openai/gpt-oss-120b` on 2026-09-09. B-4's re-baselining must
+> re-measure them rather than trust them, which is a cost a provider swap did
+> not previously carry.
 
 ### B-4 — Alternative LLM provider, deferred as its own milestone
 

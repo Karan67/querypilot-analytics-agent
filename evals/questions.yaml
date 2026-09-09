@@ -629,7 +629,14 @@ questions:
       SELECT count(DISTINCT i.customer_id) FROM invoice i
       WHERE i.invoice_date >= (SELECT max(invoice_date) FROM invoice)
       - INTERVAL '12 months'
-    naive_sql: SELECT count(*) FROM customer
+    # OBSERVED, B-7, 2026-09-09. Superseded `SELECT count(*) FROM customer`,
+    # which was the assumption that the model ignores the term. It does not:
+    # it reads "active" as sales-derived and drops only the 12-month window.
+    # The value is unchanged at 59 against a gold of 46, because every Chinook
+    # customer has at least one invoice -- so the old assumption happened to
+    # predict the right number by the wrong route, which is why two verbose
+    # passes were needed to see it at all.
+    naive_sql: SELECT count(DISTINCT customer_id) FROM invoice
     glossary: [active customer]
     ordered: false
     covers: [invoice]
@@ -654,7 +661,11 @@ questions:
     split: dev
     question: How many sold tracks are there?
     gold_sql: SELECT count(DISTINCT track_id) FROM invoice_line
-    naive_sql: SELECT count(*) FROM track
+    # OBSERVED, B-7, 2026-09-09. Superseded `SELECT count(*) FROM track` (3503),
+    # the assumption that the model ignores the term. It reads "sold" correctly
+    # and gets the *unit* wrong instead, counting units shipped rather than
+    # distinct tracks: 2240 against a gold of 1984.
+    naive_sql: SELECT sum(quantity) FROM invoice_line
     glossary: [sold track]
     ordered: false
     covers: [invoice_line]
@@ -667,7 +678,15 @@ questions:
       SELECT count(DISTINCT al.artist_id) FROM invoice_line il
       JOIN track t ON t.track_id = il.track_id
       JOIN album al ON al.album_id = t.album_id
-    naive_sql: SELECT count(*) FROM artist
+    # OBSERVED, B-7, 2026-09-09. Superseded `SELECT count(*) FROM artist` (275),
+    # the assumption that the model ignores the term. It reads "charting" as
+    # requiring a catalogue and joins artist -> album -> track, but never
+    # reaches `invoice_line`, so it counts artists who released something
+    # rather than artists who sold something: 204 against a gold of 165.
+    naive_sql: >-
+      SELECT count(DISTINCT al.artist_id) FROM artist al
+      JOIN album ab ON ab.artist_id = al.artist_id
+      JOIN track t ON t.album_id = ab.album_id
     glossary: [charting artist]
     ordered: false
     covers: [invoice_line, track, album]
