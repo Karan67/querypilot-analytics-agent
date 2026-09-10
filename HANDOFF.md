@@ -15,7 +15,7 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
 | [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
 | [`specs/010-hardening.md`](specs/010-hardening.md) and its plan | Iteration 7, delivered 2026-09-10. Its §2 holds the latency, cost and quota measurements |
-| §4 of this file, and §8 of the charter | Where things stand, and what is next: **Iteration 8** (CI, plus AC6's deferred feedback) |
+| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 8 is closed**; the open board is B-4, B-6, B-11, B-12, B-13, B-14 |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -83,12 +83,20 @@ because a measurement contradicted the premise.
 | **5 Prompt tuning** | **Closed 2026-09-04**; its last open criterion, AC13, satisfied 2026-09-08 as B-2 |
 | **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
-| 8 CI + feedback | Not started — inherits AC6's deferred feedback |
+| **8 Ship** | **Closed 2026-09-11** — T1-T7, all 14 ACs met, merged as PR #10. CI, B-9, B-10 and AC6's feedback all discharged. Deployment and the demo video deferred as B-11/B-12, by decision rather than omission |
 
-**1,107 tests** (live provider tests skip when rate-limited, which is a
-working guard rather than a red failure -- see the traps below). The suite
-runs in ~95s, down from ~144s: T6's schema cache removed most of the
-introspection it was paying per test.
+**1,220 tests**, ~58s (live provider tests skip when rate-limited, which is
+a working guard rather than a red failure -- see the traps below). Iteration 8
+added 111: T3 hardened the live tests, T4 brought the pipeline's own guards
+and the two defects the pipeline found, T5 discharged B-10, T6 added feedback, T7 the shipping surface.
+
+**There is a pipeline now** -- `.github/workflows/ci.yml`, on every push and
+pull request. It brings the real stack up with `docker compose up`, needs no
+secret, and excludes the three live provider tests by `--ignore`, so **run
+those by hand before a release**. Two things make it incapable of passing
+without having run the suite: `QUERYPILOT_TESTS_REQUIRE_DATABASE=1`, which
+turns `conftest.py`'s skip into a failure, and `ci/require_executed_tests.py`,
+which asserts a floor of 1,000 executed tests read from `--junitxml`.
 
 ### What Iteration 7 added, and the surface it left
 
@@ -101,7 +109,9 @@ Five endpoints and two pages, all served by the one container:
 | `GET /history` | the reader: every question, its cost, its trace |
 | `GET /history/data` | the same as JSON; **503 when the store is unreadable**, never an empty list |
 | `GET /quota` | what the provider last said about its limits |
+| `POST /feedback` | one mark against one answer id: `-1` or `1`, optional note. **404** on an unknown id, **201** on success |
 | `GET /health` | now also reports `history.writable`, and stays 200 when it is false |
+| **the `api` healthcheck** | added at Iteration 8 T7. `docker compose ps` now reports `(healthy)` only when `/health` answers 2xx, and `up --wait` blocks on it |
 
 Operational state lives in **SQLite at `/data/querypilot.db`** in the
 `querypilot_data` named volume. `docker compose down` keeps it; only `down -v`
@@ -113,13 +123,32 @@ the easiest way to misread this code:
 | | keyed on | invalidated by | shared with `evals/` |
 |---|---|---|---|
 | answer cache (`api/http/cache.py`) | question + schema fp + prompt fp | a schema or prompt change | **no** — D-1, and a test enforces it |
-| schema cache (`api/db/schema_cache.py`) | nothing; one slot | a 5.3ms catalog probe | yes, deliberately |
+| schema cache (`api/db/schema_cache.py`) | nothing; one slot | an 8.5ms catalog probe | yes, deliberately |
 | quota snapshot (`api/http/quota.py`) | nothing; one slot | its own age vs the bucket's reset | n/a |
+
+**Feedback is collected and deliberately not consumed (AC14).** `POST /feedback`
+stores a `-1` or `1` against an answer id, append-only, and `/history` shows the
+marks. **Nothing anywhere counts, averages, scores or rates them** — not the
+store, not the endpoint, not the payload, not either page script. That is a
+criterion, not an omission: `011-ship.md` §2.6 measured **zero bad answers** in
+the entire stored record, so the first proportion this project could compute
+would read *100% good* over a sample containing no failures. Six tests exist
+only to make adding one fail, including an AST walk over `api/main.py` and
+`api/store/history.py`.
 
 **The answer cache does not notice a data change.** Its key covers the question,
 the schema and the prompt, so an added *column* invalidates an entry and an
 added *row* does not. Chinook is static so it never bites here; the page and the
 README both say so rather than leaving it to be discovered.
+
+**The schema cache's margin shrank by a factor of five at Iteration 8 T5, and
+that is filed as B-14.** B-10 replaced SQLAlchemy's `Inspector` with three
+catalog queries through `execute_sql()`, taking `get_schema()` from **52 round
+trips and 99ms to 9 and 29.0ms**. The probe is 3 trips and 8.5ms, so the cache
+still saves something real and saves far less than it was built to save.
+`test_introspection_really_is_the_expensive_thing` was written to fail and ask
+this question if introspection ever got cheap, and it did exactly that on the
+first run after T5. **The question is open, not answered.**
 
 ### The backlog board, in `specs/000-project.md` section 8
 
@@ -131,8 +160,13 @@ README both say so rather than leaving it to be discovered.
 | ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
-| **B-9** | AC14's live injection test asserts a model behaviour | open, filed 2026-09-10 |
+| ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
+| ~~B-10~~ | `get_schema()` reached the database around Gate 2 | discharged 2026-09-11 at Iteration 8 T5 |
+| **B-14** | Does the schema cache still earn its weight after B-10? | opened 2026-09-11 -- its own test asked |
 | **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
+| **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
+| **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
+| **B-13** | the gold-query test pair flakes, ~2 in 20 full runs | open — six hypotheses eliminated, not reproduced |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 
@@ -222,7 +256,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,107 tests, ~95s
+.venv/Scripts/python.exe -m pytest -q                 # 1,220 tests, ~58s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 
@@ -268,6 +302,43 @@ happened:
 **A structural test that greps source will match its own docstring.** This
 happened **twice** before the lesson stuck. Always assert against the parsed AST
 (`ast.walk`), never `"foo" in source`.
+
+**`monkeypatch.undo()` reverts the autouse isolation fixtures too.** `monkeypatch`
+is one function-scoped instance shared with every fixture that requested it, so
+an `undo()` in a test body also reverts `conftest`'s six isolation fixtures.
+`test_the_degraded_flag_clears_after_a_successful_write` used it to restore the
+one function it had patched, and thereby restored `history.DEFAULT_PATH` to
+`/data/querypilot.db` — **writing a real 32KB database to `C:\data` on every
+full run for an iteration.** The write succeeded, so the assertion passed and
+nothing noticed. CI found it in one line, because a Linux runner cannot create
+`/data`. This is the seventh instance of the shared-state trap and the first
+where the isolation existed and a test switched it off. Restore the single
+attribute with a second `setattr`, or use a private `pytest.MonkeyPatch()`.
+`tests/test_ci_guards.py` now scans the AST for it.
+
+**Seven tests depended on the developer's API key without saying so.**
+`run_evals.main()` builds the provider *before* it projects the cost, so with no
+key it returns **2** from "Provider error" and never reaches the pre-flight
+guard under test. Locally `.env` supplies a key and the guards were reached;
+CI reported `assert 2 == 1`. Those tests would have been just as green with the
+guard deleted and the key removed. Use the opt-in
+`provider_that_must_not_be_called` fixture, whose `complete` raises, rather than
+letting the environment supply a provider.
+
+**The suite exits 0 when the database is unreachable, having skipped everything.**
+Measured: `1109 skipped`, exit code **0**. That is the right behaviour for a
+developer and a green build that verified nothing for a pipeline, and it is why
+`QUERYPILOT_TESTS_REQUIRE_DATABASE=1` and `ci/require_executed_tests.py` both
+exist. If a local run is unexpectedly red with a "failed run rather than a
+skipped one" message, that variable is set in your environment.
+
+**Git has never recorded an executable bit in this repository.** `core.filemode`
+is `false` on the development machine, so `db/fetch_chinook.sh` sat at mode
+`100644` for eight iterations and the very first CI run died on it with
+`Permission denied`, exit 126. A file mode does not appear in a diff, so no
+review would have caught it either. Set it with
+`git update-index --chmod=+x <path>`; `tests/test_ci_guards.py` now requires it
+for anything the workflow invokes as `./…`.
 
 **A completeness check that exempts its own module is not a completeness check.**
 `RETRY_POLICY`'s test enumerated only upstream categories; the first category it

@@ -583,7 +583,9 @@ def test_a_whole_corpus_run_still_counts_the_whole_corpus():
     assert f"| easy ({len(dataset.by_tier('easy'))}) |" in block
 
 
-def test_a_rate_limit_in_any_pass_refuses_the_record(monkeypatch, tmp_path, capsys):
+def test_a_rate_limit_in_any_pass_refuses_the_record(
+    monkeypatch, tmp_path, capsys, provider_that_must_not_be_called
+):
     """**AC18 applies to the run, not to its first pass.**
 
     A three-pass run whose *second* pass hit the quota was recorded as a clean
@@ -642,15 +644,26 @@ def _raise_never_ran(*args, **kwargs):
     raise _NeverRan
 
 
-def test_ac8_a_zero_budget_aborts_before_spending_anything(monkeypatch, capsys):
+def test_ac8_a_zero_budget_aborts_before_spending_anything(
+    monkeypatch, capsys, provider_that_must_not_be_called
+):
     """**Nothing is spent, which is the whole point of a pre-flight check.**
 
     A run that dies at question 31 wastes the 30 that worked and produces a
     number that is not a measurement. The projection is worst-case precisely so
     that a run allowed to start can be expected to finish.
 
-    A zero ceiling is the cleanest possible assertion of that: no provider is
-    configured in this test, and the run must fail before it would need one.
+    A zero ceiling is the cleanest possible assertion of that: the provider
+    installed here raises if it is used at all, and the run must fail before it
+    would need one.
+
+    **That sentence used to read "no provider is configured in this test", and
+    CI proved it false** (Iteration 8 T4). A provider *was* configured -- by the
+    developer's `.env`, which `conftest` loads -- and `main()` builds it before
+    it projects the cost. With no key the run returned 2 from "Provider error"
+    and never reached this guard, so this test would have been just as green
+    with the guard deleted. It failed on the second pipeline run this repository
+    ever had.
     """
     import evals.run_evals as runner
 
@@ -668,7 +681,7 @@ def test_ac8_a_zero_budget_aborts_before_spending_anything(monkeypatch, capsys):
 
 
 def test_a_zero_max_projection_aborts_and_names_the_flag_that_raises_it(
-    monkeypatch, capsys
+    monkeypatch, capsys, provider_that_must_not_be_called
 ):
     """The pre-flight ceiling is `--max-projection`'s when it is given.
 
@@ -698,7 +711,9 @@ def test_a_zero_max_projection_aborts_and_names_the_flag_that_raises_it(
     assert "--max-projection" in err, "the message must name the flag that lifts it"
 
 
-def test_max_projection_authorises_a_run_the_projection_alone_would_refuse(monkeypatch):
+def test_max_projection_authorises_a_run_the_projection_alone_would_refuse(
+    monkeypatch, provider_that_must_not_be_called
+):
     """**The whole reason the flags were split** (T7).
 
     A 30-question dev run projects a worst case of ~306,720 tokens at three
@@ -718,7 +733,7 @@ def test_max_projection_authorises_a_run_the_projection_alone_would_refuse(monke
         )
 
 
-def test_the_breaker_survives_a_raised_ceiling(monkeypatch, capsys):
+def test_the_breaker_survives_a_raised_ceiling(monkeypatch, capsys, provider_that_must_not_be_called):
     """The raised ceiling must not silently become the breaker's value too.
 
     Asserted on what reaches `run_evaluation`, not on the printed banner: the
@@ -746,7 +761,9 @@ def test_the_breaker_survives_a_raised_ceiling(monkeypatch, capsys):
     assert "55,000 per pass" in err
 
 
-def test_token_budget_still_supplies_the_pre_flight_ceiling_alone(monkeypatch, capsys):
+def test_token_budget_still_supplies_the_pre_flight_ceiling_alone(
+    monkeypatch, capsys, provider_that_must_not_be_called
+):
     """Backwards compatibility, stated as a test rather than assumed.
 
     `--token-budget` on its own kept its old meaning after the split, so every

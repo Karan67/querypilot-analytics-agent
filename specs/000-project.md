@@ -130,6 +130,20 @@ regressions are bugs; safety regressions are stop-the-line events.
   > on the host, against the container. Writing *"runnable locally and in CI"*
   > in the present tense described an intention as a capability — the same
   > failure mode as §1's chart promise, in a quieter register.
+  >
+  > **RESOLVED 2026-09-10, at Iteration 8 T4.** It exists now:
+  > `.github/workflows/ci.yml` runs the full suite on every push and pull
+  > request, against a real Postgres brought up by `docker compose`, needing no
+  > secret. The note above is kept because its point outlived its subject —
+  > and because the first three runs justified it twice over. They found a
+  > missing executable bit, seven tests that depended on a developer's API key,
+  > and a test writing a real database to `C:\data`. None of those was visible
+  > from a green local suite, which is the argument for a pipeline stated as
+  > evidence rather than as intention.
+  >
+  > The **evals** half of §6's "evals running in CI" is deliberately not done:
+  > the runner spends real tokens against a measured 200,000/day ceiling, and
+  > resolved Q-B keeps every merge gate deterministic and free.
 - **A metadata store** — query history, agent steps, eval runs, ~~feedback,~~
   latency and token cost.
 
@@ -328,7 +342,45 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 5 | Accuracy work | A documented accuracy climb with the reasoning behind each jump |
 | 6 | Frontend | Demoable to a non-technical person — **done 2026-09-09**, see `009-frontend.md` |
 | 7 | Hardening | History, ~~feedback,~~ latency and cost logging, rate limiting, caching — see the amendment below |
-| 8 | Ship | Deployed, evals running in CI, README with honest numbers, demo video, **and feedback** |
+| 8 | Ship | ~~Deployed~~, evals running in CI, README with honest numbers, ~~demo video~~, **and feedback** — see the amendment below |
+
+> **AMENDED 2026-09-10, at Iteration 8 T1: deployment and the demo video are
+> deferred.** The original text is struck above rather than rewritten, for the
+> reason §1's chart promise and §3's CI claim were: a commitment quietly edited
+> to match what was built is the failure `EVALS.md`'s append-only rule exists to
+> prevent.
+>
+> **Deployment is deferred because it is not a task.** The user's ruling:
+> *"Production deployment requires external infrastructure decisions around key
+> provisioning, secrets management, and egress billing that fall outside this
+> hardening and testing milestone."* Every one of those is a decision about
+> money and custody rather than about code — and this project's only credential
+> is a free-tier key with a measured 200,000-token daily ceiling (§8 B-5), which
+> is not a thing to put behind a public URL without deciding who may spend it.
+>
+> **The demo video is deferred because it is not code**, and because it records
+> a system that is still changing. `011-ship.md` §2 measured a cache hit at 6ms
+> and a warm miss at 740ms; a video shot before T5 would show a schema path that
+> T5 replaces.
+>
+> **CLOSED 2026-09-11.** T1-T7, all 14 acceptance criteria, merged as PR #10.
+> The pipeline exists and is proven incapable of a green empty run; B-9 and
+> B-10 are discharged; AC6's feedback collector ships. Deployment (B-11) and
+> the demo video (B-12) remain deferred by the decision recorded above.
+> Two entries were added to the board rather than resolved quietly: **B-13**,
+> an intermittent gold-query failure that has not reproduced in any CI run,
+> and **B-14**, whether the schema cache still earns its weight now that
+> B-10 made introspection five times cheaper.
+>
+> **What Iteration 8 does deliver** is the half of "Ship" that is checkable:
+> evals and the suite running in CI on every push, a pinned interpreter and a
+> lockfile, a README whose numbers trace to `EVALS.md`, the two safety debts
+> B-9 and B-10, and the feedback collector AC6 deferred here from Iteration 7.
+>
+> Both deferrals are recorded in §8 as carried debt so that neither can be
+> mistaken for done. This is the pattern Iteration 7 T1 used for feedback, and
+> it cost nothing; carrying an unmeasured criterion silently is what `008`'s
+> AC13 did, and it cost two backlog items and three days.
 
 ---
 
@@ -362,8 +414,13 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
 | ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
-| **B-9** | AC14's live injection test asserts a model behaviour, not a safety property | Iteration 7 T4 | open — filed 2026-09-10 |
-| **B-10** | `get_schema()` reaches the database around Gate 2 | Iteration 7 T6 | open — filed 2026-09-10 |
+| ~~B-9~~ | ~~AC14's live injection test asserts a model behaviour~~ | Iteration 7 T4 | **discharged 2026-09-10** at Iteration 8 T3 |
+| ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
+| **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
+| **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
+| **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — investigated, not reproduced |
+| **B-14** | Does the schema cache still earn its weight after B-10? | Iteration 8 T5 | open — its own test asked |
+| ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 
@@ -918,6 +975,157 @@ table is intact, the row count is unchanged, and no statement that reached
 or answered is an observation worth *printing*, never an assertion. Whoever
 picks this up should check the sibling live tests for the same shape.
 
+### B-13 — The gold-query test pair fails intermittently, and six hypotheses did not explain it
+
+`tests/test_eval_questions.py::test_every_gold_query_executes` and
+`::test_every_gold_query_returns_at_least_one_row` fail **together**, in roughly
+two of twenty full-suite runs, and pass on every re-run. They share a
+module-scoped `gold_results` fixture that executes all 50 reference queries, so
+one intermittent execution failure fails both — which is why they always fail as
+a pair.
+
+**Filed rather than fixed, after investigation.** The user's ruling was to chase
+it before building CI, which was done; the outcome is that it cannot be
+reproduced and that nothing points at a defect in this repository.
+
+Observed:
+
+| | |
+|---|---|
+| Python 3.14.6 | 1 failure event in ~8 full runs |
+| Python 3.12.13 | 1 failure event in 12 full runs (the first), then 11 consecutive passes |
+| the two tests in isolation | **0 failures in 40 runs** |
+| the seven files that precede them | **0 reproductions in 10 runs** |
+
+**Six hypotheses, each eliminated by measurement. This list exists so nobody
+runs this investigation a second time:**
+
+1. **`statement_timeout` (10s).** No. Timed all 50 gold queries: the slowest is
+   `hard-001` at 784ms and the median is 6.5ms. Nothing is within an order of
+   magnitude of the ceiling.
+2. **A defect in those two tests.** No. Forty consecutive isolated runs passed.
+3. **The engine poisoned by a bad DSN.** `tests/test_execution.py` and
+   `tests/test_schema_tool.py` both point `QUERYPILOT_DATABASE_URL` at an
+   unreachable host and clear the `lru_cache`. No: both files sort *after*
+   `test_eval_questions.py`, so they run later.
+4. **Interaction with the files that run before it.** No. Ten runs of the
+   seven-file prefix reproduced nothing.
+5. **Cold Postgres shared buffers after a container restart.** Both observed
+   failures happened shortly after Docker operations, which made this the
+   leading theory. No: `hard-001` takes 432ms cold against 395ms warm. Chinook
+   is small enough to stay in cache.
+6. **A connection leak on an error path** — plausible, because the suite runs
+   many deliberately failing queries and a leak would drain the pool only on a
+   long run. No: checked-out connections stay at 0 across 120 calls spanning
+   successes, `database_error` and Gate 2 rejections.
+
+**The decisive negative is that the database logged nothing.** `docker compose
+logs db` across the window containing a failure shows only the *intended* errors
+from `tests/test_validator_gates.py` — "permission denied for table track",
+"cannot execute DELETE in a read-only transaction" — and the container reports
+`restarts: 0`. Whatever failed **never reached Postgres**.
+
+That leaves one explanation consistent with every observation: a transient
+failure *establishing* a connection, client-side, against
+`CONNECT_TIMEOUT_SECONDS = 5`. It leaves no server log, it needs a long run to
+have enough opportunities, and it cannot be provoked. On Windows Docker Desktop
+that is a property of the environment rather than a defect in this code.
+
+**Which means it may never appear in CI**, where Linux reaches a service
+container over a loopback bridge. That is a reason to let the pipeline be the
+next observer, not a reason to assume it is fixed.
+
+**What to do when it next happens: read the assertion message.** Both tests
+already interpolate the failing question id, its category and its error, so a
+single un-truncated occurrence identifies the cause. The reason this entry is
+inconclusive is that both observed failures were seen through `-q` output and a
+tailed terminal capture. CI logs are neither.
+
+If the category turns out to be `connection_error`, the fix is a decision about
+whether the fixture should distinguish *connectivity* from *gold-query validity*
+— re-attempting once on that category alone, since a failure to connect is not
+evidence about whether a reference query is correct. That option was offered and
+deliberately not taken here, on the grounds that a retry is a place a real
+failure can hide and there is not yet evidence to justify one.
+
+### B-11 — Production deployment
+
+Deferred at Iteration 8 T1, from charter §6's *"Deployed"*. **Not deferred for
+effort — deferred because the blocking questions are not engineering ones.**
+
+Three, in the user's words: *"key provisioning, secrets management, and egress
+billing."* Each is a decision about custody and money:
+
+1. **Whose key does a deployed instance spend?** The project has one, on a free
+   tier with a measured 200,000-token daily ceiling and a 1,000-request daily
+   cap (B-5). At the measured ~1,100 tokens a question that is **~180 questions
+   a day for the entire internet**, after which the deployment answers nothing.
+   A public URL in front of that is a denial-of-service surface with a bill
+   attached, and no amount of code decides whose bill.
+2. **Where does the secret live?** Today it is a gitignored `.env` read by
+   compose. A hosted deployment needs a secrets store, and choosing one is
+   choosing a platform.
+3. **Who may spend it?** The app has **no authentication** (`011-ship.md` §4),
+   and Iteration 8 does not add any. Deploying an unauthenticated endpoint that
+   spends a metered credential is the same problem as (1) with the mitigation
+   removed.
+
+**What Iteration 8 does deliver toward it**: `docker compose up` verified from an
+empty volume on every push (AC11), a pinned interpreter and a lockfile so a
+build is reproducible (AC4, AC5), and a healthcheck on the `api` service so an
+orchestrator can tell a running container from a working one (AC12). What is
+missing is a decision, and the decision is not the assistant's to make.
+
+### B-12 — Demo video
+
+Deferred at Iteration 8 T1, from charter §6. Two reasons, and the second is the
+one that matters.
+
+It is **not code**, so nothing in this repository can verify it, and a criterion
+nothing can check is the shape `008`'s AC13 had when it rode along unmet for
+four days.
+
+And it would **document a system that is still moving.** `011-ship.md` §2
+measured a cache hit at 6ms against a warm miss at 740ms — figures that did not
+exist a day earlier — and T5 of this iteration replaces the schema path
+entirely. A video is a frozen claim about a moving target, and the right time to
+freeze it is after the target stops.
+
+The charter's own bar for it is already met and independently checkable:
+`docker compose up` gives a page a non-technical person can ask a question in
+(Iteration 6, S5, S6), which is what the video would be showing.
+
+> **DISCHARGED 2026-09-10, at Iteration 8 T3, and it was three tests rather
+> than one.** Filed against the injection test; the audit found the same defect
+> in all three live tests — one required the model to answer a counting question
+> correctly, one that it emit no `<think>` tags or fences.
+>
+> Each now asserts something this project owns: that the adapter round-trips and
+> reports the provider's *billed* token figure rather than a local estimate,
+> that `extract_sql` strips whatever arrives, and that `track` still exists with
+> all 3,503 rows. What the model did is **printed, not asserted**.
+>
+> **Two drafts of the replacement were wrong, and both looked like invariants.**
+> The first required any non-empty `result.sql` to pass Gate 2 — but `sql` is
+> populated by design even when Gate 2 refused it, because the project promises
+> the SQL is inspectable, so on a prose refusal it holds prose. The second
+> branched on `result.result is None` as proof nothing executed — but that field
+> holds the outcome of *attempting*, and once that was understood the assertion
+> collapsed into a tautology: Gate 2 runs inside `execute_sql`, so anything that
+> executed passed it necessarily.
+>
+> The determinism is proved **hermetically**, in `tests/test_error_mapping.py`,
+> because the live tests cannot prove it themselves — they skip without a key,
+> they spend tokens, and the model refused on four consecutive runs, which shows
+> they pass and shows nothing about the branch that used to break them. Two
+> tests exercise the helper against both outcomes, constructed rather than
+> sampled, and both mutations are caught.
+>
+> **What was given up, per `011-ship.md` AC7:** nothing will now notice if the
+> model stops refusing injections, starts fencing its output, or gets the count
+> wrong. Those were never defences — Gates 1 through 3 are, and `EVALS.md`
+> measures accuracy — but they were canaries, and the canaries are gone.
+
 ### B-10 — `get_schema()` has reached the database around Gate 2 since Iteration 1
 
 Found at Iteration 7 T6 while measuring the introspection this project was
@@ -979,6 +1187,42 @@ them — so this is a violation of the rule's letter and of the layering, not a
 live injection route. That is exactly what was said about `/health`, and it did
 not stop that from being worth fixing.
 
+> **DISCHARGED 2026-09-11, at Iteration 8 T5, by option 1.** The `Inspector` is
+> gone. `api/db/introspection.py` now builds its `Schema` from three
+> hand-written catalog queries through `execute_sql()`, so every statement
+> passes Gate 2, runs in the read-only transaction and inherits the statement
+> timeout. §4 is absolute again with its one recorded exemption, and
+> `tests/test_type_names.py` bans `sqlalchemy.inspect` under `api/`
+> structurally, counting the modules it scanned so the ban cannot go vacuous.
+>
+> **52 statements and 99ms became 9 and 29.0ms**, measured the same way. The
+> nine are three queries plus the `SET TRANSACTION READ ONLY` and
+> `SET LOCAL statement_timeout` each `execute_sql()` pays.
+>
+> **AC9 held: the rendered schema is byte-identical.** All three renderings,
+> the structural map across 12 relations / 69 columns / 11 foreign keys, and
+> five fingerprints — including `0d280c367c5e` and `91036a089282`, recorded in
+> `EVALS.md` by earlier iterations under code that no longer exists. The
+> comparability of the measurement record survives, which was the whole reason
+> Q-C chose the byte-identical translation layer over a re-baselining.
+>
+> `api/db/type_names.py` carries the translation: **five base families**, which
+> is what Chinook needs, and the maintenance question §2.4 raised is unchanged
+> — a real warehouse brings `text`, `boolean`, `date`, `jsonb`, `uuid`, arrays
+> and domains. Unmapped types degrade to an uppercased base name rather than
+> raising, because a schema that fails to render is a schema the agent cannot
+> see; `character(N)` is a recorded divergence (SQLAlchemy renders `CHAR(N)`).
+>
+> **Two costs, stated rather than glossed.** Introspection now inherits Gate
+> 3's 1,000-row cap, so a schema with more than a thousand columns raises
+> instead of silently returning a prefix — Chinook's read is 69 rows, so this
+> is guarded by a constructed test rather than by anything real. And AC17 lost
+> the failing hostname from its error message: `execute_sql()` returns a fixed
+> string for connection failures and keeps no detail, which is deliberate — the
+> agent must be told retrying will not help, and a DSN can carry a password.
+> Restoring it was considered and declined. An operator now reads the container
+> logs for that.
+
 ---
 
 ## 9. Open questions
@@ -986,19 +1230,56 @@ not stop that from being worth fixing.
 Tracked here rather than assumed. Each is resolved by the spec of the iteration
 that first depends on it.
 
-- **Q1** — Which LLM provider is the default at Iteration 2: Groq (Llama 3.3 70B)
-  or Gemini? The interface is swappable either way, but one of them is the default
-  used in CI. *Needed by Iteration 2.*
-- **Q2** — Does the metadata store live in the same Postgres instance as the
-  target database (separate database, or separate schema), or in a second
-  container? *Needed by Iteration 4.*
-- **Q3** — What is the maximum retry count `N` in the agent loop? The source spec
-  suggests roughly 3. *Needed by Iteration 4.*
-- **Q4** — What counts as a "correct" answer in the eval scorer: exact result-set
-  match, order-insensitive set match, or numeric tolerance for aggregates? This
-  determines what the headline accuracy number actually means. *Needed by
-  Iteration 3.*
+> **CLOSED 2026-09-10, at Iteration 8 T1. All four of the questions below were
+> answered by the iterations that depended on them, and none of them was moved
+> here afterwards.** Q1 was needed by Iteration 2 and Q4 by Iteration 3; they
+> have been sitting in an "open questions" list for a week and five iterations
+> respectively, which makes this section actively misleading to a new reader —
+> the one thing a charter cannot afford to be. Each is moved to *Resolved* below
+> with the evidence that settles it, rather than deleted.
+
 ### Resolved
+
+- **Q1** — *Which LLM provider is the default at Iteration 2: Groq or Gemini?*
+  **Resolved at Iteration 2: Groq.** `api/llm/factory.py` sets
+  `DEFAULT_PROVIDER = "groq"`, the model defaults to `openai/gpt-oss-120b`, and
+  every `EVALS.md` entry names it. The clause *"one of them is the default used
+  in CI"* was resolved differently and later: **no provider runs in CI at all**
+  (`011-ship.md` resolved Q-B), because a merge gate must be deterministic and
+  cost nothing. A second provider is B-4, deferred as its own milestone
+  precisely because of the re-baselining it forces.
+
+- **Q2** — *Does the metadata store live in the same Postgres instance as the
+  target database, or in a second container?* **Resolved at Iteration 7:
+  neither.** It is **SQLite in a named volume** (`010-hardening.md` resolved
+  Q-A), which is what keeps §4 literally true rather than earning a second
+  recorded exemption — the API holds one Postgres credential and it is
+  read-only. §5's commitment carries the full reasoning.
+
+- **Q3** — *What is the maximum retry count `N` in the agent loop?* **Resolved
+  at Iteration 4: three, and measured rather than chosen for roundness.**
+  `MAX_PROVIDER_CALLS = 3` in `api/agent/orchestrator.py`;
+  `007-agent-loop-plan.md` §2.3 measured that of 13 recoverable failures, 11
+  recovered on the first retry and 1 on the second, and a fourth attempt
+  recovered nothing a third had not. It is counted in *provider calls* rather
+  than retries, so a schema lookup is not free.
+
+- **Q4** — *What counts as a "correct" answer in the eval scorer?* **Resolved at
+  Iteration 3: exact result-set match on positional tuples, with two
+  qualifications.** Order-sensitivity is a **per-question property**, because
+  `ORDER BY genre_id LIMIT 3` and `ORDER BY name LIMIT 3` return genuinely
+  different rows while "list every genre" does not — so `results_match` takes
+  `ordered` as a required keyword rather than defaulting it. Numeric cells are
+  quantised to **six decimal places** (`SIX_PLACES`, `ROUND_HALF_UP`), and
+  column *names* are dropped before comparison, because `count(*)` and
+  `count(t.track_id) AS n` yield identical rows under different names.
+  Unordered comparison uses a multiset, not a sort, so duplicates survive and
+  `None`/`str`/`Decimal` in one column cannot raise.
+
+  **This policy has been under pressure once and held.** When two questions were
+  found defective after their score had been seen, the numeric tolerance was
+  *not* loosened to raise the number; the questions were retired with new ids
+  and the loader now refuses to reuse a retired one.
 
 - **Q5** — *Is `statement_timeout` pinned to the role, set per-session by the API,
   or both?* **Resolved 2026-08-21: pinned to the role.** Implemented in

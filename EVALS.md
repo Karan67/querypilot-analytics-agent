@@ -602,3 +602,46 @@ Two other Iteration 7 changes touch the harness and neither perturbs a number:
 The headline numbers therefore stand unchanged, with their existing caveats.
 The honest reading of the held-out result is still *between 90% and 100%,
 measured once at 100%*.
+
+---
+
+## Note — Iteration 8, 2026-09-11: B-10 replaced the introspection, and every fingerprint above still reproduces
+
+**Nothing was benchmarked in Iteration 8 either, so there is no entry.** This
+note exists for the same reason the Iteration 7 one does, and with more at
+stake: T5 rewrote the code that *produces* the schema in the prompt, and the
+schema fingerprint in every entry above is a hash of that schema's rendering.
+
+`api/db/introspection.py` no longer uses SQLAlchemy's `Inspector`. It builds its
+`Schema` from three hand-written `pg_catalog` queries routed through
+`execute_sql()`, which is what discharged B-10 — the Gate 2 bypass that had been
+open since Iteration 1. **52 statements and 99ms became 9 and 29.0ms.**
+
+The two sources spell types differently (`character varying(200)` against
+`VARCHAR(200)`, `numeric(10,2)` against `NUMERIC(10, 2)`), so a naive
+replacement would have retired the comparability of this entire file. That is
+why `011-ship.md` resolved Q-C in favour of a byte-identical translation layer
+rather than a re-baselining, and why AC9 was written as a hard gate: *if the
+rendered bytes differ, revert and return B-10 to the board.*
+
+**They do not differ.** Verified three independent ways before the old path was
+deleted:
+
+- All three renderings are **byte-identical** to fixtures frozen from the
+  `Inspector` immediately beforehand — `tests/fixtures/rendered_schema_*.txt`.
+- The structural map matches field by field across **12 relations, 69 columns
+  and 11 foreign keys**.
+- Every fingerprint this file records reproduces: **`e0b31c713530`** for the
+  adopted `compact` rendering, `f289a58e7ef7` for `ddl`, `be7d49123608` for
+  `compact-abbrev`, and the prompt fingerprints `f971d8787f0c` for single-shot,
+  `0d280c367c5e` for the loop without the glossary and `91036a089282` with it.
+
+Those literals are now pinned by tests rather than by this paragraph, which is
+the evidence. Worth recording that **nothing pinned the three schema
+fingerprints before T5** — `e0b31c713530` appeared in these entries and in
+`008-prompt-tuning-plan.md` and no test asserted it, so the value the record
+depends on most was the one nothing was watching.
+
+The headline numbers therefore stand unchanged, with their existing caveats. The
+honest reading of the held-out result is still *between 90% and 100%, measured
+once at 100%*.

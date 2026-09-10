@@ -83,6 +83,41 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # AC12. Until Iteration 8 T7 only `db` had a healthcheck, so
+      # `docker compose ps` reported the API as `Up` whether or not it could
+      # serve a request -- and Iteration 0's whole lesson was that a container
+      # reporting healthy while broken is worse than one reporting nothing.
+      #
+      # It probes `/health`, which is the endpoint that already proves the whole
+      # chain: the API started, it holds the read-only credential, it can
+      # authenticate, and Chinook is loaded. A check on the TCP port would
+      # report healthy for a process that accepts connections and cannot answer,
+      # which is the failure being closed rather than a smaller version of it.
+      #
+      # **Python rather than curl**, because `python:3.12.13-slim` has no curl
+      # and adding one would put a package in the runtime image to run a
+      # liveness probe. `urlopen` raises `HTTPError` on a non-2xx, so /health's
+      # 503-on-unreachable-database becomes `unhealthy` with no extra logic --
+      # the status code is doing the work, not a grep of the body.
+      #
+      # 127.0.0.1 and not `localhost`: the probe runs inside this container, and
+      # on a dual-stack resolver `localhost` can pick ::1 while uvicorn is bound
+      # to 0.0.0.0 (IPv4 only), which fails while everything is in fact fine.
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request
+          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      # The database's own start_period is 60s and this service waits for it, so
+      # the API's clock effectively starts after Chinook has loaded. 30s covers
+      # uvicorn's import of the app plus the first catalog read.
+      start_period: 30s
 
 volumes:
   pgdata:

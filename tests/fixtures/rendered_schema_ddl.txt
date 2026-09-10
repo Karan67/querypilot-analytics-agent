@@ -1,0 +1,126 @@
+CREATE TABLE album (
+    album_id INTEGER NOT NULL,
+    title VARCHAR(160) NOT NULL,
+    artist_id INTEGER NOT NULL,
+    PRIMARY KEY (album_id),
+    FOREIGN KEY (artist_id) REFERENCES artist(artist_id)
+);
+
+CREATE TABLE artist (
+    artist_id INTEGER NOT NULL,
+    name VARCHAR(120),
+    PRIMARY KEY (artist_id)
+);
+
+CREATE TABLE customer (
+    customer_id INTEGER NOT NULL,
+    first_name VARCHAR(40) NOT NULL,
+    last_name VARCHAR(20) NOT NULL,
+    company VARCHAR(80),
+    address VARCHAR(70),
+    city VARCHAR(40),
+    state VARCHAR(40),
+    country VARCHAR(40),
+    postal_code VARCHAR(10),
+    phone VARCHAR(24),
+    fax VARCHAR(24),
+    email VARCHAR(60) NOT NULL,
+    support_rep_id INTEGER,
+    PRIMARY KEY (customer_id),
+    FOREIGN KEY (support_rep_id) REFERENCES employee(employee_id)
+);
+
+CREATE TABLE employee (
+    employee_id INTEGER NOT NULL,
+    last_name VARCHAR(20) NOT NULL,
+    first_name VARCHAR(20) NOT NULL,
+    title VARCHAR(30),
+    reports_to INTEGER,
+    birth_date TIMESTAMP,
+    hire_date TIMESTAMP,
+    address VARCHAR(70),
+    city VARCHAR(40),
+    state VARCHAR(40),
+    country VARCHAR(40),
+    postal_code VARCHAR(10),
+    phone VARCHAR(24),
+    fax VARCHAR(24),
+    email VARCHAR(60),
+    PRIMARY KEY (employee_id),
+    FOREIGN KEY (reports_to) REFERENCES employee(employee_id)
+);
+
+CREATE TABLE genre (
+    genre_id INTEGER NOT NULL,
+    name VARCHAR(120),
+    PRIMARY KEY (genre_id)
+);
+
+CREATE TABLE invoice (
+    invoice_id INTEGER NOT NULL,
+    customer_id INTEGER NOT NULL,
+    invoice_date TIMESTAMP NOT NULL,
+    billing_address VARCHAR(70),
+    billing_city VARCHAR(40),
+    billing_state VARCHAR(40),
+    billing_country VARCHAR(40),
+    billing_postal_code VARCHAR(10),
+    total NUMERIC(10, 2) NOT NULL,
+    PRIMARY KEY (invoice_id),
+    FOREIGN KEY (customer_id) REFERENCES customer(customer_id)
+);
+
+CREATE TABLE invoice_line (
+    invoice_line_id INTEGER NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    track_id INTEGER NOT NULL,
+    unit_price NUMERIC(10, 2) NOT NULL,
+    quantity INTEGER NOT NULL,
+    PRIMARY KEY (invoice_line_id),
+    FOREIGN KEY (invoice_id) REFERENCES invoice(invoice_id),
+    FOREIGN KEY (track_id) REFERENCES track(track_id)
+);
+
+CREATE VIEW invoice_totals (
+    invoice_id INTEGER,
+    customer_id INTEGER,
+    invoice_date TIMESTAMP,
+    line_count BIGINT,
+    total NUMERIC
+);
+
+CREATE TABLE media_type (
+    media_type_id INTEGER NOT NULL,
+    name VARCHAR(120),
+    PRIMARY KEY (media_type_id)
+);
+
+CREATE TABLE playlist (
+    playlist_id INTEGER NOT NULL,
+    name VARCHAR(120),
+    PRIMARY KEY (playlist_id)
+);
+
+CREATE TABLE playlist_track (
+    playlist_id INTEGER NOT NULL,
+    track_id INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, track_id),
+    FOREIGN KEY (playlist_id) REFERENCES playlist(playlist_id),
+    FOREIGN KEY (track_id) REFERENCES track(track_id)
+);
+
+CREATE TABLE track (
+    track_id INTEGER NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    album_id INTEGER,
+    media_type_id INTEGER NOT NULL,
+    genre_id INTEGER,
+    composer VARCHAR(220),
+    milliseconds INTEGER NOT NULL,
+    bytes INTEGER,
+    unit_price NUMERIC(10, 2) NOT NULL,
+    PRIMARY KEY (track_id),
+    FOREIGN KEY (album_id) REFERENCES album(album_id),
+    FOREIGN KEY (genre_id) REFERENCES genre(genre_id),
+    FOREIGN KEY (media_type_id) REFERENCES media_type(media_type_id)
+);

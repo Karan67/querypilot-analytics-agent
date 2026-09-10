@@ -1,0 +1,51 @@
+# GENERATED -- do not hand-edit. Regenerate **inside the image**:
+#
+#     docker run --rm -v "$PWD/api:/req:ro" python:3.12.13-slim #       sh -c "pip install -q -r /req/requirements.txt && pip list --format=freeze"
+#
+# Resolved on **linux/amd64, Python 3.12.13** (Iteration 8 T2, D-5).
+# `api/requirements.txt` stays the human-edited source of truth; this file
+# exists so two image builds a month apart install the same bytes, and it is
+# what the Dockerfile installs.
+#
+# **It must be generated on Linux, and the first version of it was not.** T2
+# froze this from the Windows host and the difference is not cosmetic: Windows
+# pulls `colorama` and `tzdata` that Linux does not need, and -- the part that
+# matters -- Windows never pulls **uvloop**, which is `uvicorn[standard]`'s
+# event loop on Linux. A Windows-derived lock would have quietly changed the
+# production event loop while looking like a reproducibility improvement.
+#
+# `pip freeze` rather than `pip-compile --generate-hashes` (resolved D-5): no
+# new tooling, and this project has no build step to hang one on.
+#
+# The interpreter is pinned alongside it -- `api/Dockerfile` says
+# `python:3.12.13-slim`, not `python:3.12-slim`, because the floating tag was
+# drift with nobody watching it.
+PyYAML==6.0.3
+SQLAlchemy==2.0.52
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+click==8.5.0
+distro==1.9.0
+fastapi==0.115.14
+greenlet==3.5.5
+groq==0.37.1
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+psycopg-binary==3.2.13
+psycopg==3.2.13
+pydantic==2.13.5
+pydantic_core==2.46.5
+python-dotenv==1.2.3
+sniffio==1.3.1
+sqlglot==27.29.0
+starlette==0.46.2
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.34.3
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.1

@@ -1,0 +1,258 @@
+# QueryPilot merge gate (Iteration 8 T4, `specs/011-ship.md` AC1-AC5).
+#
+# The suite runs on the HOST against the containerised database, which is how
+# this project has always been tested: dev dependencies are deliberately absent
+# from the runtime image, so a job that ran pytest *inside* the api container
+# would be testing a different environment from every developer.
+#
+# ---------------------------------------------------------------------------
+# The one thing this workflow exists to prevent
+# ---------------------------------------------------------------------------
+#
+# `011-ship.md` section 2.1 measured what a naive pipeline would do here:
+#
+#     $ TEST_DATABASE_URL=<unreachable> pytest -q
+#     1109 skipped, 6 warnings in 5.26s
+#     $ echo $?
+#     0
+#
+# Exit code 0, over 1,109 skipped tests. The whole suite hides behind one
+# session-scoped autouse fixture that skips when Postgres is unreachable - the
+# right behaviour for a developer with the stack down, and a green build that
+# verified nothing for a pipeline. When that was measured only 89 of the
+# then-1,109 tests (8%) ran without a database, so there is no
+# database-free lane worth having either.
+#
+# Two independent belts, because this failure mode is silent:
+#
+#   1. QUERYPILOT_TESTS_REQUIRE_DATABASE=1 turns that skip into a failure,
+#      inside the fixture where the skip lives. This is the fix.
+#   2. ci/require_executed_tests.py asserts a floor on tests *actually
+#      executed*, read from --junitxml. This is the smoke alarm for the day
+#      somebody deletes the first belt.
+#
+# Both belts were mutation-tested on real runs of this workflow, on throwaway
+# branches, and each red came from the belt under test:
+#
+#   belt one -- dead DSN, flag kept:     `1135 errors in 11.14s`, pytest red.
+#                                        The floor guard passed, correctly: a
+#                                        fixture error is not a skip.
+#   belt two -- dead DSN, flag deleted:  `1135 skipped in 3.30s`, pytest
+#                                        **green**. Section 2.1 reproduced on a
+#                                        real pipeline. The floor guard was the
+#                                        only thing that failed the build:
+#                                        `only 0 of 1135 tests actually
+#                                        executed, below the floor of 1000`.
+#
+# Belt two also ignored tests/test_ci_guards.py, whose structural assertion
+# would have noticed the missing flag on its own -- so the run modelled this
+# repository as it was before that file existed, leaving the floor alone.
+#
+# ---------------------------------------------------------------------------
+# No secret, by construction
+# ---------------------------------------------------------------------------
+#
+# The `secrets` context appears nowhere in this file and a structural test in
+# tests/test_ci_guards.py keeps it that way. The gate must run on a pull
+# request from a fork, and the moment it needs GROQ_API_KEY every external
+# contribution fails on a permissions error that looks like a test failure.
+#
+# The consequence is that the three live provider tests do not run here
+# (`011-ship.md` resolved Q-B). They are excluded by --ignore rather than left
+# to skip on a missing key, so the exclusion is a decision recorded in this
+# file instead of a property of the environment. Run them by hand before a
+# release:
+#
+#     .venv/Scripts/python.exe -m pytest tests/test_llm_live.py -q -s
+#
+# `evals/run_evals.py` also never runs here: it spends real tokens against a
+# measured 200,000/day ceiling, and a merge gate competing with the measurement
+# budget would make both unreliable.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch cancels the first. The job takes minutes and
+# holds a Docker daemon; queueing them gains nothing.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: Full suite against a real Postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # AC2, belt one. Read only by tests/conftest.py, and the reason this job
+      # cannot report success on a database that never came up.
+      QUERYPILOT_TESTS_REQUIRE_DATABASE: "1"
+
+      # The one variable that retargets the whole suite (D-1 of
+      # `001-schema-tool-plan.md`). No test may hardcode a DSN, so this is the
+      # single place CI says where the database is. The credentials are the
+      # read-only role from .env.example - local development values holding no
+      # real secret, and Gate 1 means this is the only credential the
+      # application layer can hold at all.
+      TEST_DATABASE_URL: postgresql+psycopg://querypilot_ro:readonlylocaldev@localhost:5432/chinook
+
+      # AC3, stated rather than inherited. .env.example already ships this
+      # blank, so the gate was keyless by accident - and *by accident* is what
+      # let seven tests of the eval runner's pre-flight guards depend on a
+      # developer's key for eight iterations. They reached "Provider error" and
+      # returned 2 instead of the 1 the guard returns, which run 2 of this
+      # pipeline reported as `assert 2 == 1`.
+      #
+      # Pinning it here makes the pipeline the standing check that no hermetic
+      # test needs a credential.
+      GROQ_API_KEY: ""
+
+      # Where the floor guard reads its counts from.
+      JUNIT_REPORT: junit.xml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # The image's patch version, not "3.12". `011-ship.md` section 2.5
+          # found the host on 3.14.6 and the image on 3.12, two minor versions
+          # apart with nothing pinning either - and api/requirements-dev.txt
+          # already pins SQLAlchemy and FastAPI to the image's ranges precisely
+          # because a skew "surfaces as a confusing assertion failure rather
+          # than as the version problem it actually is". The interpreter gets
+          # the same treatment (AC4).
+          #
+          # tests/test_ci_guards.py asserts this equals api/Dockerfile's FROM
+          # line, so the two cannot drift apart quietly.
+          python-version: "3.12.13"
+
+      - name: Install the test environment from the lock
+        # The lock, not the ranged file (AC5). api/requirements-dev.txt is the
+        # human-edited source of truth; installing from it here would mean two
+        # runs a month apart resolve differently, which is the thing a lockfile
+        # exists to stop.
+        #
+        # Iteration 8 T2 found three packages that file had never declared -
+        # sqlglot, groq and httpx - by rebuilding the venv from it alone. That
+        # was 26 collection errors eight iterations of a green local suite had
+        # hidden, and this step is what would have found them.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir -r api/requirements-dev.lock
+          python -m pip check
+
+      - name: Provide the local development environment file
+        # docker compose interpolates ${POSTGRES_USER} and friends from .env.
+        # .env.example holds development values and no real secret - it is
+        # committed, and GROQ_API_KEY in it is empty.
+        run: cp .env.example .env
+
+      - name: Cache the Chinook seed
+        # Resolved D-2. The seed is ~1.7MB fetched from GitHub raw and is
+        # gitignored on purpose; vendoring it would reverse a standing decision.
+        # Downloading on every push means a pipeline that goes red for reasons
+        # unrelated to the code, which is the failure mode people learn to
+        # re-run past until they re-run past a real one.
+        #
+        # Keyed on the fetcher's own hash: that script owns the URL and the
+        # preamble-stripping awk, so any change to what a seed *is* invalidates
+        # the cache. What this key cannot see is upstream changing the file
+        # under a stable URL - tests/test_eval_dataset.py's row-count
+        # fingerprint is what catches that.
+        uses: actions/cache@v4
+        with:
+          path: db/seed
+          key: chinook-seed-${{ hashFiles('db/fetch_chinook.sh') }}
+
+      - name: Fetch Chinook
+        # Idempotent by design: a no-op when the seed is already present, so it
+        # needs no cache-hit condition. It exits non-zero if the download is an
+        # HTML error page rather than SQL.
+        run: ./db/fetch_chinook.sh
+
+      - name: Start the stack
+        # `docker compose up`, not a services: block. Three reasons, in
+        # descending order of weight:
+        #
+        #   - db/init/ is the product. 01 loads Chinook, 02 creates views, 03
+        #     grants SELECT and asserts the role holds no non-SELECT privilege.
+        #     They run in filename order on an empty volume and that order is
+        #     load-bearing. A services: container cannot easily mount them, so
+        #     CI would be testing a database built differently from every other
+        #     one - including the one Gate 1 is verified against.
+        #   - Charter S6 wants exactly this claim checked: `docker compose up`
+        #     on a clean machine yields a working system. A runner is the only
+        #     genuinely clean machine this project has.
+        #   - It is the command the README gives, so the two cannot drift.
+        #
+        # --wait blocks until db reports healthy, which its healthcheck defines
+        # as "init finished" by forcing TCP rather than the unix socket.
+        run: docker compose up -d --build --wait --wait-timeout 360
+
+      - name: Verify Chinook actually loaded
+        # An init-script failure leaves Postgres half-initialised: the data
+        # volume is non-empty, so the next start skips init entirely and the
+        # container reports healthy with zero tables. That has happened on this
+        # project, and it is the same green-and-empty shape as section 2.1 one
+        # layer down - a healthy database the suite would then skip against.
+        #
+        # The credentials come from the container's own environment rather than
+        # being repeated here, so this step cannot drift from compose. 3503 is
+        # the track count the dataset fingerprint and the live tests key on.
+        run: |
+          rows=$(docker compose exec -T db sh -c 'psql -tAq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM track"')
+          echo "track rows: $rows"
+          test "$rows" = "3503"
+
+      - name: Run the suite
+        # --ignore, not a skip: AC3 requires the live tests to be excluded by
+        # construction. Everything else - all but those three - needs no
+        # credential and spends nothing.
+        run: |
+          python -m pytest \
+            --ignore=tests/test_llm_live.py \
+            --junitxml="$JUNIT_REPORT" \
+            -q
+
+      - name: Require that the tests actually ran
+        # AC2, belt two. `always()` so a real test failure does not hide an
+        # empty run behind it, and so the counts are reported either way.
+        if: always()
+        run: python ci/require_executed_tests.py "$JUNIT_REPORT" 1000
+
+      - name: Check the page scripts parse
+        # The suite asserts things *about* api/web/*.js as text - that it never
+        # uses innerHTML, that it reads quota.note - and nothing has ever
+        # checked the files are valid JavaScript. There is no build step and no
+        # bundler by charter, so this is the only syntax check available.
+        if: always()
+        run: |
+          node --check api/web/app.js
+          node --check api/web/history.js
+
+      - name: Keep the report
+        # Uploaded on failure as well as success, because the interesting run is
+        # the failing one. B-13 (an intermittent gold-query failure that so far
+        # only appears on this project's Windows Docker Desktop) is expected to
+        # be diagnosed from these rather than from a terminal scrollback.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.JUNIT_REPORT }}
+          if-no-files-found: warn
+
+      - name: Container logs
+        # Only on failure, and only then worth reading: an init-script error or
+        # a database that never became healthy is invisible from pytest output.
+        if: failure()
+        run: docker compose logs --no-color --tail 200

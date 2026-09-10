@@ -36,6 +36,34 @@ looks correct and silently is not.
 of a ~1,000ms request is about 10% of the fast mode and 1% of the slow mode, and
 it saves **zero tokens**. It does not touch §2.3's constraint. What T4 added was
 a second introspection per question, and this removes both.
+
+---
+
+## The arithmetic above is out of date, and by a factor of five (B-14)
+
+**Iteration 8 T5 removed the `Inspector`.** B-10 replaced it with three catalog
+queries through `execute_sql()`, and the table this module was justified on
+moved. Re-measured in the same way on 2026-09-10:
+
+| | round trips | median | was |
+|---|---|---|---|
+| `get_schema()` | **9** | **29.0ms** | 52 / 99ms |
+| this probe | 3 | 8.5ms | 3 / 5.3ms |
+| `cached_schema()`, warm | 3 | 8.7ms | — |
+
+So the cache still saves something real — three round trips against nine, and
+about 20ms — but the margin it was built on has narrowed from roughly 18:1 to
+roughly 3:1, and "99ms of a ~1,000ms request" is now 29ms of one. That is close
+to noise on a request whose dominant cost is a model call.
+
+`tests/test_schema_cache.py::test_introspection_really_is_the_expensive_thing`
+was written to fail *"as a failure asking whether the module is still worth its
+weight"* if introspection ever stopped being many round trips. It did exactly
+that, on the first run after B-10 landed. **The question is open and filed as
+B-14**, not answered here: retiring this module is Iteration 7 T6's work being
+undone, it re-adds a second introspection per question, and it deserves its own
+measurement of a full request rather than a decision taken in passing during a
+different task.
 """
 
 from __future__ import annotations

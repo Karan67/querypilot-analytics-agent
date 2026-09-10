@@ -159,7 +159,28 @@ def test_a_write_failure_is_visible_to_health(monkeypatch):
 
 def test_the_degraded_flag_clears_after_a_successful_write(monkeypatch):
     """A store that recovers must stop reporting itself broken, or the health
-    check becomes a permanent alarm nobody reads."""
+    check becomes a permanent alarm nobody reads.
+
+    **`monkeypatch.undo()` used to be the second half of this test, and it was
+    writing a real database to `C:\\data` on the development machine.** CI found
+    it on the second pipeline run this repository ever had, as
+    ``PermissionError: [Errno 13] Permission denied: '/data'`` -- because a
+    Linux runner cannot create `/data` and Windows happily creates `C:\\data`.
+
+    `monkeypatch` is one function-scoped instance shared with every fixture that
+    asked for it, so `undo()` here also reverted `isolated_history_store`'s
+    redirection of `DEFAULT_PATH` to `tmp_path`. The store then fell back to its
+    real default and the write succeeded against the developer's filesystem. The
+    assertion still passed, which is why nothing noticed for an iteration.
+
+    This is the seventh instance of the trap `HANDOFF` section 6 names: *shared
+    state a test can reach will eventually be written by one*. The isolation was
+    autouse specifically so no test had to remember it -- and this test did not
+    forget, it *undid* it. So the fix restores the one attribute it patched
+    rather than everything anybody patched.
+    """
+    real_connect = history._connect
+
     def explode(*args, **kwargs):
         raise sqlite3.OperationalError("locked")
 
@@ -167,7 +188,7 @@ def test_the_degraded_flag_clears_after_a_successful_write(monkeypatch):
     record_ask(_record())
     assert history.degraded()
 
-    monkeypatch.undo()
+    monkeypatch.setattr(history, "_connect", real_connect)
     record_ask(_record())
     assert history.degraded() == ""
 

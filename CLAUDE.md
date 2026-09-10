@@ -27,7 +27,7 @@ curl http://localhost:8000/health          # user must read querypilot_ro
 ```
 
 ```bash
-.venv/Scripts/python.exe -m pytest              # 984 tests, ~2m20s
+.venv/Scripts/python.exe -m pytest              # 1,220 tests, ~58s
 .venv/Scripts/python.exe -m pytest tests/test_orchestrator.py -q
 .venv/Scripts/python.exe -m pytest tests/test_expert_tier.py -q -k "ac12"
 ```
@@ -35,6 +35,14 @@ curl http://localhost:8000/health          # user must read querypilot_ro
 Tests **skip** rather than fail when the database is unreachable, so a wall of
 skips means the stack is down. The DSN comes from `TEST_DATABASE_URL`, known
 only to `tests/conftest.py`.
+
+That skip is right for a developer and lethal for a pipeline — it exits **0**
+having verified nothing. `.github/workflows/ci.yml` sets
+`QUERYPILOT_TESTS_REQUIRE_DATABASE=1`, which makes the same condition a
+failure, and `ci/require_executed_tests.py` asserts a floor on tests actually
+executed from `--junitxml` in case that flag is ever deleted. The gate needs no
+secret and excludes `tests/test_llm_live.py` by `--ignore`, so **run the live
+tests by hand before a release**.
 
 **There is no linter or formatter configured.** Don't invent a lint command.
 

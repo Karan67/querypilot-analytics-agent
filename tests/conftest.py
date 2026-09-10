@@ -38,6 +38,31 @@ DEFAULT_TEST_DATABASE_URL = (
 #: libpq clamps anything below 2 to 2 seconds.
 PROBE_CONNECT_TIMEOUT_SECONDS = 3
 
+#: Set to ``1`` to make an unreachable database a **failure** instead of a skip.
+#:
+#: `011-ship.md` §2.1 measured the reason this exists. Pointed at a dead DSN the
+#: suite reports ``1109 skipped`` and **exit code 0** — a green build that
+#: verified nothing, which is the single most dangerous property this repository
+#: could take into CI. It is not hypothetical or a misconfiguration: it is the
+#: designed behaviour of the fixture below, and the design is right for a
+#: developer with the stack down.
+#:
+#: So the choice is made by the caller rather than guessed. A developer gets one
+#: line of explanation; CI sets this and gets a red build. The variable is read
+#: here and nowhere else, for the same reason ``TEST_DATABASE_URL`` is.
+REQUIRE_DATABASE_ENV = "QUERYPILOT_TESTS_REQUIRE_DATABASE"
+
+
+def _database_is_required() -> bool:
+    """Whether an unreachable database should fail the run rather than skip it.
+
+    Exactly ``"1"``, not any truthy string. ``QUERYPILOT_TESTS_REQUIRE_DATABASE=0``
+    meaning *required* is the kind of surprise that gets discovered during an
+    incident, and an unset variable and an explicitly disabled one must behave
+    identically.
+    """
+    return os.environ.get(REQUIRE_DATABASE_ENV, "").strip() == "1"
+
 
 def _database_url() -> str:
     """Resolve the test DSN. Deliberately not named ``test_*`` — pytest would
@@ -58,6 +83,14 @@ def configured_database() -> str:
     If nothing is listening, every test skips with a reason that says what to do
     about it. An unreachable database is an environment problem, and reporting
     it as a wall of failures would bury the one line that matters.
+
+    **Unless the caller says otherwise** (Iteration 8 T4). That skip is correct
+    for a developer and catastrophic for a pipeline: `011-ship.md` §2.1 measured
+    exit code 0 over 1,109 skipped tests. ``QUERYPILOT_TESTS_REQUIRE_DATABASE=1``
+    inverts it, and CI sets that. The decision belongs to whoever started the
+    run, so it is read from the environment instead of inferred from ``CI`` —
+    a run on a developer's machine that happens to export ``CI`` should not
+    change meaning.
     """
     from api.db import engine as engine_module
 
@@ -72,11 +105,18 @@ def configured_database() -> str:
             conn.execute(text("SELECT 1"))
         probe.dispose()
     except SQLAlchemyError as exc:
-        pytest.skip(
+        detail = (
             f"No database at the configured DSN ({exc.__class__.__name__}). "
             f"Start it with 'docker compose up -d', or set TEST_DATABASE_URL. "
             f"Underlying error: {exc}"
         )
+        if _database_is_required():
+            pytest.fail(
+                f"{REQUIRE_DATABASE_ENV}=1, so an unreachable database is a "
+                f"failed run rather than a skipped one. {detail}",
+                pytrace=False,
+            )
+        pytest.skip(detail)
 
     os.environ[engine_module.DATABASE_URL_ENV] = url
     engine_module.get_engine.cache_clear()
@@ -127,6 +167,51 @@ def _load_dotenv() -> None:
 
 
 _load_dotenv()
+
+
+@pytest.fixture
+def provider_that_must_not_be_called(monkeypatch):
+    """Let `run_evals.main()` get past provider construction with no API key.
+
+    **Opt-in, not autouse**, and that matters: an autouse version would hand a
+    stub to `tests/test_llm_live.py`, whose whole purpose is to reach the real
+    provider, and to every test that installs a scripted provider of its own.
+
+    **Found by CI, on the second run this repository ever had** (Iteration 8
+    T4). Seven tests of the eval runner's pre-flight guards failed with
+    ``assert 2 == 1``. `main()` builds the provider *before* it projects the
+    cost, so with no key it returns 2 from "Provider error" and never reaches
+    the guard under test. On this project's one development machine `.env`
+    supplies a real key, so the guards were reached and the tests passed for
+    eight iterations.
+
+    The clearest evidence of the misunderstanding is a docstring: the zero-budget
+    test said *"no provider is configured in this test, and the run must fail
+    before it would need one."* The second half is true and the first was not --
+    a provider was configured, by the developer's environment, and the test
+    would have been just as green if the guard had been deleted and the key
+    removed.
+
+    So the stub does two jobs. It removes the environment dependency, and
+    `complete` raises: these tests assert that **nothing is spent**, and a
+    provider that cannot be used without failing the test is a stronger
+    statement of that than a provider that merely happens not to be called.
+    """
+
+    class _Unusable:
+        #: Read by the runner's reporting. Named so it is obvious in output
+        #: that no real model was involved.
+        model = "unusable-stub"
+
+        def complete(self, system: str, user: str) -> str:
+            raise AssertionError(
+                "the provider was called, but this test asserts the run spends "
+                "nothing and aborts before it would need a provider"
+            )
+
+    stub = _Unusable()
+    monkeypatch.setattr("api.llm.factory.get_provider", lambda: stub)
+    return stub
 
 
 @pytest.fixture(autouse=True)

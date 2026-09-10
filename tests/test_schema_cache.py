@@ -75,16 +75,44 @@ def counting_round_trips():
 def test_introspection_really_is_the_expensive_thing(configured_database):
     """Pins the premise rather than trusting the spec's prose.
 
-    If a future SQLAlchemy made `Inspector` a single round trip, this cache
-    would be machinery protecting nothing, and this test is where that shows up
-    -- as a failure asking whether the module is still worth its weight.
+    **This test did its job, and the answer moved** (Iteration 8 T5). It was
+    written to fail *"as a failure asking whether the module is still worth its
+    weight"* if introspection ever stopped being many round trips. B-10 is that
+    event: replacing SQLAlchemy's `Inspector` with three catalog queries took
+    `get_schema()` from **52 round trips and 99ms** to **9 and 29ms**, measured
+    on 2026-09-10.
+
+    The cache still saves something real — 3 round trips against 9, and 8.7ms
+    against 29.0ms — but the margin it was justified on has narrowed by a
+    factor of about five, and `010-hardening.md`'s honest framing of "99ms of a
+    ~1,000ms request" is now 29ms of one. **Whether this module is still worth
+    its weight is a live question and is recorded as such**, not answered by
+    quietly lowering a threshold.
+
+    What is asserted is the invariant the cache depends on and nothing more:
+    introspecting costs strictly more than probing. If those ever converge, the
+    cache is protecting nothing and this fails again, which is the behaviour
+    that made the test valuable in the first place.
     """
     get_schema()  # warm the pool and the plan cache; we are counting, not timing
 
-    with counting_round_trips() as trips:
+    with counting_round_trips() as introspection_trips:
         get_schema()
 
-    assert trips.n > 20, f"introspection is no longer many round trips: {trips}"
+    with counting_round_trips() as probe_trips:
+        catalog_fingerprint()
+
+    assert introspection_trips.n > probe_trips.n, (
+        f"introspection ({introspection_trips.n}) no longer costs more than the "
+        f"probe ({probe_trips.n}) that exists to avoid it; the cache is "
+        f"machinery protecting nothing"
+    )
+    # The three statements of one execute_sql() are the floor, so anything at
+    # or below that is not three queries and the premise has changed again.
+    assert introspection_trips.n >= 6, (
+        f"introspection is down to {introspection_trips.n} round trips; if it "
+        f"is now a single query, retire the cache rather than re-tune this"
+    )
 
 
 def test_the_probe_is_cheaper_than_what_it_replaces(configured_database):

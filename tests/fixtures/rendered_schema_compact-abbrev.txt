@@ -1,0 +1,17 @@
+One relation per line:
+  relation(column TYPE, ...) PK[key] FK[column->relation.column]
+  ! after a type means NOT NULL; unmarked columns may be NULL.
+  Lines beginning 'view' are views, not base tables.
+
+album(album_id int!, title str!, artist_id int!) PK[album_id] FK[artist_id->artist.artist_id]
+artist(artist_id int!, name str) PK[artist_id]
+customer(customer_id int!, first_name str!, last_name str!, company str, address str, city str, state str, country str, postal_code str, phone str, fax str, email str!, support_rep_id int) PK[customer_id] FK[support_rep_id->employee.employee_id]
+employee(employee_id int!, last_name str!, first_name str!, title str, reports_to int, birth_date ts, hire_date ts, address str, city str, state str, country str, postal_code str, phone str, fax str, email str) PK[employee_id] FK[reports_to->employee.employee_id]
+genre(genre_id int!, name str) PK[genre_id]
+invoice(invoice_id int!, customer_id int!, invoice_date ts!, billing_address str, billing_city str, billing_state str, billing_country str, billing_postal_code str, total num!) PK[invoice_id] FK[customer_id->customer.customer_id]
+invoice_line(invoice_line_id int!, invoice_id int!, track_id int!, unit_price num!, quantity int!) PK[invoice_line_id] FK[invoice_id->invoice.invoice_id; track_id->track.track_id]
+view invoice_totals(invoice_id int, customer_id int, invoice_date ts, line_count int, total num)
+media_type(media_type_id int!, name str) PK[media_type_id]
+playlist(playlist_id int!, name str) PK[playlist_id]
+playlist_track(playlist_id int!, track_id int!) PK[playlist_id,track_id] FK[playlist_id->playlist.playlist_id; track_id->track.track_id]
+track(track_id int!, name str!, album_id int, media_type_id int!, genre_id int, composer str, milliseconds int!, bytes int, unit_price num!) PK[track_id] FK[album_id->album.album_id; genre_id->genre.genre_id; media_type_id->media_type.media_type_id]

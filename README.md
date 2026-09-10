@@ -7,16 +7,53 @@ Read [`specs/000-project.md`](specs/000-project.md) first — it is the source o
 truth for intent, scope, non-goals, and the safety rules that bind every
 iteration.
 
-**Current state: Iteration 7 (Hardening).** `docker compose up` gives you a
-working page at **<http://localhost:8000>** — ask a question, get the answer,
-the SQL that produced it, and the agent's steps. Behind it: a hand-written
-agent loop that reads its own execution errors and retries, a four-gate safety
-layer nothing bypasses, and a 50-question benchmark with a held-out split.
+**Current state: Iteration 8 (Ship).** `docker compose up` gives you a working
+page at **<http://localhost:8000>** — ask a question, get the answer, the SQL
+that produced it, and the agent's steps. Behind it: a hand-written agent loop
+that reads its own execution errors and retries, a four-gate safety layer
+nothing bypasses, and a 50-question benchmark with a held-out split.
 
 Every accuracy number lives in [`EVALS.md`](EVALS.md) with its caveats, and the
 numbers are deliberately not repeated here — the honest reading of the held-out
 result is *between 90% and 100%, measured once at 100%*, and a README is where
 that nuance would die.
+
+### What it costs, and what is measured
+
+Every figure below is traceable to `EVALS.md` or to a spec's §2. None is an
+estimate, and each carries the caveat that makes it true.
+
+| | | where it comes from |
+|---|---|---|
+| one question, one user | **~750–1,250ms** | `010-hardening.md` §2.3 |
+| under sustained load | **up to ~10,400ms**, silently | same |
+| of which the model | **94.2%** of wall clock, up to 98.4% | `010-hardening.md` §2.2 |
+| tokens per question | median **1,078**, range 1,047–1,256 | `010-hardening.md` §2.5 |
+| provider calls per question | **one**, across all twelve measured | same |
+| a repeated question | **0 tokens** | the answer cache; caveat below |
+| free-tier ceiling | **200,000 tokens/day** ≈ 180 questions | `010-hardening.md` §2.5 |
+| schema introspection | **9 statements, 29.0ms** | `011-ship.md` B-10, Iteration 8 T5 |
+| the test suite | **1,220 tests, ~58s** | `docker compose up`, then `pytest` |
+
+Three of those need their caveat stated rather than footnoted:
+
+- **Latency is two numbers, not one, and the second one is the honest one.**
+  §2.3 measured a fourteen-fold climb *with the question held constant* — the
+  provider slows under sustained use with no error and no header to explain it.
+  An earlier spec reported 1.20–2.51s; that sample was taken on a cold bucket
+  and describes the fast mode only. This is why `/history` records `total_ms`
+  and `provider_ms` apart.
+- **0 tokens for a repeated question does not mean the answer is current.** The
+  cache key is the question plus the schema and prompt fingerprints, so a new
+  *column* invalidates it and a new *row* does not. Chinook is static, so this
+  never bites here — and the page says so rather than leaving it to be found.
+- **~180 questions a day is a ceiling on a free tier**, not a capacity claim.
+  The per-minute bucket allows about seven in any sixty seconds before the slow
+  mode above begins.
+
+**There is no accuracy number in this table.** That is deliberate: `EVALS.md`
+holds them with the caveats they need, and a percentage on a README outlives
+the sentence that qualifies it.
 
 ---
 
@@ -122,6 +159,26 @@ That page is not a benchmark, and it says so: the counts describe whatever was
 typed into the box, with no known-good answers and nothing held out.
 [`EVALS.md`](EVALS.md) is the record that can be compared, with its caveats.
 
+Under each answer is a **Was this answer useful?** control, and the mark it
+stores shows up on the history page:
+
+```bash
+curl -X POST http://localhost:8000/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"id":"<the id from /ask>","rating":1,"note":"optional"}'
+```
+
+`rating` is `-1` or `1` and nothing else; an unknown `id` is a `404`, because a
+mark attaches to an *answer* and not to a question. Marks are append-only, so
+two people can disagree about one answer and both marks survive.
+
+**Nothing aggregates them** — no count, no rate, no score, anywhere in the API
+or the pages. That is a deliberate constraint rather than an unfinished
+feature: at the time this was built the store held 29 answers with **zero**
+failures in it, so any proportion computed over it would read "100% good" on a
+sample containing nothing to be wrong about. The marks are collected; drawing
+conclusions from them waits for enough of them to mean something.
+
 Asking the same question twice costs **zero** tokens the second time, and the
 page says so rather than presenting a reused answer as a fresh one. The key is
 the exact question text plus fingerprints of the schema and the prompt, so a
@@ -190,6 +247,37 @@ Then, with the stack up:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the whole suite on
+every push and pull request, against a real Postgres brought up by
+`docker compose` — the same command this README gives, so the two cannot drift.
+It needs **no secret**, so it runs on a fork's pull request, and it pins the
+interpreter to the version the image ships.
+
+The interesting part is what stops it lying. Pointed at an unreachable database
+the suite **skips every test and exits 0** — the right behaviour for a developer
+with the stack down, and a green build that verified nothing for a pipeline. Two
+independent things prevent that:
+
+- `QUERYPILOT_TESTS_REQUIRE_DATABASE=1` turns that skip into a failure, inside
+  the fixture where the skip lives.
+- [`ci/require_executed_tests.py`](ci/require_executed_tests.py) asserts a floor
+  on tests *actually executed*, read from `--junitxml`, for the day somebody
+  deletes the first one.
+
+Both were verified by breaking the database on a throwaway branch and watching
+the build go red — once from the flag, once from the floor alone.
+
+The three live provider tests are excluded by `--ignore` rather than left to
+skip on a missing key, so **run them by hand before a release**:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_llm_live.py -q -s
+```
+
+They cost real tokens and print what the model actually did.
 
 The database location comes from **`TEST_DATABASE_URL`**, defaulting to
 localhost. No test hardcodes a host or port — only `tests/conftest.py` knows
@@ -263,7 +351,7 @@ edited because the model got it wrong**, in either direction.
 specs/          source of truth — one spec per feature
 evals/          question set + scorer (Iteration 3)
 api/
-  main.py       FastAPI app; GET /, /history, /health, /quota; POST /ask
+  main.py       FastAPI app; GET /, /history, /health, /quota; POST /ask, /feedback
   agent/        orchestrator, tools, prompts, glossary (Iterations 1–5)
   safety/       sqlglot AST gate (Iteration 1)
   db/           read-only engine, execution, introspection

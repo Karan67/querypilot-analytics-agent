@@ -145,6 +145,9 @@ function renderAnswer(answer) {
   if (answer.row_count !== null) tags.appendChild(el("span", "tag", `${answer.row_count} rows`));
   card.appendChild(tags);
 
+  const marks = renderFeedback(answer);
+  if (marks) card.appendChild(marks);
+
   if (answer.sql) {
     const details = el("details", "panel");
     details.appendChild(el("summary", null, "SQL"));
@@ -163,6 +166,40 @@ function renderAnswer(answer) {
 
   card.appendChild(renderProvenance(answer));
   return card;
+}
+
+/*
+ * AC13's column, and AC14's hard limit in the one place it is most tempting to
+ * cross.
+ *
+ * Every mark on this answer is shown, in the order it was left. What is
+ * deliberately absent: a count, a rate, a percentage, a score, a net total,
+ * and a single latest-wins verdict. Each of those is one line of code from
+ * here, and each would be the accuracy claim `009` AC13 kept off the answer
+ * page -- worse here, because section 2.6 measured **zero** bad answers in the
+ * entire record, so any proportion computed today reads as "100% good" on a
+ * sample of nothing.
+ *
+ * Marks are append-only, so an answer can legitimately carry a Yes and a No.
+ * That disagreement is shown as two marks rather than resolved into one,
+ * because on a corpus with no failures in it, two people disagreeing is the
+ * most informative thing the table could hold.
+ *
+ * Returns null when there are none, so an unmarked answer gets no empty row --
+ * and, more to the point, no "0 marks" that invites somebody to start counting.
+ */
+function renderFeedback(answer) {
+  const marks = answer.feedback || [];
+  if (!marks.length) return null;
+
+  const box = el("p", "answer-tags");
+  marks.forEach((mark) => {
+    const good = mark.rating === 1;
+    const tag = el("span", good ? "tag" : "tag bad", good ? "marked useful" : "marked not useful");
+    box.appendChild(tag);
+    if (mark.note) box.appendChild(el("span", "tag", mark.note));
+  });
+  return box;
 }
 
 /*

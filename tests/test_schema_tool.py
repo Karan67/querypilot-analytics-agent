@@ -371,15 +371,45 @@ def test_ac17_missing_dsn_raises_schema_error(missing_database_url):
         get_schema()
 
 
-def test_ac17_preserves_the_underlying_cause(unreachable_database):
-    """The original Postgres text must survive in the traceback. 'could not
-    translate host name' is actionable; 'schema error' is not, and the agent
-    only ever sees what we pass through."""
+def test_ac17_an_unreachable_database_is_reported_as_unreachable(unreachable_database):
+    """**B-10 narrowed what this can promise, and the narrowing is the point.**
+
+    This test used to assert two things: that `__cause__` was chained, and that
+    the failing hostname appeared in the message — *"'could not translate host
+    name' is actionable; 'schema error' is not."* Neither survives routing
+    introspection through `execute_sql()`, and both losses are real rather than
+    test-fitting:
+
+    - **No chained cause.** `execute_sql()`'s contract is that *failures are
+      return values, never exceptions*, so at this layer there is no exception
+      object to chain. Manufacturing one would be inventing a traceback.
+    - **No hostname.** The connection-error branch returns a fixed string and
+      keeps no underlying detail, deliberately: the agent must be told that
+      rewriting the query cannot help, and a DSN can carry a password, so the
+      safety layer does not emit raw connection text. Restoring the hostname
+      was considered and declined for that reason.
+
+    What is still guaranteed, and is what this asserts: the failure is reported
+    as a schema failure, it says the database could not be reached, and it says
+    the query is not at fault — which is the part the agent acts on. Chaining is
+    still asserted where it still happens: `test_ac17_missing_dsn_raises_schema_error`
+    covers the `get_engine()` path, which does raise.
+
+    An operator diagnosing a bad DSN now reads the container logs rather than
+    this message. That is a genuine step backwards, recorded here rather than
+    smoothed over.
+    """
     with pytest.raises(SchemaIntrospectionError) as caught:
         get_schema()
 
-    assert caught.value.__cause__ is not None
-    assert "querypilot-no-such-host" in str(caught.value)
+    message = str(caught.value)
+    assert "Could not read" in message, "the failure must name what it was doing"
+    assert "public" in message, "it must say which schema"
+    assert "Could not reach the database" in message, (
+        "an unreachable database must be reported as unreachable, not as a "
+        "query problem the agent should retry"
+    )
+    assert "rewriting it will not help" in message
 
 
 def test_ac17_empty_schema_is_never_returned_as_success(monkeypatch):
@@ -389,17 +419,21 @@ def test_ac17_empty_schema_is_never_returned_as_success(monkeypatch):
     against real Postgres because the thing under test is the mapping *of*
     Postgres. Here the thing under test is our own guard clause, and Chinook
     cannot be made to have zero relations without tearing the fixture down.
+
+    Re-pointed at B-10's seam: it used to substitute an `Inspector` returning no
+    table and no view names, and now it substitutes an `execute_sql` that
+    succeeds with no rows. Same claim, and a *more* faithful stand-in — an empty
+    result set is exactly what a real empty schema would produce, where the fake
+    Inspector was a shape nothing in SQLAlchemy would ever return.
     """
     from api.db import introspection
+    from api.db.execution import ExecutionResult
 
-    class _EmptyInspector:
-        def get_table_names(self, schema=None):
-            return []
-
-        def get_view_names(self, schema=None):
-            return []
-
-    monkeypatch.setattr(introspection, "sa_inspect", lambda engine: _EmptyInspector())
+    monkeypatch.setattr(
+        introspection,
+        "execute_sql",
+        lambda sql: ExecutionResult(ok=True, columns=(), rows=()),
+    )
 
     with pytest.raises(SchemaIntrospectionError, match="no relations"):
         introspection.get_schema()
