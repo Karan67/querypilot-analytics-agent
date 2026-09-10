@@ -34,8 +34,9 @@ import pathlib
 import sys
 import xml.etree.ElementTree as ElementTree
 
-#: Resolved D-1: a round number well below the real count (1,133 at Iteration 8
-#: T4, of which CI executes 1,130), not the count itself.
+#: Resolved D-1: a round number well below the real count (1,138 measured at
+#: Iteration 8 T4, of which CI executes all but the three live provider
+#: tests), not the count itself.
 #:
 #: A floor equal to the current total fails on the first test anybody adds,
 #: which teaches people to raise the floor without reading why it exists —

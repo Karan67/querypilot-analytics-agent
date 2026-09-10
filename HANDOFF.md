@@ -85,10 +85,18 @@ because a measurement contradicted the premise.
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **In progress from 2026-09-10** — CI, B-9, B-10, feedback. Deployment and the demo video deferred as B-11/B-12 |
 
-**1,107 tests** (live provider tests skip when rate-limited, which is a
-working guard rather than a red failure -- see the traps below). The suite
-runs in ~95s, down from ~144s: T6's schema cache removed most of the
-introspection it was paying per test.
+**1,138 tests**, ~101s (live provider tests skip when rate-limited, which is
+a working guard rather than a red failure -- see the traps below). Iteration 8
+added 29: T3 hardened the live tests, T4 brought the pipeline's own guards
+and the two defects the pipeline found.
+
+**There is a pipeline now** -- `.github/workflows/ci.yml`, on every push and
+pull request. It brings the real stack up with `docker compose up`, needs no
+secret, and excludes the three live provider tests by `--ignore`, so **run
+those by hand before a release**. Two things make it incapable of passing
+without having run the suite: `QUERYPILOT_TESTS_REQUIRE_DATABASE=1`, which
+turns `conftest.py`'s skip into a failure, and `ci/require_executed_tests.py`,
+which asserts a floor of 1,000 executed tests read from `--junitxml`.
 
 ### What Iteration 7 added, and the surface it left
 
@@ -225,7 +233,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,107 tests, ~95s
+.venv/Scripts/python.exe -m pytest -q                 # 1,138 tests, ~101s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 

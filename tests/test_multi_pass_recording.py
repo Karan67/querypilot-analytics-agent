@@ -111,7 +111,9 @@ def test_the_recorded_cost_covers_every_pass(dataset, gold, tmp_path):
     assert f"| Tokens (all passes) | {reports[0].usage.total_tokens:,} " not in block
 
 
-def test_a_rate_limit_in_a_later_pass_blocks_the_record(dataset, gold, tmp_path):
+def test_a_rate_limit_in_a_later_pass_blocks_the_record(
+    dataset, gold, tmp_path, provider_that_must_not_be_called
+):
     """**The T8 defect.** The guard read `reports[0].cases`, so a run whose
     first pass was a clean sweep and whose second hit the quota was filed as a
     measurement. Driven here through `main`, because the guard lives there and

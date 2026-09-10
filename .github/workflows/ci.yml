@@ -89,6 +89,17 @@ jobs:
       # application layer can hold at all.
       TEST_DATABASE_URL: postgresql+psycopg://querypilot_ro:readonlylocaldev@localhost:5432/chinook
 
+      # AC3, stated rather than inherited. .env.example already ships this
+      # blank, so the gate was keyless by accident - and *by accident* is what
+      # let seven tests of the eval runner's pre-flight guards depend on a
+      # developer's key for eight iterations. They reached "Provider error" and
+      # returned 2 instead of the 1 the guard returns, which run 2 of this
+      # pipeline reported as `assert 2 == 1`.
+      #
+      # Pinning it here makes the pipeline the standing check that no hermetic
+      # test needs a credential.
+      GROQ_API_KEY: ""
+
       # Where the floor guard reads its counts from.
       JUNIT_REPORT: junit.xml
 
@@ -190,8 +201,8 @@ jobs:
 
       - name: Run the suite
         # --ignore, not a skip: AC3 requires the live tests to be excluded by
-        # construction. Everything else - 1,130 of the 1,133 tests at T4 -
-        # needs no credential and spends nothing.
+        # construction. Everything else - all but those three - needs no
+        # credential and spends nothing.
         run: |
           python -m pytest \
             --ignore=tests/test_llm_live.py \

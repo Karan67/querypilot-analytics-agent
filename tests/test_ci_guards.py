@@ -599,3 +599,189 @@ def test_ci_gets_a_red_build_instead_of_an_empty_one():
     assert " 1 skipped" not in completed.stdout, (
         f"the run skipped rather than failed:\n{completed.stdout}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4. Assumptions CI falsified, kept falsified
+# ---------------------------------------------------------------------------
+
+
+def undoers_in(source: str, filename: str) -> list[str]:
+    """Names of tests in ``source`` that call ``undo()`` on the shared fixture.
+
+    Split out from the repository scan so the *rule* can be tested on cases the
+    repository does not contain. That is not tidiness: a mutation removing the
+    name check below left the repository scan green, because nothing here
+    currently takes `monkeypatch` and undoes a different object.
+    """
+    import ast
+
+    found = []
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if "monkeypatch" not in {argument.arg for argument in node.args.args}:
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "undo"
+                and isinstance(inner.func.value, ast.Name)
+                and inner.func.value.id == "monkeypatch"
+            ):
+                found.append(f"{filename}::{node.name}:{inner.lineno}")
+    return found
+
+
+def scan_for_shared_monkeypatch_undo() -> tuple[list[str], int]:
+    """Run :func:`undoers_in` over the whole suite. Returns (offenders, seen)."""
+    import ast
+
+    offenders = []
+    inspected = 0
+    for path in sorted((REPO_ROOT / "tests").glob("test_*.py")):
+        source = path.read_text(encoding="utf-8")
+        offenders.extend(undoers_in(source, path.name))
+        for node in ast.walk(ast.parse(source, filename=path.name)):
+            if isinstance(node, ast.FunctionDef) and "monkeypatch" in {
+                argument.arg for argument in node.args.args
+            }:
+                inspected += 1
+    return offenders, inspected
+
+
+def test_the_undo_scan_tells_a_private_monkeypatch_from_the_shared_one():
+    """The discrimination the repository scan cannot demonstrate.
+
+    Two snippets that differ only in *which object* is undone. The shared
+    fixture's `undo()` reverts conftest's autouse isolation and must be flagged;
+    a locally constructed `pytest.MonkeyPatch()` owns only its own patches and
+    must not be. Both spellings contain the text ``.undo()``, which is why the
+    scan reads the AST.
+    """
+    shared = (
+        "def test_x(monkeypatch, tmp_path):\n"
+        "    monkeypatch.setattr(mod, 'a', 1)\n"
+        "    monkeypatch.undo()\n"
+    )
+    private = (
+        "def test_y(monkeypatch, tmp_path):\n"
+        "    private = pytest.MonkeyPatch()\n"
+        "    private.setattr(mod, 'a', 1)\n"
+        "    private.undo()\n"
+    )
+
+    assert undoers_in(shared, "shared.py"), "the shared fixture's undo() was missed"
+    assert undoers_in(private, "private.py") == [], (
+        "a privately constructed MonkeyPatch owns only its own patches and must "
+        "not be reported"
+    )
+
+    # And the parameter is what makes it shared: the same call on a name that
+    # never came from the fixture is somebody else's object.
+    unrelated = "def test_z(tmp_path):\n    monkeypatch.undo()\n"
+    assert undoers_in(unrelated, "unrelated.py") == []
+
+
+def test_no_test_undoes_the_shared_monkeypatch():
+    """``monkeypatch.undo()`` reverts the autouse isolation fixtures too.
+
+    **This is the seventh instance of `HANDOFF` section 6's oldest trap** --
+    *shared state a test can reach will eventually be written by one* -- and the
+    first where the isolation was in place and a test switched it off. All six
+    isolation fixtures in `conftest.py` are autouse precisely so no test has to
+    remember them. `monkeypatch` is a single function-scoped instance shared with
+    every fixture that requested it, so one `undo()` in a test body reverts
+    `DEFAULT_PATH`, the spend ledger, the answer cache and the rest along with
+    whatever the test meant to revert.
+
+    It cost a real database at `C:\\data\\querypilot.db` on the development
+    machine, written on every full run for an iteration, invisible because the
+    write succeeded. CI surfaced it in one line: a Linux runner cannot create
+    `/data`.
+
+    Asserted against the parsed AST, not the file text, for the reason this
+    module's docstring gives -- and here specifically because the correct
+    alternative is *also* a call to `undo()`:
+    `tests/test_multi_pass_recording.py` builds its own `pytest.MonkeyPatch()`
+    and undoes that, which touches nothing anybody else owns. A textual search
+    for "undo" cannot tell the two apart. The AST can: it looks for `undo()` on
+    a name that arrived as the test's own `monkeypatch` parameter.
+
+    The discrimination is proved by
+    `test_the_undo_scan_tells_a_private_monkeypatch_from_the_shared_one` rather
+    than by this scan. It has to be: **dropping the name check entirely left
+    this test green**, because no test in the repository currently both takes
+    `monkeypatch` and undoes something else, so the repository contains no case
+    that separates the two implementations.
+    """
+    offenders, inspected = scan_for_shared_monkeypatch_undo()
+
+    # The vacuity guard. This test passes when it finds nothing, so a walk that
+    # inspects nothing passes loudest of all.
+    assert inspected > 100, (
+        f"only {inspected} tests take a monkeypatch parameter; the walk is "
+        f"probably broken rather than the suite clean"
+    )
+
+    assert not offenders, (
+        "monkeypatch.undo() reverts conftest's autouse isolation fixtures as "
+        "well, so these tests can write the real history store, spend ledger or "
+        "EVALS.md: "
+        + ", ".join(offenders)
+        + ". Restore the one attribute with a second setattr, or use a "
+        "separate pytest.MonkeyPatch() instance."
+    )
+
+
+def test_the_unusable_provider_cannot_be_used(provider_that_must_not_be_called):
+    """The stub's second job, which nothing else exercises.
+
+    `provider_that_must_not_be_called` exists first to remove the API-key
+    dependency CI found, and second to make "this run spends nothing" a
+    guarantee rather than an observation. The second half survived a mutation:
+    replacing the `raise` with a canned response left all seven tests green,
+    because in each of them the run aborts pre-flight or `run_evaluation` is
+    itself replaced, so `complete` is never reached.
+
+    That makes the `raise` defence-in-depth for the day one of those guards
+    breaks -- and an untested defence is the thing this project mutation-tests
+    to avoid. So the contract is asserted directly instead of being inferred
+    from seven tests that never touch it.
+    """
+    from api.llm.factory import get_provider
+
+    assert get_provider() is provider_that_must_not_be_called, (
+        "the fixture must be what run_evals.main() receives"
+    )
+
+    try:
+        provider_that_must_not_be_called.complete("system", "user")
+    except AssertionError as exc:
+        assert "spends nothing" in str(exc)
+    else:
+        raise AssertionError(
+            "the stub answered a request; a test asserting nothing is spent "
+            "would then pass while the run made calls"
+        )
+
+
+def test_the_gate_runs_with_no_provider_key():
+    """AC3, and the guard that keeps the last failure findable.
+
+    CI has always been keyless -- `.env.example` ships `GROQ_API_KEY=` empty --
+    but only incidentally, and *incidentally* is what let seven tests depend on
+    a developer's key for eight iterations. Stating it in the job environment
+    makes the pipeline the standing check that no hermetic test needs a
+    credential, and stops a future edit to `.env.example` from quietly masking
+    the next one.
+    """
+    job_env = workflow()["jobs"]["suite"].get("env", {})
+    assert "GROQ_API_KEY" in job_env, (
+        "the gate should pin GROQ_API_KEY empty rather than rely on "
+        ".env.example happening to leave it blank"
+    )
+    assert job_env["GROQ_API_KEY"] == "", (
+        f"the gate must spend no tokens; found {job_env['GROQ_API_KEY']!r}"
+    )
