@@ -205,3 +205,54 @@ footer p { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--l
 .chart-bar { fill: var(--accent); opacity: .85; }
 
 .chart-note { color: var(--muted); font-size: .85rem; margin: .5rem 0 0; }
+
+/* --- the history reader (T7, AC4) --------------------------------------- */
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: .75rem;
+  margin: 1.5rem 0;
+}
+
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .9rem 1rem;
+}
+.stat-value { margin: 0; font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; }
+.stat-label { margin: .15rem 0 0; font-size: .78rem; color: var(--muted); }
+.stat-note { margin: .3rem 0 0; font-size: .72rem; color: var(--muted); opacity: .85; }
+
+.answer-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 1rem 1.1rem;
+  margin-bottom: .9rem;
+}
+/* Failure is marked on the card, not only in a tag: a reader scanning for what
+   went wrong should not have to read every row to find it. */
+.answer-card.failed { border-left-color: var(--bad); }
+
+.answer-head { display: flex; gap: 1rem; align-items: baseline; justify-content: space-between; }
+.answer-question { margin: 0; font-weight: 600; }
+.answer-when { margin: 0; font-size: .74rem; color: var(--muted); white-space: nowrap; }
+
+.answer-tags { margin: .55rem 0 0; display: flex; flex-wrap: wrap; gap: .35rem; }
+.tag {
+  font-size: .72rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .1rem .5rem;
+}
+.tag.bad { color: var(--bad); border-color: var(--bad); }
+
+.answer-card .panel { margin: .7rem 0 0; padding: 0; border: 0; background: none; }
+.answer-card summary { font-size: .78rem; color: var(--muted); cursor: pointer; }
+.answer-card pre { margin: .45rem 0 0; }
+
+.provenance { margin: .6rem 0 0; font-size: .7rem; color: var(--muted); opacity: .8; }

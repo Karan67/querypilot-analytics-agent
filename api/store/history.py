@@ -261,3 +261,35 @@ def steps_for(ask_id: str, path: pathlib.Path | None = None) -> list[sqlite3.Row
                 "SELECT * FROM step WHERE ask_id = ? ORDER BY attempt", (ask_id,)
             )
         )
+
+
+def steps_for_ids(
+    ask_ids: Sequence[str], path: pathlib.Path | None = None
+) -> dict[str, list[sqlite3.Row]]:
+    """Traces for many answers at once, grouped by `ask_id`.
+
+    **One query, not one per row.** The T7 reader shows fifty answers with their
+    traces, and calling `steps_for` in a loop would be fifty-one queries to
+    render one page -- each opening its own connection, since `_connect` is
+    per-operation by design. That is the classic N+1, and it is worth avoiding
+    here specifically because the reader competes for the same write lock the
+    answers are being recorded through.
+
+    The `IN` list is built from placeholders rather than interpolated. These ids
+    are uuids this process generated, so nothing hostile can reach them, but a
+    query assembled by string formatting is a habit that outlives the context
+    that made it safe.
+    """
+    if not ask_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in ask_ids)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM step WHERE ask_id IN ({placeholders}) ORDER BY ask_id, attempt",
+            tuple(ask_ids),
+        )
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault(row["ask_id"], []).append(row)
+        return grouped

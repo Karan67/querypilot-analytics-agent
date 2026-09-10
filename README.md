@@ -110,6 +110,18 @@ or locally estimated), `total_ms` and `provider_ms` kept apart, and `cache_hit`.
 Every question is recorded in a SQLite store in the `querypilot_data` volume,
 which survives `docker compose down` and is discarded only by `down -v`.
 
+**<http://localhost:8000/history>** reads that store back: every question with
+its cost, its latency, whether it was served from cache, and the agent's steps
+including any query that failed. The totals there are sums over the rows shown,
+so a surprising number can always be traced to the answer that caused it. Note
+that a cached answer records **zero** tokens rather than replaying what the
+original cost — so the token column sums to what was actually billed, with no
+filtering to remember.
+
+That page is not a benchmark, and it says so: the counts describe whatever was
+typed into the box, with no known-good answers and nothing held out.
+[`EVALS.md`](EVALS.md) is the record that can be compared, with its caveats.
+
 Asking the same question twice costs **zero** tokens the second time, and the
 page says so rather than presenting a reused answer as a fresh one. The key is
 the exact question text plus fingerprints of the schema and the prompt, so a
@@ -251,7 +263,7 @@ edited because the model got it wrong**, in either direction.
 specs/          source of truth — one spec per feature
 evals/          question set + scorer (Iteration 3)
 api/
-  main.py       FastAPI app; GET /, POST /ask, /health, /quota
+  main.py       FastAPI app; GET /, /history, /health, /quota; POST /ask
   agent/        orchestrator, tools, prompts, glossary (Iterations 1–5)
   safety/       sqlglot AST gate (Iteration 1)
   db/           read-only engine, execution, introspection

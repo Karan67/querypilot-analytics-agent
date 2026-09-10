@@ -380,6 +380,100 @@ def quota_endpoint() -> JSONResponse:
     return JSONResponse(status_code=200, content=quota.snapshot())
 
 
+#: Rows the reader shows by default, and the most it will show at all.
+#:
+#: Capped because the endpoint takes the number from the query string, and an
+#: uncapped `limit` is a way to ask one process to build an arbitrarily large
+#: JSON document. 500 is far more than anyone reads and small enough to be free.
+HISTORY_DEFAULT_LIMIT = 50
+HISTORY_MAX_LIMIT = 500
+
+
+@app.get("/history/data", tags=["ops"])
+def history_data(limit: int = HISTORY_DEFAULT_LIMIT) -> JSONResponse:
+    """What was asked, what it cost, and what the agent did — as JSON (AC4).
+
+    **A reader is allowed to fail where a writer is not**, and the asymmetry is
+    deliberate. `record_ask` swallows everything, because a user who asked a
+    question and got an answer should not be punished for our logging breaking.
+    Someone opening the history page is asking a different question, and telling
+    them the store is unreadable is the true answer to it — so this returns
+    `503` rather than an empty list, which would read as *nothing was ever
+    asked*.
+    """
+    limit = max(1, min(limit, HISTORY_MAX_LIMIT))
+
+    try:
+        rows = history.recent(limit=limit)
+        traces = history.steps_for_ids([row["id"] for row in rows])
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        logger.warning("history read failed: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "answers": [],
+            },
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "error": "",
+            "answers": [_history_row(row, traces.get(row["id"], ())) for row in rows],
+        },
+    )
+
+
+def _history_row(row, steps) -> dict:
+    """One stored answer, shaped for the reader.
+
+    `tokens` carries `measured` beside it rather than the number alone, per
+    D-1's standing rule: a provider-billed figure and a locally counted one are
+    different quantities, and a reader that shows them identically is inviting
+    somebody to add them up.
+    """
+    return {
+        "id": row["id"],
+        "asked_at": row["asked_at"],
+        "question": row["question"],
+        "ok": bool(row["ok"]),
+        "category": row["category"],
+        "sql": row["sql"],
+        "shape": row["shape"],
+        "row_count": row["row_count"],
+        "attempts_used": row["attempts_used"],
+        "total_ms": row["total_ms"],
+        "provider_ms": row["provider_ms"],
+        "tokens": row["total_tokens"],
+        "measured": bool(row["usage_measured"]),
+        "provider_calls": row["provider_calls"],
+        "cache_hit": bool(row["cache_hit"]),
+        "model": row["model"],
+        "schema_fp": row["schema_fp"],
+        "prompt_fp": row["prompt_fp"],
+        "trace": [
+            {
+                "attempt": step["attempt"],
+                "action": step["action"],
+                "ok": bool(step["ok"]),
+                "category": step["category"],
+                "error": step["error"],
+                "sql": step["sql"],
+            }
+            for step in steps
+        ],
+    }
+
+
+@app.get("/history", include_in_schema=False)
+def history_page() -> HTMLResponse:
+    """The reader (AC4). Read at request time, like the answer page."""
+    return HTMLResponse(_WEB_DIR.joinpath("history.html").read_text(encoding="utf-8"))
+
+
 @app.get("/", include_in_schema=False)
 def index() -> HTMLResponse:
     """The page (AC7): a question can be asked and answered with no terminal.
