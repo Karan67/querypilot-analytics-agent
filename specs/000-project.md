@@ -363,6 +363,15 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 > and a warm miss at 740ms; a video shot before T5 would show a schema path that
 > T5 replaces.
 >
+> **CLOSED 2026-09-11.** T1-T7, all 14 acceptance criteria, merged as PR #10.
+> The pipeline exists and is proven incapable of a green empty run; B-9 and
+> B-10 are discharged; AC6's feedback collector ships. Deployment (B-11) and
+> the demo video (B-12) remain deferred by the decision recorded above.
+> Two entries were added to the board rather than resolved quietly: **B-13**,
+> an intermittent gold-query failure that has not reproduced in any CI run,
+> and **B-14**, whether the schema cache still earns its weight now that
+> B-10 made introspection five times cheaper.
+>
 > **What Iteration 8 does deliver** is the half of "Ship" that is checkable:
 > evals and the suite running in CI on every push, a pinned interpreter and a
 > lockfile, a README whose numbers trace to `EVALS.md`, the two safety debts

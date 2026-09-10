@@ -248,26 +248,31 @@ def test_ac10_the_readme_keeps_the_held_out_result_with_its_caveat():
     )
 
 
-def test_ac10_the_readme_names_the_iteration_the_handoff_calls_current():
+def test_ac10_the_readme_names_the_iteration_the_handoff_calls_latest():
     """A README naming the wrong iteration is the cheapest way to mislead.
 
     **It was naming Iteration 7 while Iteration 8 was six tasks in**, which is
     what this test found. Derived from `HANDOFF.md`'s own state table rather
-    than hardcoded, so the two cannot drift: closing an iteration moves the
-    marker in one place and this follows it.
+    than hardcoded, so the two cannot drift.
+
+    Keyed on the **highest-numbered row** rather than on an "In progress"
+    marker, and the first version was keyed on the marker. That broke the moment
+    Iteration 8 closed: with nothing in progress there was no marker to find,
+    and a test asserting "exactly one" then failed on a repository that was
+    simply between iterations. The latest row exists in both states, so this
+    holds while an iteration runs and after it closes.
     """
     handoff = (REPO_ROOT / "HANDOFF.md").read_text(encoding="utf-8")
 
-    current = [
+    numbered = [
         int(match.group(1))
         for line in handoff.splitlines()
-        if "In progress" in line
-        for match in [re.search(r"\|\s*\*{0,2}(\d+)\s", line)]
+        if line.startswith("|")
+        for match in [re.match(r"\|\s*\*{0,2}(\d+)\s+\w", line)]
         if match
     ]
-    assert len(current) == 1, (
-        f"HANDOFF should mark exactly one iteration in progress, found {current}"
-    )
+    assert numbered, "could not read the iteration table in HANDOFF.md"
+    current = [max(numbered)]
 
     # **Scoped to the "Current state" line, and the first version was not.**
     # Searching the whole README for "Iteration 8" passed while the headline

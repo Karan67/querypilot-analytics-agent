@@ -15,7 +15,7 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
 | [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
 | [`specs/010-hardening.md`](specs/010-hardening.md) and its plan | Iteration 7, delivered 2026-09-10. Its §2 holds the latency, cost and quota measurements |
-| §4 of this file, and §8 of the charter | Where things stand, and what is next: **Iteration 8** (CI, plus AC6's deferred feedback) |
+| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 8 is closed**; the open board is B-4, B-6, B-11, B-12, B-13, B-14 |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -83,7 +83,7 @@ because a measurement contradicted the premise.
 | **5 Prompt tuning** | **Closed 2026-09-04**; its last open criterion, AC13, satisfied 2026-09-08 as B-2 |
 | **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
-| **8 Ship** | **In progress from 2026-09-10** — CI, B-9, B-10, feedback. Deployment and the demo video deferred as B-11/B-12 |
+| **8 Ship** | **Closed 2026-09-11** — T1-T7, all 14 ACs met, merged as PR #10. CI, B-9, B-10 and AC6's feedback all discharged. Deployment and the demo video deferred as B-11/B-12, by decision rather than omission |
 
 **1,220 tests**, ~58s (live provider tests skip when rate-limited, which is
 a working guard rather than a red failure -- see the traps below). Iteration 8
