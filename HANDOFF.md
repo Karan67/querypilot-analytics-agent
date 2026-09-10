@@ -14,7 +14,8 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 | [`specs/000-project.md`](specs/000-project.md) | The charter. §4 safety rules and §5 architectural commitments bind every iteration |
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
 | [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
-| §8 of this file, and §8 of the charter | What is actually next: **B-7**, then Iteration 6 |
+| [`specs/010-hardening.md`](specs/010-hardening.md) and its plan | Iteration 7, delivered 2026-09-10. Its §2 holds the latency, cost and quota measurements |
+| §4 of this file, and §8 of the charter | Where things stand, and what is next: **Iteration 8** (CI, plus AC6's deferred feedback) |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -81,11 +82,44 @@ because a measurement contradicted the premise.
 | 4 Agent loop | Done — hand-written ReAct loop, 3-call budget, text protocol |
 | **5 Prompt tuning** | **Closed 2026-09-04**; its last open criterion, AC13, satisfied 2026-09-08 as B-2 |
 | **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
-| 7 Latency/cost | Not started |
-| 8 CI | Not started |
+| **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
+| 8 CI + feedback | Not started — inherits AC6's deferred feedback |
 
-**984 tests** (live provider tests skip when rate-limited, which is now a
-working guard rather than a red failure -- see the traps below).
+**1,107 tests** (live provider tests skip when rate-limited, which is a
+working guard rather than a red failure -- see the traps below). The suite
+runs in ~95s, down from ~144s: T6's schema cache removed most of the
+introspection it was paying per test.
+
+### What Iteration 7 added, and the surface it left
+
+Five endpoints and two pages, all served by the one container:
+
+| | |
+|---|---|
+| `POST /ask` | answers, and now returns `usage`, `total_ms`, `provider_ms`, `cache_hit`, `id` |
+| `GET /` | the answer page, with the quota banner and the cached-answer note |
+| `GET /history` | the reader: every question, its cost, its trace |
+| `GET /history/data` | the same as JSON; **503 when the store is unreadable**, never an empty list |
+| `GET /quota` | what the provider last said about its limits |
+| `GET /health` | now also reports `history.writable`, and stays 200 when it is false |
+
+Operational state lives in **SQLite at `/data/querypilot.db`** in the
+`querypilot_data` named volume. `docker compose down` keeps it; only `down -v`
+discards it. Verified across a real machine shutdown: 23 rows survived.
+
+**Three caches now exist and they are not the same thing.** Confusing them is
+the easiest way to misread this code:
+
+| | keyed on | invalidated by | shared with `evals/` |
+|---|---|---|---|
+| answer cache (`api/http/cache.py`) | question + schema fp + prompt fp | a schema or prompt change | **no** — D-1, and a test enforces it |
+| schema cache (`api/db/schema_cache.py`) | nothing; one slot | a 5.3ms catalog probe | yes, deliberately |
+| quota snapshot (`api/http/quota.py`) | nothing; one slot | its own age vs the bucket's reset | n/a |
+
+**The answer cache does not notice a data change.** Its key covers the question,
+the schema and the prompt, so an added *column* invalidates an entry and an
+added *row* does not. Chinook is static so it never bites here; the page and the
+README both say so rather than leaving it to be discovered.
 
 ### The backlog board, in `specs/000-project.md` section 8
 
@@ -97,6 +131,8 @@ working guard rather than a red failure -- see the traps below).
 | ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
+| **B-9** | AC14's live injection test asserts a model behaviour | open, filed 2026-09-10 |
+| **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 
@@ -126,6 +162,23 @@ working guard rather than a red failure -- see the traps below).
   Pooled across all four glossary-off passes the tier is **13/24**. Quote the
   named set rather than the tier percentage: the percentage moves with noise,
   the set did not.
+- **Latency is bimodal and the slow mode is silent** (010 §2.3). ~750-1,250ms
+  for one user at a time; up to **10,393ms** under sustained load, with the work
+  held constant at ~1,100 tokens. There is no 429 and no header — the provider
+  slows down as the 8,000/minute bucket drains. `GET /quota` and the page's
+  banner exist because nothing in the product noticed this before.
+- **A question costs ~1,100 tokens and one provider call** (010 §2.5). Median
+  1,078, range 1,047–1,256. At 200,000 a day that is ~180 questions, and the
+  minute bucket allows about **seven in any sixty seconds** before the slow mode.
+- **The provider is 94.2% of wall clock**, so `total_ms` and `provider_ms` are
+  recorded apart. Everything else was 6% before T6 and is now ~3%.
+- **T6, measured in the container**: `get_schema()` is **52 round trips at 99ms**;
+  the catalog probe that replaces it is **3 round trips at 5.3ms**. A cache hit
+  went 113ms → **6ms**; a warm miss's non-provider gap went 272ms → **22ms**.
+- **T4, measured live**: six identical questions fired at once cost **one**
+  provider call. Four hits and two misses summed to exactly the billed total
+  with no filtering, because a hit records `usage = 0` rather than replaying
+  what the original cost.
 - **97.5%** single-shot, full schema, dataset v2 — the Iteration 3 baseline.
 - **82.5%** loop, schema withheld, `gpt-oss-20b`, against **0.0%** for the
   one-call control. Iteration 4's whole justification. That figure is a
@@ -169,12 +222,24 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest tests/ -q          # 911 tests, ~2m15s
+.venv/Scripts/python.exe -m pytest -q                 # 1,107 tests, ~95s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 
 `QUERYPILOT_DATABASE_URL` must be set for host runs; the eval runner loads
 `.env` itself, the test suite loads it via `conftest.py`.
+
+**The history store is inside the container, in a volume.** `/data/querypilot.db`
+in `querypilot_data`, so a host tool cannot open it directly — read it at
+<http://localhost:8000/history>, or:
+
+```bash
+docker compose exec api python -c "from api.store.history import recent; print(len(recent()))"
+```
+
+`docker compose down` keeps that volume. **`down -v` destroys it**, along with
+`pgdata` — which is still the documented recovery for a half-initialised
+Postgres, so it is worth knowing that it also discards the question log.
 
 **`.env.example` did not carry that key until Iteration 5 closed**, so a
 host run of `python -m evals.run_evals` failed with a
@@ -226,14 +291,73 @@ customers) discriminate; metric definitions do not.
 
 ---
 
+**A test can assert a *mention* instead of a *use*, and pass.** Three mutations
+survived this shape in Iteration 7 before the tests were fixed. A page test
+checked that `quota.note` appeared somewhere in `app.js`, and a hardcoded banner
+string left it green because the guard clause above the assignment still
+mentioned the name. Another checked that `renderCacheNote` was *defined* rather
+than *called*. A third claimed to cover `observe(None)` and never reached that
+path at all, because a guard higher up returned first. **Assert the call, the
+assignment, or the effect — never that an identifier is present in a file.**
+
+**A cache with good tests can still be dead code.** Reverting the request path
+to raw `get_schema()` left all nineteen `test_schema_cache.py` tests green,
+because every one of them exercised `cached_schema()` directly. Adoption needs
+its own assertion: count the round trips end to end through the endpoint, and
+name the modules structurally so a failure says which one regressed.
+
+**A page that serves is not a page that renders.** Every assertion about the
+JavaScript read it as text — no `innerHTML`, no CDN, the right names present —
+and every one of them passes on a file with a syntax error in it, which returns
+200, renders blank, and reports itself only to a console nobody is watching.
+The suite now runs `node --check` over `app.js` and `history.js`, skipping where
+node is absent.
+
+**A vacuity guard measured in bytes punishes commentary.** The AC13
+comment-stripper's guard required the stripped page to exceed half the raw file,
+and adding two well-commented sections took the page to 55% comments, which it
+read as an over-matching regex. Length was only ever a proxy for *did real
+markup survive*; it now names the elements that must survive, and still fails on
+a genuinely greedy regex.
+
+**The absence-assertion trap has now appeared five times, and the fifth was not
+a comment.** The history page's footer disclaimer said the counts are "not an
+accuracy figure" — and a page asserted not to contain the word cannot carry a
+disclaimer built from it. Stripping comments was no help; the copy had to
+change. Then the test failed again on its own strictness, matching a phrase
+across a line break. Collapse whitespace before asserting on rendered text.
+
+**SQLite: applying the schema on every connection is a write lock.**
+`executescript()` takes one even for a reader, which produced `database is
+locked` on ~0.4% of writes at 16 threads — rare enough to pass a suite, frequent
+enough to drop real telemetry. **`BEGIN IMMEDIATE` made it worse**, because
+taking the lock earlier moves contention rather than removing it. The fix is
+schema-once-per-path plus an in-process write lock, which is sound because there
+is exactly one API process.
+
+**A fingerprint over a truncated result is stable and blind.** Gate 3 caps
+results at 1,000 rows. The catalog probe returns 91 today, but a two-hundred-
+table warehouse would truncate — and a hash of the first thousand rows of a
+stable catalog never changes while missing everything after them. `truncated`
+has to mean *unverifiable*, not *unchanged*.
+
+---
+
 **Shared state a test can reach will eventually be written by one.** It has
-happened twice. T5's `EVALS_PATH` was bound as a default argument, so
+happened twice, and Iteration 7 added four more places it could. T5's `EVALS_PATH` was bound as a default argument, so
 `monkeypatch` had no effect and a mutation run filed a fake entry in the real
 `EVALS.md`. B-5's spend ledger was then written by two tests that drive `main()`
 end to end and had no reason to know a ledger existed — gitignored, so invisible
 in review, and read by the next real run's pre-flight. Per-test discipline
 failed both times; isolation is now an autouse fixture. **Resolve paths at call
 time, and isolate shared state for every test whether it asks or not.**
+
+`tests/conftest.py` now carries six autouse isolators: the spend ledger, the
+history store, the answer cache, the quota snapshot, and the schema cache. The
+last one is the only one that can hold something *false* rather than merely
+stale — a test that monkeypatches `get_schema` leaves a hand-built `Schema`
+behind, and the next test builds its prompt from a database that does not
+exist.
 
 **The recorded path and the terminal path drift apart.** Four defects of one
 shape reached `EVALS.md` or its report before anyone noticed: the recorded block
@@ -264,7 +388,10 @@ before any prompt tuning begins.
 
 ---
 
-## 8. B-2, discharged — and the one question it left
+## 8. Historical: B-2, discharged — and the one question it left
+
+> Kept for the reasoning, not because it is current. Iteration 7 closed after
+> this; §4 is where things actually stand.
 
 **Closed 2026-09-08. Nothing here is waiting on a decision.** AC13 asked for
 accuracy with and without the glossary. Three passes ran on `--split dev`, all

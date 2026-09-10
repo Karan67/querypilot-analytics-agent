@@ -362,6 +362,8 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
 | ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
+| **B-9** | AC14's live injection test asserts a model behaviour, not a safety property | Iteration 7 T4 | open — filed 2026-09-10 |
+| **B-10** | `get_schema()` reaches the database around Gate 2 | Iteration 7 T6 | open — filed 2026-09-10 |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 

@@ -1,6 +1,13 @@
 # 010 — Iteration 7: Hardening
 
-Status: **approved 2026-09-09**, §7 resolved · Created: 2026-09-09
+Status: **delivered 2026-09-10** · approved 2026-09-09, §7 resolved · Created: 2026-09-09
+
+> **AC6 (feedback) was struck and moved to Iteration 8** at T1, and the
+> charter is amended to say so. Every other criterion is met. Two findings
+> made along the way are filed rather than fixed: **B-9** (AC14's live
+> injection test asserts that the model refuses, which is
+> nondeterministic) and **B-10** (`get_schema()` has reached the database
+> around Gate 2 since Iteration 1).
 
 > **Resolved questions.** Q-A persisted state lives in **SQLite in a volume**,
 > so the API gains no Postgres write credential at all · Q-B **guard the

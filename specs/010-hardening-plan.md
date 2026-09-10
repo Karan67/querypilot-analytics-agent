@@ -1,6 +1,6 @@
 # 010 — Iteration 7 plan: Hardening
 
-Status: **approved 2026-09-09**, §6 resolved · Created: 2026-09-09
+Status: **delivered 2026-09-10**, T1-T7 complete · approved 2026-09-09, §6 resolved · Created: 2026-09-09
 
 > **Resolved decisions.** D-1 the eval runner does **not** write to this store ·
 > D-2 a history-write failure **never** fails the request; degradation surfaces

@@ -533,3 +533,70 @@ def test_the_fingerprint_is_derived_not_declared():
     assert fingerprint("a") != fingerprint("b")
     assert fingerprint("a") == fingerprint("a")
     assert len(fingerprint("a")) == 12
+
+
+# --- benchmark integrity: the risk the plan named and nothing tested ---------
+
+
+def test_the_eval_runner_cannot_reach_the_answer_cache():
+    """**`010`'s plan §7 named this as a risk and the iteration never tested it.**
+
+    Its words: *the eval runner must not share the process-level cache with the
+    API -- D-1 keeps them apart.* If it could, a repeated question in a
+    multi-pass run would return a stored answer, and the benchmark would be
+    measuring the cache instead of the model. A 100% second pass would look like
+    stability and be an artefact.
+
+    Asserted structurally rather than by running the harness, because the
+    property is *reachability*: it must hold for every code path through
+    `evals/`, not only the ones a test happens to exercise. `api/http/cache.py`
+    is imported by exactly one module, and that module is the HTTP surface.
+    """
+    import ast
+    import pathlib
+
+    importers = []
+    for path in sorted(pathlib.Path(".").glob("**/*.py")):
+        parts = path.parts
+        if not parts or parts[0] not in {"api", "evals"}:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            modules = []
+            if isinstance(node, ast.ImportFrom) and node.module:
+                modules.append(node.module)
+                modules += [f"{node.module}.{a.name}" for a in node.names]
+            elif isinstance(node, ast.Import):
+                modules += [a.name for a in node.names]
+            if any(m == "api.http.cache" or m.endswith("http.cache") for m in modules):
+                importers.append(path.as_posix())
+
+    assert importers == ["api/main.py"], (
+        f"the answer cache is reachable from {importers}; D-1 requires the "
+        f"benchmark and the product's cache to stay apart"
+    )
+
+
+def test_the_schema_cache_is_shared_with_the_eval_runner_deliberately():
+    """The other half, and the asymmetry is the point.
+
+    T6 put `cached_schema()` in the orchestrator, so an eval run introspects
+    once instead of once per question. That **is** shared, and it is fine for
+    the reason the answer cache is not: it returns the same schema either way,
+    so it changes no answer, no token count and no recorded number -- only how
+    many catalog round trips the run makes. `EVALS.md` records no latency, so
+    there is nothing for it to perturb.
+
+    Pinned so the sharing stays a decision rather than becoming a discovery.
+    """
+    import ast
+    import pathlib
+
+    tree = ast.parse(pathlib.Path("api/agent/orchestrator.py").read_text(encoding="utf-8"))
+    imported = {
+        f"{node.module}.{alias.name}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+        for alias in node.names
+    }
+    assert "api.db.schema_cache.cached_schema" in imported

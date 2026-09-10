@@ -567,3 +567,38 @@ Removing it is now a defensible option; it was not before.
 | medium (6) | 100.0% |
 | hard (4) | 100.0% |
 | expert (4) | 100.0% |
+
+---
+
+## 2026-09-10 — Iteration 7 (Hardening): **no entry, and why**
+
+**Nothing was benchmarked in Iteration 7, so nothing is recorded here.** This
+note exists because the iteration edited code that produces the fingerprints
+above, and a reader comparing a future run against these entries deserves to
+know whether they still mean the same thing.
+
+They do. The recipe that computes the prompt fingerprint **moved** from
+`evals/run_evals.py` into `api/agent/fingerprints.py` at T4, because the answer
+cache needed the same hash and `evals/` is not in the Docker build context. The
+*material* being hashed did not change, so every value above still reproduces:
+`f971d8787f0c` for single-shot, `0d280c367c5e` for the loop without the
+glossary, `91036a089282` with it, and `e0b31c713530` for the `compact`
+rendering. Four existing tests pin those literals and all four fail together if
+the recipe drifts — that, rather than this paragraph, is the evidence.
+
+Two other Iteration 7 changes touch the harness and neither perturbs a number:
+
+- **`answer()` now reads a cached schema** (T6). The eval runner therefore
+  introspects once per run instead of once per question. It is the same schema
+  either way, so no answer, token count or score moves — only the number of
+  catalog round trips, which this file does not record.
+- **The answer cache is not reachable from `evals/`** (D-1). If it were, a
+  repeated question in a multi-pass run would return a stored answer and the
+  benchmark would be measuring the cache rather than the model. `010`'s plan
+  §7 named that risk and the iteration shipped without testing it; a structural
+  test added at the wrap-up now asserts `api/http/cache.py` is imported by
+  exactly one module, and that module is the HTTP surface.
+
+The headline numbers therefore stand unchanged, with their existing caveats.
+The honest reading of the held-out result is still *between 90% and 100%,
+measured once at 100%*.
