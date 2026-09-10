@@ -131,7 +131,7 @@ README both say so rather than leaving it to be discovered.
 | ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
-| **B-9** | AC14's live injection test asserts a model behaviour | open, filed 2026-09-10 |
+| ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
 | **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
 | **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |

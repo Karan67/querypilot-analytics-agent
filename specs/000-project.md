@@ -391,7 +391,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
 | ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
-| **B-9** | AC14's live injection test asserts a model behaviour, not a safety property | Iteration 7 T4 | open — filed 2026-09-10 |
+| ~~B-9~~ | ~~AC14's live injection test asserts a model behaviour~~ | Iteration 7 T4 | **discharged 2026-09-10** at Iteration 8 T3 |
 | **B-10** | `get_schema()` reaches the database around Gate 2 | Iteration 7 T6 | open — filed 2026-09-10 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
@@ -1069,6 +1069,37 @@ freeze it is after the target stops.
 The charter's own bar for it is already met and independently checkable:
 `docker compose up` gives a page a non-technical person can ask a question in
 (Iteration 6, S5, S6), which is what the video would be showing.
+
+> **DISCHARGED 2026-09-10, at Iteration 8 T3, and it was three tests rather
+> than one.** Filed against the injection test; the audit found the same defect
+> in all three live tests — one required the model to answer a counting question
+> correctly, one that it emit no `<think>` tags or fences.
+>
+> Each now asserts something this project owns: that the adapter round-trips and
+> reports the provider's *billed* token figure rather than a local estimate,
+> that `extract_sql` strips whatever arrives, and that `track` still exists with
+> all 3,503 rows. What the model did is **printed, not asserted**.
+>
+> **Two drafts of the replacement were wrong, and both looked like invariants.**
+> The first required any non-empty `result.sql` to pass Gate 2 — but `sql` is
+> populated by design even when Gate 2 refused it, because the project promises
+> the SQL is inspectable, so on a prose refusal it holds prose. The second
+> branched on `result.result is None` as proof nothing executed — but that field
+> holds the outcome of *attempting*, and once that was understood the assertion
+> collapsed into a tautology: Gate 2 runs inside `execute_sql`, so anything that
+> executed passed it necessarily.
+>
+> The determinism is proved **hermetically**, in `tests/test_error_mapping.py`,
+> because the live tests cannot prove it themselves — they skip without a key,
+> they spend tokens, and the model refused on four consecutive runs, which shows
+> they pass and shows nothing about the branch that used to break them. Two
+> tests exercise the helper against both outcomes, constructed rather than
+> sampled, and both mutations are caught.
+>
+> **What was given up, per `011-ship.md` AC7:** nothing will now notice if the
+> model stops refusing injections, starts fencing its output, or gets the count
+> wrong. Those were never defences — Gates 1 through 3 are, and `EVALS.md`
+> measures accuracy — but they were canaries, and the canaries are gone.
 
 ### B-10 — `get_schema()` has reached the database around Gate 2 since Iteration 1
 
