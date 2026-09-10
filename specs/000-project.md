@@ -395,6 +395,7 @@ this table only when it ships or when a spec records why it never will.
 | **B-10** | `get_schema()` reaches the database around Gate 2 | Iteration 7 T6 | open — filed 2026-09-10 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
+| **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — investigated, not reproduced |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 
@@ -948,6 +949,79 @@ table is intact, the row count is unchanged, and no statement that reached
 `execute_sql()` passed Gate 2 as anything but a read. Whether the model refused
 or answered is an observation worth *printing*, never an assertion. Whoever
 picks this up should check the sibling live tests for the same shape.
+
+### B-13 — The gold-query test pair fails intermittently, and six hypotheses did not explain it
+
+`tests/test_eval_questions.py::test_every_gold_query_executes` and
+`::test_every_gold_query_returns_at_least_one_row` fail **together**, in roughly
+two of twenty full-suite runs, and pass on every re-run. They share a
+module-scoped `gold_results` fixture that executes all 50 reference queries, so
+one intermittent execution failure fails both — which is why they always fail as
+a pair.
+
+**Filed rather than fixed, after investigation.** The user's ruling was to chase
+it before building CI, which was done; the outcome is that it cannot be
+reproduced and that nothing points at a defect in this repository.
+
+Observed:
+
+| | |
+|---|---|
+| Python 3.14.6 | 1 failure event in ~8 full runs |
+| Python 3.12.13 | 1 failure event in 12 full runs (the first), then 11 consecutive passes |
+| the two tests in isolation | **0 failures in 40 runs** |
+| the seven files that precede them | **0 reproductions in 10 runs** |
+
+**Six hypotheses, each eliminated by measurement. This list exists so nobody
+runs this investigation a second time:**
+
+1. **`statement_timeout` (10s).** No. Timed all 50 gold queries: the slowest is
+   `hard-001` at 784ms and the median is 6.5ms. Nothing is within an order of
+   magnitude of the ceiling.
+2. **A defect in those two tests.** No. Forty consecutive isolated runs passed.
+3. **The engine poisoned by a bad DSN.** `tests/test_execution.py` and
+   `tests/test_schema_tool.py` both point `QUERYPILOT_DATABASE_URL` at an
+   unreachable host and clear the `lru_cache`. No: both files sort *after*
+   `test_eval_questions.py`, so they run later.
+4. **Interaction with the files that run before it.** No. Ten runs of the
+   seven-file prefix reproduced nothing.
+5. **Cold Postgres shared buffers after a container restart.** Both observed
+   failures happened shortly after Docker operations, which made this the
+   leading theory. No: `hard-001` takes 432ms cold against 395ms warm. Chinook
+   is small enough to stay in cache.
+6. **A connection leak on an error path** — plausible, because the suite runs
+   many deliberately failing queries and a leak would drain the pool only on a
+   long run. No: checked-out connections stay at 0 across 120 calls spanning
+   successes, `database_error` and Gate 2 rejections.
+
+**The decisive negative is that the database logged nothing.** `docker compose
+logs db` across the window containing a failure shows only the *intended* errors
+from `tests/test_validator_gates.py` — "permission denied for table track",
+"cannot execute DELETE in a read-only transaction" — and the container reports
+`restarts: 0`. Whatever failed **never reached Postgres**.
+
+That leaves one explanation consistent with every observation: a transient
+failure *establishing* a connection, client-side, against
+`CONNECT_TIMEOUT_SECONDS = 5`. It leaves no server log, it needs a long run to
+have enough opportunities, and it cannot be provoked. On Windows Docker Desktop
+that is a property of the environment rather than a defect in this code.
+
+**Which means it may never appear in CI**, where Linux reaches a service
+container over a loopback bridge. That is a reason to let the pipeline be the
+next observer, not a reason to assume it is fixed.
+
+**What to do when it next happens: read the assertion message.** Both tests
+already interpolate the failing question id, its category and its error, so a
+single un-truncated occurrence identifies the cause. The reason this entry is
+inconclusive is that both observed failures were seen through `-q` output and a
+tailed terminal capture. CI logs are neither.
+
+If the category turns out to be `connection_error`, the fix is a decision about
+whether the fixture should distinguish *connectivity* from *gold-query validity*
+— re-attempting once on that category alone, since a failure to connect is not
+evidence about whether a reference query is correct. That option was offered and
+deliberately not taken here, on the grounds that a retry is a place a real
+failure can hide and there is not yet evidence to justify one.
 
 ### B-11 — Production deployment
 

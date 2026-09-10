@@ -135,6 +135,7 @@ README both say so rather than leaving it to be discovered.
 | **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
 | **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
+| **B-13** | the gold-query test pair flakes, ~2 in 20 full runs | open — six hypotheses eliminated, not reproduced |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 
