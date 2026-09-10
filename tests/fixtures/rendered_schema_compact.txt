@@ -1,0 +1,17 @@
+One relation per line:
+  relation(column TYPE, ...) PK[key] FK[column->relation.column]
+  ! after a type means NOT NULL; unmarked columns may be NULL.
+  Lines beginning 'view' are views, not base tables.
+
+album(album_id INTEGER!, title VARCHAR(160)!, artist_id INTEGER!) PK[album_id] FK[artist_id->artist.artist_id]
+artist(artist_id INTEGER!, name VARCHAR(120)) PK[artist_id]
+customer(customer_id INTEGER!, first_name VARCHAR(40)!, last_name VARCHAR(20)!, company VARCHAR(80), address VARCHAR(70), city VARCHAR(40), state VARCHAR(40), country VARCHAR(40), postal_code VARCHAR(10), phone VARCHAR(24), fax VARCHAR(24), email VARCHAR(60)!, support_rep_id INTEGER) PK[customer_id] FK[support_rep_id->employee.employee_id]
+employee(employee_id INTEGER!, last_name VARCHAR(20)!, first_name VARCHAR(20)!, title VARCHAR(30), reports_to INTEGER, birth_date TIMESTAMP, hire_date TIMESTAMP, address VARCHAR(70), city VARCHAR(40), state VARCHAR(40), country VARCHAR(40), postal_code VARCHAR(10), phone VARCHAR(24), fax VARCHAR(24), email VARCHAR(60)) PK[employee_id] FK[reports_to->employee.employee_id]
+genre(genre_id INTEGER!, name VARCHAR(120)) PK[genre_id]
+invoice(invoice_id INTEGER!, customer_id INTEGER!, invoice_date TIMESTAMP!, billing_address VARCHAR(70), billing_city VARCHAR(40), billing_state VARCHAR(40), billing_country VARCHAR(40), billing_postal_code VARCHAR(10), total NUMERIC(10, 2)!) PK[invoice_id] FK[customer_id->customer.customer_id]
+invoice_line(invoice_line_id INTEGER!, invoice_id INTEGER!, track_id INTEGER!, unit_price NUMERIC(10, 2)!, quantity INTEGER!) PK[invoice_line_id] FK[invoice_id->invoice.invoice_id; track_id->track.track_id]
+view invoice_totals(invoice_id INTEGER, customer_id INTEGER, invoice_date TIMESTAMP, line_count BIGINT, total NUMERIC)
+media_type(media_type_id INTEGER!, name VARCHAR(120)) PK[media_type_id]
+playlist(playlist_id INTEGER!, name VARCHAR(120)) PK[playlist_id]
+playlist_track(playlist_id INTEGER!, track_id INTEGER!) PK[playlist_id,track_id] FK[playlist_id->playlist.playlist_id; track_id->track.track_id]
+track(track_id INTEGER!, name VARCHAR(200)!, album_id INTEGER, media_type_id INTEGER!, genre_id INTEGER, composer VARCHAR(220), milliseconds INTEGER!, bytes INTEGER, unit_price NUMERIC(10, 2)!) PK[track_id] FK[album_id->album.album_id; genre_id->genre.genre_id; media_type_id->media_type.media_type_id]

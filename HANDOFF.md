@@ -85,10 +85,10 @@ because a measurement contradicted the premise.
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **In progress from 2026-09-10** — CI, B-9, B-10, feedback. Deployment and the demo video deferred as B-11/B-12 |
 
-**1,138 tests**, ~101s (live provider tests skip when rate-limited, which is
+**1,168 tests**, ~64s (live provider tests skip when rate-limited, which is
 a working guard rather than a red failure -- see the traps below). Iteration 8
-added 29: T3 hardened the live tests, T4 brought the pipeline's own guards
-and the two defects the pipeline found.
+added 59: T3 hardened the live tests, T4 brought the pipeline's own guards
+and the two defects the pipeline found, T5 discharged B-10.
 
 **There is a pipeline now** -- `.github/workflows/ci.yml`, on every push and
 pull request. It brings the real stack up with `docker compose up`, needs no
@@ -121,13 +121,22 @@ the easiest way to misread this code:
 | | keyed on | invalidated by | shared with `evals/` |
 |---|---|---|---|
 | answer cache (`api/http/cache.py`) | question + schema fp + prompt fp | a schema or prompt change | **no** — D-1, and a test enforces it |
-| schema cache (`api/db/schema_cache.py`) | nothing; one slot | a 5.3ms catalog probe | yes, deliberately |
+| schema cache (`api/db/schema_cache.py`) | nothing; one slot | an 8.5ms catalog probe | yes, deliberately |
 | quota snapshot (`api/http/quota.py`) | nothing; one slot | its own age vs the bucket's reset | n/a |
 
 **The answer cache does not notice a data change.** Its key covers the question,
 the schema and the prompt, so an added *column* invalidates an entry and an
 added *row* does not. Chinook is static so it never bites here; the page and the
 README both say so rather than leaving it to be discovered.
+
+**The schema cache's margin shrank by a factor of five at Iteration 8 T5, and
+that is filed as B-14.** B-10 replaced SQLAlchemy's `Inspector` with three
+catalog queries through `execute_sql()`, taking `get_schema()` from **52 round
+trips and 99ms to 9 and 29.0ms**. The probe is 3 trips and 8.5ms, so the cache
+still saves something real and saves far less than it was built to save.
+`test_introspection_really_is_the_expensive_thing` was written to fail and ask
+this question if introspection ever got cheap, and it did exactly that on the
+first run after T5. **The question is open, not answered.**
 
 ### The backlog board, in `specs/000-project.md` section 8
 
@@ -140,6 +149,8 @@ README both say so rather than leaving it to be discovered.
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
 | ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
+| ~~B-10~~ | `get_schema()` reached the database around Gate 2 | discharged 2026-09-11 at Iteration 8 T5 |
+| **B-14** | Does the schema cache still earn its weight after B-10? | opened 2026-09-11 -- its own test asked |
 | **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
 | **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
@@ -233,7 +244,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,138 tests, ~101s
+.venv/Scripts/python.exe -m pytest -q                 # 1,168 tests, ~64s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 

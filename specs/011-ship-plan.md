@@ -2,7 +2,7 @@
 
 Status: **approved 2026-09-10**, D-1 through D-7 resolved · Created: 2026-09-10
 
-T1-T4 done. T5 (B-10) is next.
+T1-T5 done. T6 (feedback) is next.
 
 Implements [`011-ship.md`](011-ship.md), whose §7 is resolved. This document says
 *how*, and surfaces the decisions the design itself raised.

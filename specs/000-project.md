@@ -406,10 +406,11 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 | ~~B-9~~ | ~~AC14's live injection test asserts a model behaviour~~ | Iteration 7 T4 | **discharged 2026-09-10** at Iteration 8 T3 |
-| **B-10** | `get_schema()` reaches the database around Gate 2 | Iteration 7 T6 | open — filed 2026-09-10 |
+| ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
 | **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — investigated, not reproduced |
+| **B-14** | Does the schema cache still earn its weight after B-10? | Iteration 8 T5 | open — its own test asked |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 
@@ -1175,6 +1176,42 @@ inside SQLAlchemy, they run as `querypilot_ro`, and no model output reaches
 them — so this is a violation of the rule's letter and of the layering, not a
 live injection route. That is exactly what was said about `/health`, and it did
 not stop that from being worth fixing.
+
+> **DISCHARGED 2026-09-11, at Iteration 8 T5, by option 1.** The `Inspector` is
+> gone. `api/db/introspection.py` now builds its `Schema` from three
+> hand-written catalog queries through `execute_sql()`, so every statement
+> passes Gate 2, runs in the read-only transaction and inherits the statement
+> timeout. §4 is absolute again with its one recorded exemption, and
+> `tests/test_type_names.py` bans `sqlalchemy.inspect` under `api/`
+> structurally, counting the modules it scanned so the ban cannot go vacuous.
+>
+> **52 statements and 99ms became 9 and 29.0ms**, measured the same way. The
+> nine are three queries plus the `SET TRANSACTION READ ONLY` and
+> `SET LOCAL statement_timeout` each `execute_sql()` pays.
+>
+> **AC9 held: the rendered schema is byte-identical.** All three renderings,
+> the structural map across 12 relations / 69 columns / 11 foreign keys, and
+> five fingerprints — including `0d280c367c5e` and `91036a089282`, recorded in
+> `EVALS.md` by earlier iterations under code that no longer exists. The
+> comparability of the measurement record survives, which was the whole reason
+> Q-C chose the byte-identical translation layer over a re-baselining.
+>
+> `api/db/type_names.py` carries the translation: **five base families**, which
+> is what Chinook needs, and the maintenance question §2.4 raised is unchanged
+> — a real warehouse brings `text`, `boolean`, `date`, `jsonb`, `uuid`, arrays
+> and domains. Unmapped types degrade to an uppercased base name rather than
+> raising, because a schema that fails to render is a schema the agent cannot
+> see; `character(N)` is a recorded divergence (SQLAlchemy renders `CHAR(N)`).
+>
+> **Two costs, stated rather than glossed.** Introspection now inherits Gate
+> 3's 1,000-row cap, so a schema with more than a thousand columns raises
+> instead of silently returning a prefix — Chinook's read is 69 rows, so this
+> is guarded by a constructed test rather than by anything real. And AC17 lost
+> the failing hostname from its error message: `execute_sql()` returns a fixed
+> string for connection failures and keeps no detail, which is deliberate — the
+> agent must be told retrying will not help, and a DSN can carry a password.
+> Restoring it was considered and declined. An operator now reads the container
+> logs for that.
 
 ---
 
