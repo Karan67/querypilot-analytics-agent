@@ -31,8 +31,22 @@
 #      executed*, read from --junitxml. This is the smoke alarm for the day
 #      somebody deletes the first belt.
 #
-# Both were mutation-tested by pointing the DSN at nothing and confirming this
-# workflow goes red rather than green-and-empty. See the T4 report.
+# Both belts were mutation-tested on real runs of this workflow, on throwaway
+# branches, and each red came from the belt under test:
+#
+#   belt one -- dead DSN, flag kept:     `1135 errors in 11.14s`, pytest red.
+#                                        The floor guard passed, correctly: a
+#                                        fixture error is not a skip.
+#   belt two -- dead DSN, flag deleted:  `1135 skipped in 3.30s`, pytest
+#                                        **green**. Section 2.1 reproduced on a
+#                                        real pipeline. The floor guard was the
+#                                        only thing that failed the build:
+#                                        `only 0 of 1135 tests actually
+#                                        executed, below the floor of 1000`.
+#
+# Belt two also ignored tests/test_ci_guards.py, whose structural assertion
+# would have noticed the missing flag on its own -- so the run modelled this
+# repository as it was before that file existed, leaving the floor alone.
 #
 # ---------------------------------------------------------------------------
 # No secret, by construction

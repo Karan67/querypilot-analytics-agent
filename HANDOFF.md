@@ -280,6 +280,43 @@ happened:
 happened **twice** before the lesson stuck. Always assert against the parsed AST
 (`ast.walk`), never `"foo" in source`.
 
+**`monkeypatch.undo()` reverts the autouse isolation fixtures too.** `monkeypatch`
+is one function-scoped instance shared with every fixture that requested it, so
+an `undo()` in a test body also reverts `conftest`'s six isolation fixtures.
+`test_the_degraded_flag_clears_after_a_successful_write` used it to restore the
+one function it had patched, and thereby restored `history.DEFAULT_PATH` to
+`/data/querypilot.db` — **writing a real 32KB database to `C:\data` on every
+full run for an iteration.** The write succeeded, so the assertion passed and
+nothing noticed. CI found it in one line, because a Linux runner cannot create
+`/data`. This is the seventh instance of the shared-state trap and the first
+where the isolation existed and a test switched it off. Restore the single
+attribute with a second `setattr`, or use a private `pytest.MonkeyPatch()`.
+`tests/test_ci_guards.py` now scans the AST for it.
+
+**Seven tests depended on the developer's API key without saying so.**
+`run_evals.main()` builds the provider *before* it projects the cost, so with no
+key it returns **2** from "Provider error" and never reaches the pre-flight
+guard under test. Locally `.env` supplies a key and the guards were reached;
+CI reported `assert 2 == 1`. Those tests would have been just as green with the
+guard deleted and the key removed. Use the opt-in
+`provider_that_must_not_be_called` fixture, whose `complete` raises, rather than
+letting the environment supply a provider.
+
+**The suite exits 0 when the database is unreachable, having skipped everything.**
+Measured: `1109 skipped`, exit code **0**. That is the right behaviour for a
+developer and a green build that verified nothing for a pipeline, and it is why
+`QUERYPILOT_TESTS_REQUIRE_DATABASE=1` and `ci/require_executed_tests.py` both
+exist. If a local run is unexpectedly red with a "failed run rather than a
+skipped one" message, that variable is set in your environment.
+
+**Git has never recorded an executable bit in this repository.** `core.filemode`
+is `false` on the development machine, so `db/fetch_chinook.sh` sat at mode
+`100644` for eight iterations and the very first CI run died on it with
+`Permission denied`, exit 126. A file mode does not appear in a diff, so no
+review would have caught it either. Set it with
+`git update-index --chmod=+x <path>`; `tests/test_ci_guards.py` now requires it
+for anything the workflow invokes as `./…`.
+
 **A completeness check that exempts its own module is not a completeness check.**
 `RETRY_POLICY`'s test enumerated only upstream categories; the first category it
 missed was one added in the same file, and the loop silently ended every run

@@ -130,6 +130,20 @@ regressions are bugs; safety regressions are stop-the-line events.
   > on the host, against the container. Writing *"runnable locally and in CI"*
   > in the present tense described an intention as a capability — the same
   > failure mode as §1's chart promise, in a quieter register.
+  >
+  > **RESOLVED 2026-09-10, at Iteration 8 T4.** It exists now:
+  > `.github/workflows/ci.yml` runs the full suite on every push and pull
+  > request, against a real Postgres brought up by `docker compose`, needing no
+  > secret. The note above is kept because its point outlived its subject —
+  > and because the first three runs justified it twice over. They found a
+  > missing executable bit, seven tests that depended on a developer's API key,
+  > and a test writing a real database to `C:\data`. None of those was visible
+  > from a green local suite, which is the argument for a pipeline stated as
+  > evidence rather than as intention.
+  >
+  > The **evals** half of §6's "evals running in CI" is deliberately not done:
+  > the runner spends real tokens against a measured 200,000/day ceiling, and
+  > resolved Q-B keeps every merge gate deterministic and free.
 - **A metadata store** — query history, agent steps, eval runs, ~~feedback,~~
   latency and token cost.
 
