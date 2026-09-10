@@ -1,0 +1,51 @@
+# GENERATED -- do not hand-edit. Regenerate with:
+#
+#     python -m venv .lockenv && .lockenv/Scripts/python.exe -m pip install -r api/requirements.txt
+#     .lockenv/Scripts/python.exe -m pip list --format=freeze
+#
+# Resolved on **Python 3.12.13** (Iteration 8 T2, resolved D-4/D-5). The ranged
+# file api/requirements.txt stays the human-edited source of truth;
+# this file exists so two installs a month apart resolve to the same bytes.
+#
+# `pip freeze` rather than `pip-compile --generate-hashes` (resolved D-5):
+# hashes are the stronger answer and need a tool and a regeneration workflow,
+# and this project has no build step to hang one on. Revisit if the pipeline
+# ever publishes an artefact.
+#
+# **The interpreter is part of the lock.** The image is `python:3.12-slim`,
+# which floats its patch version; the host has 3.12.13 because that is the
+# newest 3.12 `uv` offers for Windows. See the T2 report -- pinning the image's
+# patch is an open question, not an oversight.
+#
+# Runtime only: what the API image installs. No pytest, no tiktoken, no yaml.
+
+PyYAML==6.0.3
+SQLAlchemy==2.0.52
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+click==8.5.0
+colorama==0.4.6
+distro==1.9.0
+fastapi==0.115.14
+greenlet==3.5.5
+groq==0.37.1
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+httpx==0.28.1
+idna==3.19
+psycopg-binary==3.2.13
+psycopg==3.2.13
+pydantic==2.13.5
+pydantic_core==2.46.5
+python-dotenv==1.2.3
+sniffio==1.3.1
+sqlglot==27.29.0
+starlette==0.46.2
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.3
+uvicorn==0.34.3
+watchfiles==1.2.0
+websockets==17.1

@@ -26,6 +26,36 @@ pyyaml>=6.0,<7.0
 # It exists because T1 found the spec's headline token numbers were len//4.
 tiktoken>=0.7,<1.0
 
+# --- three dependencies this file did not declare until Iteration 8 T2 ------
+#
+# **Found by recreating the venv from this file alone, which is what the README
+# tells a new developer to do.** It produced 26 collection errors: 20 for
+# `sqlglot`, 5 for `httpx` and 1 for `groq`. The suite had passed on this
+# machine for eight iterations because those packages were installed here by
+# hand and never written down.
+#
+# This is the exact failure mode the iteration's CI work exists to catch, and
+# it was found the day before CI would have found it far more confusingly --
+# as a red pipeline on a repository that "passes locally".
+#
+# Pinned to the same ranges as api/requirements.txt for the reason SQLAlchemy
+# and FastAPI above are: a skew between the host suite and the image surfaces
+# as a confusing assertion failure rather than as the version problem it is.
+
+# Gate 2's parser. `tests/test_validator.py` and 19 other files import the
+# validator, which imports sqlglot.
+sqlglot>=27,<28
+
+# The provider SDK. `tests/test_llm_provider.py` imports the concrete provider
+# to assert the vendor boundary -- the one place outside api/llm/ that may.
+groq>=0.37,<1.0
+
+# `starlette.testclient` requires it, and every test that drives an endpoint
+# through `TestClient` fails at *collection* without it. It arrived here
+# transitively via `groq` and was never declared, so declaring `groq` would
+# have masked this rather than fixed it.
+httpx>=0.28,<1.0
+
 # FastAPI, so the host suite can import `api.main` (Iteration 6 T5).
 #
 # Unusual in this file: everything else here is dev-only, and this is a
