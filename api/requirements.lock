@@ -1,31 +1,31 @@
-# GENERATED -- do not hand-edit. Regenerate with:
+# GENERATED -- do not hand-edit. Regenerate **inside the image**:
 #
-#     python -m venv .lockenv && .lockenv/Scripts/python.exe -m pip install -r api/requirements.txt
-#     .lockenv/Scripts/python.exe -m pip list --format=freeze
+#     docker run --rm -v "$PWD/api:/req:ro" python:3.12.13-slim #       sh -c "pip install -q -r /req/requirements.txt && pip list --format=freeze"
 #
-# Resolved on **Python 3.12.13** (Iteration 8 T2, resolved D-4/D-5). The ranged
-# file api/requirements.txt stays the human-edited source of truth;
-# this file exists so two installs a month apart resolve to the same bytes.
+# Resolved on **linux/amd64, Python 3.12.13** (Iteration 8 T2, D-5).
+# `api/requirements.txt` stays the human-edited source of truth; this file
+# exists so two image builds a month apart install the same bytes, and it is
+# what the Dockerfile installs.
 #
-# `pip freeze` rather than `pip-compile --generate-hashes` (resolved D-5):
-# hashes are the stronger answer and need a tool and a regeneration workflow,
-# and this project has no build step to hang one on. Revisit if the pipeline
-# ever publishes an artefact.
+# **It must be generated on Linux, and the first version of it was not.** T2
+# froze this from the Windows host and the difference is not cosmetic: Windows
+# pulls `colorama` and `tzdata` that Linux does not need, and -- the part that
+# matters -- Windows never pulls **uvloop**, which is `uvicorn[standard]`'s
+# event loop on Linux. A Windows-derived lock would have quietly changed the
+# production event loop while looking like a reproducibility improvement.
 #
-# **The interpreter is part of the lock.** The image is `python:3.12-slim`,
-# which floats its patch version; the host has 3.12.13 because that is the
-# newest 3.12 `uv` offers for Windows. See the T2 report -- pinning the image's
-# patch is an open question, not an oversight.
+# `pip freeze` rather than `pip-compile --generate-hashes` (resolved D-5): no
+# new tooling, and this project has no build step to hang one on.
 #
-# Runtime only: what the API image installs. No pytest, no tiktoken, no yaml.
-
+# The interpreter is pinned alongside it -- `api/Dockerfile` says
+# `python:3.12.13-slim`, not `python:3.12-slim`, because the floating tag was
+# drift with nobody watching it.
 PyYAML==6.0.3
 SQLAlchemy==2.0.52
 annotated-types==0.8.0
 anyio==4.15.1
 certifi==2026.7.22
 click==8.5.0
-colorama==0.4.6
 distro==1.9.0
 fastapi==0.115.14
 greenlet==3.5.5
@@ -45,7 +45,7 @@ sqlglot==27.29.0
 starlette==0.46.2
 typing-inspection==0.4.4
 typing_extensions==4.16.0
-tzdata==2026.3
 uvicorn==0.34.3
+uvloop==0.22.1
 watchfiles==1.2.0
 websockets==17.1
