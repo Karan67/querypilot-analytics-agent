@@ -85,10 +85,10 @@ because a measurement contradicted the premise.
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **In progress from 2026-09-10** — CI, B-9, B-10, feedback. Deployment and the demo video deferred as B-11/B-12 |
 
-**1,200 tests**, ~72s (live provider tests skip when rate-limited, which is
+**1,220 tests**, ~58s (live provider tests skip when rate-limited, which is
 a working guard rather than a red failure -- see the traps below). Iteration 8
-added 91: T3 hardened the live tests, T4 brought the pipeline's own guards
-and the two defects the pipeline found, T5 discharged B-10, T6 added feedback.
+added 111: T3 hardened the live tests, T4 brought the pipeline's own guards
+and the two defects the pipeline found, T5 discharged B-10, T6 added feedback, T7 the shipping surface.
 
 **There is a pipeline now** -- `.github/workflows/ci.yml`, on every push and
 pull request. It brings the real stack up with `docker compose up`, needs no
@@ -111,6 +111,7 @@ Five endpoints and two pages, all served by the one container:
 | `GET /quota` | what the provider last said about its limits |
 | `POST /feedback` | one mark against one answer id: `-1` or `1`, optional note. **404** on an unknown id, **201** on success |
 | `GET /health` | now also reports `history.writable`, and stays 200 when it is false |
+| **the `api` healthcheck** | added at Iteration 8 T7. `docker compose ps` now reports `(healthy)` only when `/health` answers 2xx, and `up --wait` blocks on it |
 
 Operational state lives in **SQLite at `/data/querypilot.db`** in the
 `querypilot_data` named volume. `docker compose down` keeps it; only `down -v`
@@ -255,7 +256,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,200 tests, ~72s
+.venv/Scripts/python.exe -m pytest -q                 # 1,220 tests, ~58s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 
