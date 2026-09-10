@@ -398,6 +398,69 @@ def test_the_gate_pins_the_interpreter_the_image_ships():
     )
 
 
+def test_scripts_the_pipeline_invokes_directly_are_executable():
+    """**The first thing CI actually found, turned into a guard.**
+
+    Run 1 of this workflow died at ``./db/fetch_chinook.sh: Permission denied``,
+    exit 126. The script has a shebang, the README tells a developer to invoke it
+    exactly that way, and its mode in the index was ``100644`` -- because
+    ``core.filemode`` is ``false`` on the one machine this project has been
+    developed on, so git has never recorded an executable bit for anything.
+    Eight iterations of a green suite could not see it, and neither could a
+    reviewer: the mode is not in the diff.
+
+    That is precisely the failure the plan predicted in its section 8 -- *"an
+    assumption about paths, line endings or a running Docker daemon that has
+    been true for eight iterations because one machine made it true"* -- and a
+    fresh Linux clone would have hit it too.
+
+    Derived rather than listed: the invocations come out of the workflow, so
+    adding ``./db/something.sh`` to a step brings it under the rule
+    automatically. The mode is read from the **index**, not from the filesystem,
+    because on Windows ``os.access(..., X_OK)`` answers a question about NTFS
+    that has nothing to do with what a runner will see.
+
+    ``db/init/*.sh`` are deliberately not covered. Nothing invokes them
+    directly: Postgres's entrypoint sources a non-executable ``.sh`` and
+    executes an executable one, so both modes work there, and changing them
+    would change how init runs to fix a problem it does not have.
+    """
+    directly_invoked = sorted(
+        {
+            token.lstrip("./")
+            for step in workflow_steps()
+            for token in str(step.get("run", "")).split()
+            if token.startswith("./")
+        }
+    )
+    assert directly_invoked, (
+        "no ./ invocation found in the workflow; if that is now true this test "
+        "is vacuous and should be removed rather than left passing"
+    )
+
+    listed = subprocess.run(
+        ["git", "ls-files", "-s", "--", *directly_invoked],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert listed.returncode == 0, f"git ls-files failed: {listed.stderr}"
+
+    modes = {}
+    for line in listed.stdout.splitlines():
+        metadata, _, path = line.partition("\t")
+        modes[path] = metadata.split()[0]
+
+    for path in directly_invoked:
+        assert path in modes, f"the workflow runs ./{path}, which git does not track"
+        assert modes[path] == "100755", (
+            f"./{path} is mode {modes[path]} in the index, so a runner gets "
+            f"'Permission denied' (exit 126). Fix with: "
+            f"git update-index --chmod=+x {path}"
+        )
+
+
 def test_the_gate_installs_from_the_lock():
     """AC5: identical resolution on every run.
 
