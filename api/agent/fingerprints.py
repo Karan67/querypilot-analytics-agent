@@ -52,7 +52,8 @@ from api.agent.prompts import (
     render_schema,
     render_transcript,
 )
-from api.db.introspection import SchemaIntrospectionError, get_schema
+from api.db.introspection import SchemaIntrospectionError
+from api.db.schema_cache import cached_schema
 
 #: Characters of the hash kept. Twelve hex digits is 48 bits -- unambiguous for
 #: a handful of prompt versions and short enough to read in a table.
@@ -134,7 +135,11 @@ def deployed_fingerprints(
     category it already uses.
     """
     try:
-        schema = get_schema()
+        # `cached_schema` since T6 (AC9). This runs on **every** request,
+        # including cache hits, so it was the single largest thing T4 added to
+        # the request path -- 99ms of introspection to compute a key whose whole
+        # purpose is to avoid work.
+        schema = cached_schema()
     except SchemaIntrospectionError:
         return None
 

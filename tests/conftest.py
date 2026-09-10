@@ -213,3 +213,24 @@ def isolated_quota_snapshot():
     quota.clear()
     yield
     quota.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_schema_cache():
+    """The sixth, and the one with a way to hold something that is not real.
+
+    The ledger, the history store, the answer cache and the quota snapshot can
+    all be *polluted* by a test. This one can be **falsified**: a test that
+    monkeypatches `get_schema` to return a hand-built `Schema` leaves that fake
+    cached behind, and the next test builds its prompt from a database that
+    does not exist.
+
+    It costs the suite a real introspection per test that needs one, which is
+    what the suite already paid before T6 existed. Correctness is not the thing
+    to spend for speed here.
+    """
+    from api.db import schema_cache
+
+    schema_cache.clear()
+    yield
+    schema_cache.clear()
