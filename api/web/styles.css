@@ -88,6 +88,38 @@ h2 {
   color: var(--warn);
 }
 
+/* --- AC13: marking an answer --------------------------------------------- */
+
+/*
+ * Quiet on purpose. This sits directly under an answer, and a prominent
+ * rating widget invites a reader to treat the marks as a verdict on the
+ * system -- which, per AC14, is exactly what they must not become while the
+ * stored record contains zero bad answers (section 2.6).
+ */
+#feedback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin: 1rem 0 0;
+  font-size: .85rem;
+  color: var(--muted);
+}
+
+#feedback button {
+  font: inherit;
+  padding: .2rem .7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+}
+
+#feedback button:hover:not(:disabled) { border-color: var(--muted); }
+#feedback button:disabled { opacity: .5; cursor: default; }
+#feedback-thanks { font-size: .82rem; }
+
 /* --- AC8: a cached answer says so ---------------------------------------- */
 
 /*

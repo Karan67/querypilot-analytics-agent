@@ -28,6 +28,13 @@ const chartToggle = document.getElementById("chart-toggle");
 const chartBox = document.getElementById("chart");
 const quotaBox = document.getElementById("quota");
 const cacheNote = document.getElementById("cache-note");
+const feedbackBox = document.getElementById("feedback");
+const feedbackGood = document.getElementById("feedback-good");
+const feedbackBad = document.getElementById("feedback-bad");
+const feedbackThanks = document.getElementById("feedback-thanks");
+
+/* The answer a mark would attach to, or "" when there is none (AC13). */
+let currentAnswerId = "";
 
 /* The result currently on screen, so the toggle can redraw without refetching. */
 let current = null;
@@ -165,9 +172,69 @@ function renderCacheNote(body) {
     "the data as it was when the question was first answered.";
 }
 
+/*
+ * AC13. The mark attaches to `body.id`, the answer's uuid, never to the
+ * question text -- the same question answered twice is two answers, and
+ * Iteration 7 T3 returned this id specifically so a mark could name one.
+ *
+ * AC14: nothing here counts anything. A click posts one mark and the reply is
+ * an acknowledgement, not a tally. There is deliberately no place in this
+ * function where a rate could be shown, because the shape that would make one
+ * easy is the shape AC14 forbids.
+ *
+ * Both buttons are disabled after a click rather than the panel being hidden:
+ * the acknowledgement has to stay visible, or a user cannot tell a stored mark
+ * from a click that did nothing. The store is append-only, so a second mark
+ * would be recorded rather than replacing the first -- disabling is a courtesy
+ * to the reader of the data, not a constraint the API enforces.
+ */
+function resetFeedback(body) {
+  feedbackThanks.hidden = true;
+  feedbackThanks.textContent = "";
+  feedbackGood.disabled = false;
+  feedbackBad.disabled = false;
+  currentAnswerId = body && body.ok ? body.id || "" : "";
+  feedbackBox.hidden = !currentAnswerId;
+}
+
+async function sendFeedback(rating) {
+  if (!currentAnswerId) return;
+  feedbackGood.disabled = true;
+  feedbackBad.disabled = true;
+  feedbackThanks.hidden = false;
+  feedbackThanks.textContent = "Sending…";
+
+  try {
+    const response = await fetch("/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: currentAnswerId, rating: rating }),
+    });
+    if (response.status === 201) {
+      feedbackThanks.textContent = "Thanks — recorded.";
+      return;
+    }
+    // Said out loud rather than swallowed. A mark the user believes was stored
+    // and was not is worse than no feedback mechanism, because it silently
+    // biases whatever eventually reads the table.
+    const body = await response.json().catch(() => ({}));
+    feedbackThanks.textContent = `Not recorded: ${body.error || response.status}`;
+    feedbackGood.disabled = false;
+    feedbackBad.disabled = false;
+  } catch (err) {
+    feedbackThanks.textContent = `Not recorded: ${err.message}`;
+    feedbackGood.disabled = false;
+    feedbackBad.disabled = false;
+  }
+}
+
+feedbackGood.addEventListener("click", () => sendFeedback(1));
+feedbackBad.addEventListener("click", () => sendFeedback(-1));
+
 function render(body) {
   resetChart();
   renderCacheNote(body);
+  resetFeedback(body);
   // FastAPI's own 422 for a malformed request has no `ok` field at all.
   if (typeof body.ok !== "boolean") {
     showStatus("That question could not be read. Try rephrasing it.", "error");

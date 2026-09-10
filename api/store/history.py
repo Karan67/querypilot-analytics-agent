@@ -238,6 +238,94 @@ def record_ask(record: AskRecord, path: pathlib.Path | None = None) -> str | Non
     return ask_id
 
 
+class UnknownAsk(LookupError):
+    """No answer with that id, so there is nothing to attach a mark to.
+
+    Its own exception rather than a `None` return, because the caller must
+    distinguish it from a store failure: one is a `404` and the other a `503`,
+    and collapsing them would tell a user their mark was rejected when the
+    database was simply unreachable.
+    """
+
+
+def record_feedback(
+    ask_id: str,
+    rating: int,
+    note: str = "",
+    path: pathlib.Path | None = None,
+) -> str:
+    """Attach one mark to one answer, and **raise** if it cannot (AC13).
+
+    Returns the new row's id.
+
+    **The opposite policy to `record_ask`, deliberately.** That one swallows
+    every failure, because a person who asked a question and got an answer must
+    not be punished for our logging breaking -- the write is incidental to what
+    they wanted. Here the write *is* what they wanted. Reporting success on a
+    mark that was never stored would be the same lie as returning an empty list
+    from a broken `/history/data`, which T7 refused for the same reason.
+
+    Raises:
+        UnknownAsk: no answer has this id.
+        Exception: whatever the store raised. Not caught here: the endpoint
+            turns it into a 503, and a mark that failed to store must say so.
+    """
+    with _write_lock, _connect(path) as conn:
+        # Checked rather than left to the foreign key, because SQLite does not
+        # enforce one without `PRAGMA foreign_keys=ON` and because this is the
+        # only way to tell "unknown id" from "write failed" -- a 404 from a 503.
+        exists = conn.execute("SELECT 1 FROM ask WHERE id = ?", (ask_id,)).fetchone()
+        if exists is None:
+            raise UnknownAsk(ask_id)
+
+        feedback_id = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT INTO feedback (id, ask_id, created_at, rating, note)
+            VALUES (?,?,?,?,?)
+            """,
+            (
+                feedback_id,
+                ask_id,
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                int(rating),
+                note,
+            ),
+        )
+        conn.commit()
+        return feedback_id
+
+
+def feedback_for_ids(
+    ask_ids: Sequence[str], path: pathlib.Path | None = None
+) -> dict[str, list[sqlite3.Row]]:
+    """Marks for many answers at once, grouped by `ask_id`.
+
+    One query, not one per row, for the reason `steps_for_ids` gives: the reader
+    shows fifty answers and would otherwise open fifty-one connections to render
+    one page, competing for the write lock that answers are recorded through.
+
+    Returns every mark, oldest first. **Not a count, not a score, not a
+    latest-wins single value** (AC14): the caller is handed the marks
+    themselves, so there is no reduced number for a template to mistake for an
+    accuracy figure.
+    """
+    if not ask_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in ask_ids)
+    with _connect(path) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM feedback WHERE ask_id IN ({placeholders}) "
+            f"ORDER BY ask_id, created_at, rowid",
+            tuple(ask_ids),
+        )
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault(row["ask_id"], []).append(row)
+        return grouped
+
+
 def recent(limit: int = 50, path: pathlib.Path | None = None) -> list[sqlite3.Row]:
     """The most recent questions, newest first. Raises if the store is broken.
 

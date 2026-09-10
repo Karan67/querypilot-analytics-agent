@@ -22,11 +22,12 @@ import dataclasses
 import logging
 import pathlib
 import time
+from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.agent.fingerprints import deployed_fingerprints
 from api.agent.orchestrator import answer
@@ -385,6 +386,106 @@ def quota_endpoint() -> JSONResponse:
 #: Capped because the endpoint takes the number from the query string, and an
 #: uncapped `limit` is a way to ask one process to build an arbitrarily large
 #: JSON document. 500 is far more than anyone reads and small enough to be free.
+class FeedbackRequest(BaseModel):
+    """One mark against one answer (AC13).
+
+    `id` is the answer's id from the `/ask` payload, never the question text.
+    §2.6's whole point is that the same question can be answered well once and
+    badly later, so a mark keyed on the text would be attached to nothing in
+    particular.
+
+    `rating` is `Literal[-1, 1]` (resolved D-6) rather than an `int` with a
+    validator, so an out-of-range value is refused by the schema and reported as
+    a `422` naming the field. Two values, because two cannot be averaged into a
+    number that looks like accuracy — the pressure AC14 exists to resist — and
+    because §2.6 says there is no data yet to justify a finer instrument.
+
+    `note` is capped at the same length as `AskRequest.question`. **This is the
+    project's first unauthenticated write** (§4 of the spec names it), so the
+    one thing a stranger can put in the database is bounded before it is
+    stored.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    rating: Literal[-1, 1]
+    note: str = Field(default="", max_length=1000)
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def reject_booleans(cls, value):
+        """A boolean is not a rating, and **accepting one silently biased the
+        data toward "good"** (found by the parametrized test below, T6).
+
+        `Literal[-1, 1]` alone lets JSON `true` through: Python's `True == 1`,
+        so Pydantic coerces it to a valid rating. `false` becomes `0`, which is
+        *not* in the literal and is refused. So a client written against a
+        boolean API would have every "yes" recorded and every "no" rejected —
+        producing a table of unanimous approval out of divided opinion, on
+        precisely the signal §2.6 says this project has none of.
+
+        `Field(strict=True)` cannot express this: Pydantic raises
+        `Unable to apply constraint 'strict' to schema of type 'literal'`.
+        """
+        if isinstance(value, bool):
+            raise ValueError(
+                "rating must be the integer -1 or 1, not a boolean; "
+                "true would be stored as 1 while false would be refused"
+            )
+        return value
+
+
+@app.post("/feedback", tags=["agent"])
+def feedback(request: FeedbackRequest) -> JSONResponse:
+    """Store one mark. `201` on success, `404` on an unknown answer.
+
+    **A `404` rather than a quiet accept** (resolved D-6). Storing a mark
+    against an id nothing matches would leave a row that can never be
+    interpreted — the orphan version of the empty-list-versus-503 mistake T7
+    avoided, and worse, because it would inflate whatever eventually reads this
+    table with records that mean nothing.
+
+    A store failure is a `503` and not a `201`. `record_ask` swallows its
+    failures because logging is incidental to answering a question; here the
+    write *is* the request, so reporting success on a mark that was never
+    stored would be a lie about the one thing the caller asked for.
+
+    Nothing is aggregated on the way in or out (AC14): the response echoes the
+    stored mark and no count, rate or score is computed anywhere.
+    """
+    try:
+        feedback_id = history.record_feedback(
+            ask_id=request.id, rating=request.rating, note=request.note
+        )
+    except history.UnknownAsk:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "ok": False,
+                "error": (
+                    f"No answer with id {request.id!r}. A mark attaches to an "
+                    f"answer from POST /ask, not to a question."
+                ),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        logger.warning("feedback write failed: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+        )
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "ok": True,
+            "error": "",
+            "feedback_id": feedback_id,
+            "id": request.id,
+            "rating": request.rating,
+        },
+    )
+
+
 HISTORY_DEFAULT_LIMIT = 50
 HISTORY_MAX_LIMIT = 500
 
@@ -406,6 +507,7 @@ def history_data(limit: int = HISTORY_DEFAULT_LIMIT) -> JSONResponse:
     try:
         rows = history.recent(limit=limit)
         traces = history.steps_for_ids([row["id"] for row in rows])
+        marks = history.feedback_for_ids([row["id"] for row in rows])
     except Exception as exc:  # noqa: BLE001 - reported, not swallowed
         logger.warning("history read failed: %s", exc)
         return JSONResponse(
@@ -422,18 +524,30 @@ def history_data(limit: int = HISTORY_DEFAULT_LIMIT) -> JSONResponse:
         content={
             "ok": True,
             "error": "",
-            "answers": [_history_row(row, traces.get(row["id"], ())) for row in rows],
+            "answers": [
+                _history_row(
+                    row, traces.get(row["id"], ()), marks.get(row["id"], ())
+                )
+                for row in rows
+            ],
         },
     )
 
 
-def _history_row(row, steps) -> dict:
+def _history_row(row, steps, marks=()) -> dict:
     """One stored answer, shaped for the reader.
 
     `tokens` carries `measured` beside it rather than the number alone, per
     D-1's standing rule: a provider-billed figure and a locally counted one are
     different quantities, and a reader that shows them identically is inviting
     somebody to add them up.
+
+    `feedback` is **the list of marks, not a summary of them** (AC14). No count,
+    no rate, no latest-wins single value, no "3 of 4 were good". §2.6 measured
+    zero bad answers in the whole record, and a proportion computed over that is
+    the accuracy claim `009` AC13 kept off the page — the shape of this field is
+    what makes computing one an obvious addition rather than a rendering
+    detail.
     """
     return {
         "id": row["id"],
@@ -464,6 +578,14 @@ def _history_row(row, steps) -> dict:
                 "sql": step["sql"],
             }
             for step in steps
+        ],
+        "feedback": [
+            {
+                "rating": mark["rating"],
+                "note": mark["note"],
+                "created_at": mark["created_at"],
+            }
+            for mark in marks
         ],
     }
 

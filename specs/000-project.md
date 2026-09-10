@@ -411,6 +411,7 @@ this table only when it ships or when a spec records why it never will.
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
 | **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — investigated, not reproduced |
 | **B-14** | Does the schema cache still earn its weight after B-10? | Iteration 8 T5 | open — its own test asked |
+| ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
 

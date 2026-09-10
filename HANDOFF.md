@@ -85,10 +85,10 @@ because a measurement contradicted the premise.
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **In progress from 2026-09-10** — CI, B-9, B-10, feedback. Deployment and the demo video deferred as B-11/B-12 |
 
-**1,168 tests**, ~64s (live provider tests skip when rate-limited, which is
+**1,200 tests**, ~72s (live provider tests skip when rate-limited, which is
 a working guard rather than a red failure -- see the traps below). Iteration 8
-added 59: T3 hardened the live tests, T4 brought the pipeline's own guards
-and the two defects the pipeline found, T5 discharged B-10.
+added 91: T3 hardened the live tests, T4 brought the pipeline's own guards
+and the two defects the pipeline found, T5 discharged B-10, T6 added feedback.
 
 **There is a pipeline now** -- `.github/workflows/ci.yml`, on every push and
 pull request. It brings the real stack up with `docker compose up`, needs no
@@ -109,6 +109,7 @@ Five endpoints and two pages, all served by the one container:
 | `GET /history` | the reader: every question, its cost, its trace |
 | `GET /history/data` | the same as JSON; **503 when the store is unreadable**, never an empty list |
 | `GET /quota` | what the provider last said about its limits |
+| `POST /feedback` | one mark against one answer id: `-1` or `1`, optional note. **404** on an unknown id, **201** on success |
 | `GET /health` | now also reports `history.writable`, and stays 200 when it is false |
 
 Operational state lives in **SQLite at `/data/querypilot.db`** in the
@@ -123,6 +124,16 @@ the easiest way to misread this code:
 | answer cache (`api/http/cache.py`) | question + schema fp + prompt fp | a schema or prompt change | **no** — D-1, and a test enforces it |
 | schema cache (`api/db/schema_cache.py`) | nothing; one slot | an 8.5ms catalog probe | yes, deliberately |
 | quota snapshot (`api/http/quota.py`) | nothing; one slot | its own age vs the bucket's reset | n/a |
+
+**Feedback is collected and deliberately not consumed (AC14).** `POST /feedback`
+stores a `-1` or `1` against an answer id, append-only, and `/history` shows the
+marks. **Nothing anywhere counts, averages, scores or rates them** — not the
+store, not the endpoint, not the payload, not either page script. That is a
+criterion, not an omission: `011-ship.md` §2.6 measured **zero bad answers** in
+the entire stored record, so the first proportion this project could compute
+would read *100% good* over a sample containing no failures. Six tests exist
+only to make adding one fail, including an AST walk over `api/main.py` and
+`api/store/history.py`.
 
 **The answer cache does not notice a data change.** Its key covers the question,
 the schema and the prompt, so an added *column* invalidates an entry and an
@@ -244,7 +255,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,168 tests, ~64s
+.venv/Scripts/python.exe -m pytest -q                 # 1,200 tests, ~72s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 

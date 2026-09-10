@@ -76,6 +76,33 @@
       <div id="answer"></div>
 
       <!--
+        AC13: a user can mark an answer good or bad. It lives here, next to the
+        answer, because this is the moment somebody actually knows -- asking
+        them later on the history page means asking about an answer they no
+        longer remember reading.
+
+        AC14 governs what this must NOT become. There is no count here, no
+        score, no "82% of answers were good", and nothing that reduces the marks
+        to a number. section 2.6 measured zero bad answers in the entire stored
+        record, and a rate computed over that would be the accuracy claim `009`
+        AC13 kept off this page, arriving through a side door.
+
+        Hidden until an answer carries an id: a mark attaches to an answer, so
+        there is nothing to attach to before one exists, and a failed question
+        has no answer to judge.
+      -->
+      <div id="feedback" hidden>
+        <span id="feedback-label">Was this answer useful?</span>
+        <button id="feedback-good" type="button" aria-describedby="feedback-label">
+          Yes
+        </button>
+        <button id="feedback-bad" type="button" aria-describedby="feedback-label">
+          No
+        </button>
+        <span id="feedback-thanks" hidden aria-live="polite"></span>
+      </div>
+
+      <!--
         Resolved Q-B: the chart is a toggle the human controls, and it starts
         off. The default lives here, in the markup, rather than only in app.js
         -- a declarative default is one a test can assert about the served page,
