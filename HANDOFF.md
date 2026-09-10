@@ -83,7 +83,7 @@ because a measurement contradicted the premise.
 | **5 Prompt tuning** | **Closed 2026-09-04**; its last open criterion, AC13, satisfied 2026-09-08 as B-2 |
 | **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
-| 8 CI + feedback | Not started — inherits AC6's deferred feedback |
+| **8 Ship** | **In progress from 2026-09-10** — CI, B-9, B-10, feedback. Deployment and the demo video deferred as B-11/B-12 |
 
 **1,107 tests** (live provider tests skip when rate-limited, which is a
 working guard rather than a red failure -- see the traps below). The suite
@@ -133,6 +133,8 @@ README both say so rather than leaving it to be discovered.
 | **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
 | **B-9** | AC14's live injection test asserts a model behaviour | open, filed 2026-09-10 |
 | **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
+| **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
+| **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 
