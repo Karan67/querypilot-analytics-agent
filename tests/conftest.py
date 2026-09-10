@@ -149,3 +149,88 @@ def isolated_spend_ledger(tmp_path, monkeypatch):
     from evals import ledger
 
     monkeypatch.setattr(ledger, "DEFAULT_PATH", tmp_path / "spend.json")
+
+
+@pytest.fixture(autouse=True)
+def isolated_history_store(tmp_path, monkeypatch):
+    """Never let a test write the real history database.
+
+    **The third instance of the same trap, isolated before it can bite rather
+    than after.** T5's `EVALS_PATH` put a fabricated entry in the real
+    `EVALS.md`; B-5's ledger took 6,800 tokens of fake spend from two tests that
+    drove `main()` end to end and had no idea a ledger existed. Both were
+    gitignored, so neither would have shown up in review.
+
+    `POST /ask` now writes history, and the endpoint tests drive it without
+    caring that a store exists -- which is precisely the shape of both earlier
+    failures. Per-test discipline is what failed twice, so this is autouse and
+    applies whether a test asks for it or not.
+    """
+    from api.store import history
+
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "history.db")
+    monkeypatch.setattr(history, "_degraded", "")
+
+
+@pytest.fixture(autouse=True)
+def isolated_answer_cache():
+    """Never let one test's answer be served to another.
+
+    **The fourth instance of the same trap, and the first where the shared state
+    is in memory rather than on disk.** `EVALS.md`, the spend ledger and the
+    history database were all files; this one is a module-level dict, which is
+    worse in one specific way -- a leaked entry does not sit there waiting to be
+    noticed, it makes a *later* test's provider call silently not happen.
+
+    Consider the failure it prevents: a test asks a question and asserts the
+    provider was called once. It passes alone and fails in a full run, or worse,
+    passes in both because a *different* test was the one that paid. The suite
+    would then be asserting the behaviour of whichever test happened to run
+    first, which is not a property anybody chose.
+
+    Cleared before and after: before, so a test never inherits; after, so a
+    failing test does not leave a primed cache behind for the next file.
+    """
+    from api.http import cache
+
+    cache.clear()
+    yield
+    cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_quota_snapshot():
+    """The fifth. Same rule, applied without waiting to be bitten.
+
+    `api/http/quota.py` keeps the last rate-limit reading in a module global,
+    because T4 made the provider per-request and there is nowhere else for it to
+    live. A reading left behind by one test would make another test's `/quota`
+    report limits nobody in that test observed -- and the warning it drives is
+    exactly the kind of thing that looks right until it is wrong.
+    """
+    from api.http import quota
+
+    quota.clear()
+    yield
+    quota.clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_schema_cache():
+    """The sixth, and the one with a way to hold something that is not real.
+
+    The ledger, the history store, the answer cache and the quota snapshot can
+    all be *polluted* by a test. This one can be **falsified**: a test that
+    monkeypatches `get_schema` to return a hand-built `Schema` leaves that fake
+    cached behind, and the next test builds its prompt from a database that
+    does not exist.
+
+    It costs the suite a real introspection per test that needs one, which is
+    what the suite already paid before T6 existed. Correctness is not the thing
+    to spend for speed here.
+    """
+    from api.db import schema_cache
+
+    schema_cache.clear()
+    yield
+    schema_cache.clear()

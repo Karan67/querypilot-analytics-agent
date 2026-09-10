@@ -49,7 +49,8 @@ from api.db.execution import (
     ExecutionResult,
     execute_sql,
 )
-from api.db.introspection import SchemaIntrospectionError, get_schema
+from api.db.introspection import SchemaIntrospectionError
+from api.db.schema_cache import cached_schema
 from api.llm.base import LLMError, LLMProvider, RateLimitError, TokenUsage
 from api.llm.counting import usage_for_call
 
@@ -306,7 +307,7 @@ def _run_get_schema(state: _State) -> Step:
     """Dispatch `get_schema`. This is the action the withheld-schema harness
     exists to exercise -- measured chosen in 10 of 12 cases (plan §2.2)."""
     try:
-        rendered = render_schema_ddl(get_schema())
+        rendered = render_schema_ddl(cached_schema())
         observation = "Observation from get_schema:\n\n" + rendered
         return Step(attempt=state.calls, action="get_schema", ok=True, observation=observation)
     except SchemaIntrospectionError as exc:
@@ -411,7 +412,7 @@ def answer(
     schema = None
     if schema_mode == SCHEMA_FULL:
         try:
-            schema = get_schema()
+            schema = cached_schema()
         except SchemaIntrospectionError as exc:
             return _failure(
                 state,

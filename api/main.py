@@ -18,16 +18,25 @@ one method wide.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import pathlib
+import time
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from api.agent.fingerprints import deployed_fingerprints
 from api.agent.orchestrator import answer
+from api.agent.prompts import ADOPTED_RENDERING
 from api.agent.tools import execute_sql
+from api.llm.base import LLMError, TokenUsage
+from api.llm.factory import get_provider
+from api.store import history
+from api.store.history import AskRecord
+from api.http import cache, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
 from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
@@ -66,6 +75,54 @@ _HEALTH_QUERY = """
 #: The files sit under `api/` rather than the repository's `frontend/` for the
 #: same reason: anything outside the build context is simply not in the image.
 _WEB_DIR = pathlib.Path(__file__).resolve().parent / "web"
+
+#: The deployed prompt configuration, in one place.
+#:
+#: Passed to `answer()` *and* folded into the cache's prompt fingerprint, which
+#: is the whole reason it is a constant rather than two defaults that happen to
+#: agree. Flipping `answer()`'s own default without this would leave the cache
+#: keyed on a prompt the API does not send -- a mismatch with no symptom, since
+#: both sides would keep working and only the hits would be wrong.
+#:
+#: The glossary ships **on** (`008` resolved Q-D); `ADOPTED_RENDERING` is
+#: `compact`, which D-2 selected on a dev-split A/B at Iteration 6 T7.
+_DEPLOYED_GLOSSARY = True
+_DEPLOYED_RENDERING = ADOPTED_RENDERING
+
+
+class _TimedProvider:
+    """Wraps a provider to time `complete()` and nothing else.
+
+    **This is why the endpoint builds a provider rather than letting `answer()`
+    pick one.** `010-hardening.md` §2.2 measured the provider at 94.2% of wall
+    clock, so AC2 requires the two durations be recorded apart -- and the only
+    place that boundary is visible is around `complete()`.
+
+    Attribute access delegates, which is not incidental: `usage_for_call()`
+    reads `last_usage` off the provider with `getattr`, and `/quota` reads
+    `last_rate_limit`. A wrapper that did not proxy would silently produce
+    unmeasured token counts -- exactly the failure D-1 exists to prevent, and
+    invisible in every test that does not check `measured`.
+
+    It does **not** pace, delay, retry or otherwise alter the call (`009` AC5).
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.elapsed_ms = 0
+        self.calls = 0
+
+    def complete(self, system: str, user: str) -> str:
+        started = time.perf_counter()
+        try:
+            return self._inner.complete(system, user)
+        finally:
+            self.elapsed_ms += int((time.perf_counter() - started) * 1000)
+            self.calls += 1
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
 
 logger = logging.getLogger("querypilot")
 
@@ -119,16 +176,26 @@ def health() -> JSONResponse:
         )
 
     db_user, db_name, public_tables = result.rows[0]
+
+    # Resolved D-2's second half. A history write that fails is swallowed so the
+    # user still gets their answer -- which would leave the system silently
+    # amnesiac if nothing ever said so. This is where it says so.
+    #
+    # It is deliberately **not** a 503: history is observability, and reporting
+    # the service as down because logging broke would be the cascade D-2 exists
+    # to prevent, moved into the health check.
+    store_error = history.degraded()
     return JSONResponse(
         status_code=200,
         content={
-            "status": "ok",
+            "status": "ok" if not store_error else "degraded_history",
             "database": {
                 "connected": True,
                 "user": db_user,
                 "database": db_name,
                 "public_tables": public_tables,
             },
+            "history": {"writable": not store_error, "error": store_error},
         },
     )
 
@@ -165,7 +232,36 @@ def ask(request: AskRequest) -> JSONResponse:
     failure: AC12 says a demo audience learns more from a legible failure than
     from a spinner that stops.
     """
-    result = answer(request.question)
+    started = time.perf_counter()
+    answered = _answer_or_replay(request.question)
+    total_ms = int((time.perf_counter() - started) * 1000)
+
+    result = answered.result
+    cache_hit = answered.cache_hit
+    provider = answered.provider
+
+    # AC10/AC11. The provider is built per request and a cache hit builds none,
+    # so what it learned about the limits has to be handed somewhere that
+    # outlives the request or it is lost with it.
+    #
+    # The `is not None` check here is a readability guard, **not the protection**
+    # -- `observe` ignores a `None` snapshot, and removing this line changes no
+    # behaviour and fails no test. The load-bearing rule lives in `observe` for
+    # a reason: a provider that simply reported nothing this time reaches it too,
+    # and that path has no call-site check to lean on.
+    if provider is not None:
+        quota.observe(getattr(provider, "last_rate_limit", None))
+
+    # Resolved at T4: `usage` reports what **this request** spent, so a hit
+    # reports zero. The alternative -- replaying the original answer's figures --
+    # makes the history column sum to more than was ever billed unless every
+    # future reader remembers to filter on `cache_hit = 0`, and a total that
+    # silently overstates spend is the same class of defect as the one that
+    # understated it and cost a hand reconstruction on 2026-09-09.
+    #
+    # `measured` is False on that zero, following `TokenUsage`'s own convention:
+    # a zero-call usage is the identity and carries no measurement claim.
+    usage = TokenUsage() if cache_hit else result.usage
 
     columns = list(result.result.columns) if result.result else []
     rows = encode_rows(result.result.rows) if result.result else []
@@ -214,7 +310,35 @@ def ask(request: AskRequest) -> JSONResponse:
         "category": result.category,
         "error": "",
         "retryable": False,
+        # AC1. `AgentResult.usage` existed from Iteration 4 and this boundary
+        # threw it away, which is how a 20,370-token gap in the spend ledger had
+        # to be reconstructed by hand from three instrumented probes. `measured`
+        # travels with it, per D-1: a locally counted number and a billed number
+        # are different quantities, and a figure that does not say which it is
+        # is not a measurement.
+        "usage": {
+            "total_tokens": usage.total_tokens,
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "calls": usage.calls,
+            "measured": usage.measured,
+        },
+        "total_ms": total_ms,
+        # Zero on a hit, because no provider was built and none was called.
+        "provider_ms": provider.elapsed_ms if provider is not None else 0,
+        # AC8: a cached answer must be *visibly* cached. Presenting an answer
+        # computed some time ago as freshly computed is the analytics equivalent
+        # of the accuracy claim `009` AC13 banned from the page.
+        #
+        # It means "this request did not call the provider", which also covers a
+        # coalesced follower whose answer is perfectly fresh. That is the claim
+        # both readers want: the page can say the answer may not have been
+        # computed for you, and exactly one history row carries the cost of any
+        # one provider call.
+        "cache_hit": cache_hit,
     }
+
+    payload["id"] = _record_history(request, answered, payload, total_ms, usage)
 
     if result.ok:
         return JSONResponse(status_code=STATUS_ANSWERED, content=payload)
@@ -226,6 +350,128 @@ def ask(request: AskRequest) -> JSONResponse:
     payload["error"] = failure.message
     payload["retryable"] = failure.retryable
     return JSONResponse(status_code=failure.status, content=payload)
+
+
+@app.get("/quota", tags=["ops"])
+def quota_endpoint() -> JSONResponse:
+    """What the provider last said about its limits (AC10, AC11).
+
+    **Reports observation, not policy.** It never calls the provider — asking
+    the provider how much quota is left would spend quota — so it returns what
+    the most recent real question learned, together with how long ago that was.
+    Before any question has been asked it returns `known: false` and no numbers,
+    because a default reading is indistinguishable from a healthy one.
+
+    **Two buckets, not three.** B-1 measured a per-minute token limit and a
+    per-day request limit in the response headers, and a **200,000 tokens-per-day
+    limit that appears in no header at all** — it surfaces only in the body of a
+    429. This endpoint cannot report what the provider never sends, and does not
+    invent it.
+
+    Always 200. A low bucket is not a service failure: the answer still arrives,
+    it arrives more slowly, and the whole point of AC11 is to say so rather than
+    to start refusing.
+
+    **The API still does not pace** (resolved Q-C, `009` AC5). This endpoint
+    tells the user what is happening; it does not sleep on their behalf. A
+    request that takes ten seconds because the provider is slow is honest; one
+    that takes ten seconds because we chose to wait is not.
+    """
+    return JSONResponse(status_code=200, content=quota.snapshot())
+
+
+#: Rows the reader shows by default, and the most it will show at all.
+#:
+#: Capped because the endpoint takes the number from the query string, and an
+#: uncapped `limit` is a way to ask one process to build an arbitrarily large
+#: JSON document. 500 is far more than anyone reads and small enough to be free.
+HISTORY_DEFAULT_LIMIT = 50
+HISTORY_MAX_LIMIT = 500
+
+
+@app.get("/history/data", tags=["ops"])
+def history_data(limit: int = HISTORY_DEFAULT_LIMIT) -> JSONResponse:
+    """What was asked, what it cost, and what the agent did — as JSON (AC4).
+
+    **A reader is allowed to fail where a writer is not**, and the asymmetry is
+    deliberate. `record_ask` swallows everything, because a user who asked a
+    question and got an answer should not be punished for our logging breaking.
+    Someone opening the history page is asking a different question, and telling
+    them the store is unreadable is the true answer to it — so this returns
+    `503` rather than an empty list, which would read as *nothing was ever
+    asked*.
+    """
+    limit = max(1, min(limit, HISTORY_MAX_LIMIT))
+
+    try:
+        rows = history.recent(limit=limit)
+        traces = history.steps_for_ids([row["id"] for row in rows])
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        logger.warning("history read failed: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "answers": [],
+            },
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "error": "",
+            "answers": [_history_row(row, traces.get(row["id"], ())) for row in rows],
+        },
+    )
+
+
+def _history_row(row, steps) -> dict:
+    """One stored answer, shaped for the reader.
+
+    `tokens` carries `measured` beside it rather than the number alone, per
+    D-1's standing rule: a provider-billed figure and a locally counted one are
+    different quantities, and a reader that shows them identically is inviting
+    somebody to add them up.
+    """
+    return {
+        "id": row["id"],
+        "asked_at": row["asked_at"],
+        "question": row["question"],
+        "ok": bool(row["ok"]),
+        "category": row["category"],
+        "sql": row["sql"],
+        "shape": row["shape"],
+        "row_count": row["row_count"],
+        "attempts_used": row["attempts_used"],
+        "total_ms": row["total_ms"],
+        "provider_ms": row["provider_ms"],
+        "tokens": row["total_tokens"],
+        "measured": bool(row["usage_measured"]),
+        "provider_calls": row["provider_calls"],
+        "cache_hit": bool(row["cache_hit"]),
+        "model": row["model"],
+        "schema_fp": row["schema_fp"],
+        "prompt_fp": row["prompt_fp"],
+        "trace": [
+            {
+                "attempt": step["attempt"],
+                "action": step["action"],
+                "ok": bool(step["ok"]),
+                "category": step["category"],
+                "error": step["error"],
+                "sql": step["sql"],
+            }
+            for step in steps
+        ],
+    }
+
+
+@app.get("/history", include_in_schema=False)
+def history_page() -> HTMLResponse:
+    """The reader (AC4). Read at request time, like the answer page."""
+    return HTMLResponse(_WEB_DIR.joinpath("history.html").read_text(encoding="utf-8"))
 
 
 @app.get("/", include_in_schema=False)
@@ -241,3 +487,169 @@ def index() -> HTMLResponse:
 
 #: Mounted last: a mount at "/" would shadow every route declared after it.
 app.mount("/static", StaticFiles(directory=_WEB_DIR), name="static")
+
+
+def _is_cacheable(result) -> bool:
+    """Only a successful answer is worth keeping.
+
+    **This follows from D-3 rather than being a preference.** The cache has no
+    expiry, so a cached failure would be served for the life of the process: a
+    question asked during a thirty-second rate limit would become permanently
+    unanswerable, with no way for the user to retry. Re-running a failure costs
+    exactly what the first attempt cost, which is the right price for something
+    that might now succeed.
+    """
+    return bool(result.ok)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Answered:
+    """One answer plus how it was obtained.
+
+    A record rather than a five-tuple because every field has a reader that
+    would otherwise be indexing by position: the payload wants `cache_hit`, the
+    timing wants `provider`, and the history row wants both fingerprints so it
+    can say which schema and which prompt produced this answer.
+    """
+
+    result: object
+    cache_hit: bool
+    provider: object | None
+    schema_fp: str = ""
+    prompt_fp: str = ""
+
+
+def _deployed_fingerprints() -> tuple[str, str] | None:
+    """`(schema_fp, prompt_fp)` for the configuration this API actually sends.
+
+    Delegates the schema read to `api/agent/`, which is where reading a schema
+    to build a prompt already happens. **`api/main.py` is asserted to reach the
+    database only through the agent**, and importing `get_schema` here would
+    have broken that -- a structural test walks this module's imports and fails
+    on anything from `api.db`. Widening the test to admit an introspection call
+    would have been the wrong repair: the first version of this task did exactly
+    that, and it is how a rule acquires its first undocumented exception.
+
+    `None` when the schema cannot be read, which deliberately **bypasses the
+    cache** rather than inventing a key without one. `answer()` then produces
+    its own `connection_error`, so an unreachable database fails exactly the way
+    it did before the cache existed.
+
+    On a miss this is a second introspection, because `answer()` reads the
+    schema again to build the prompt. **Measured in the container rather than
+    estimated**: `get_schema()` is a 118ms median over five warm calls, and a
+    warm miss went from a 169ms non-provider gap at T3 to 272ms here. A hit
+    costs 113ms, essentially all of it this call.
+
+    T6 (AC9) caches `get_schema()` at its source, which collapses both reads to
+    one lookup and takes a hit to near zero. Paying it now is the honest
+    ordering: a key that cannot notice a schema change is not a correctness
+    guarantee, and 118ms against a 459ms provider call is the cheaper half.
+    """
+    return deployed_fingerprints(
+        rendering=_DEPLOYED_RENDERING, glossary=_DEPLOYED_GLOSSARY
+    )
+
+
+def _answer_or_replay(question: str) -> _Answered:
+    """Answer the question, or hand back an answer already paid for.
+
+    **The provider is `None` on a hit** -- not merely unused, never built --
+    which is what makes a cached answer survive a provider outage or a missing
+    key, and what makes `provider_ms` honestly zero rather than a timer that was
+    started and never used.
+    """
+    timed: list[_TimedProvider] = []
+
+    def compute():
+        try:
+            provider = _TimedProvider(get_provider())
+        except LLMError:
+            # Unknown provider or missing key (AC4). `answer()` builds its own
+            # and maps the failure to a category the error table knows, so this
+            # defers to it rather than keeping a second copy of that mapping in
+            # sync. Both attempts fail immediately and neither touches the
+            # network.
+            return answer(
+                question,
+                rendering=_DEPLOYED_RENDERING,
+                glossary=_DEPLOYED_GLOSSARY,
+            )
+
+        timed.append(provider)
+        return answer(
+            question,
+            provider=provider,
+            rendering=_DEPLOYED_RENDERING,
+            glossary=_DEPLOYED_GLOSSARY,
+        )
+
+    fingerprints = _deployed_fingerprints()
+    if fingerprints is None:
+        return _Answered(compute(), False, timed[0] if timed else None)
+
+    schema_fp, prompt_fp = fingerprints
+    key = cache.cache_key(question, schema_fp, prompt_fp)
+    result, cache_hit = cache.get_or_compute(key, compute, _is_cacheable)
+    return _Answered(
+        result, cache_hit, timed[0] if timed else None, schema_fp, prompt_fp
+    )
+
+
+def _record_history(request, answered, payload, total_ms, usage) -> str | None:
+    """Persist one answered question, and never let that failure reach the user.
+
+    Resolved D-2: *the primary contract of `/ask` is to return an answer.* The
+    store swallows its own exceptions, so this returns `None` rather than
+    raising, and `/health` is where a degraded store becomes visible.
+
+    The returned id is the **answer id** Iteration 8's feedback attaches to --
+    an answer, never a question string, because the agent may answer the same
+    question differently next time.
+    """
+    result = answered.result
+    provider = answered.provider
+
+    # All three are absent on a cache hit, where no provider was ever built.
+    # That is the truthful record: there was no call, so there is no rate-limit
+    # snapshot to take and no model to credit. The row that paid for the answer
+    # carries them, and `cache_hit` is what connects the two.
+    snapshot = getattr(provider, "last_rate_limit", None)
+    tokens_left = getattr(getattr(snapshot, "tokens", None), "remaining", None)
+    requests_left = getattr(getattr(snapshot, "requests", None), "remaining", None)
+
+    return history.record_ask(
+        AskRecord(
+            # The user's question, not the agent's echo of it. They are the same
+            # string today, and a history of what was *asked* should not depend
+            # on that staying true -- the record's job is to say what the user
+            # sent, whatever the agent did with it afterwards.
+            question=request.question,
+            ok=result.ok,
+            total_ms=total_ms,
+            provider_ms=provider.elapsed_ms if provider is not None else 0,
+            sql=result.sql,
+            category=result.category,
+            shape=payload["shape"],
+            row_count=len(payload["rows"]),
+            attempts_used=result.attempts_used,
+            # The effective usage, which is zero on a hit. Summing this column
+            # across every row gives what was actually billed, with no filter to
+            # remember and no double counting.
+            total_tokens=usage.total_tokens,
+            prompt_tokens=usage.prompt_tokens,
+            usage_measured=usage.measured,
+            provider_calls=usage.calls,
+            cache_hit=payload["cache_hit"],
+            tpm_remaining=tokens_left,
+            rpd_remaining=requests_left,
+            model=getattr(provider, "model", ""),
+            # Which schema and which prompt this answer was produced under. The
+            # columns have existed since T2 and were always empty; they are what
+            # makes a row still readable after the schema or the prompt moves,
+            # and they are the same two numbers the cache key is built from.
+            schema_fp=answered.schema_fp,
+            prompt_fp=answered.prompt_fp,
+            steps=tuple(payload["trace"]),
+        )
+    )

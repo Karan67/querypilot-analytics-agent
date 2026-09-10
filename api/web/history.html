@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!--
+  QueryPilot — the history reader, Iteration 7 T7.
+
+  Answers AC4: what was asked, what it cost, how long it took, and what the
+  agent did to get there. Everything the operational store has been recording
+  since T3 was, until this page, only readable by opening SQLite by hand inside
+  a container.
+
+  Static like index.html: no templating, no build step, no npm. Rendered by
+  history.js after one fetch.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QueryPilot — history</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>History</h1>
+      <p class="tagline">
+        Every question this deployment has answered, with what it cost and how
+        it got there. <a href="/">Back to asking</a>.
+      </p>
+    </header>
+
+    <section id="status" hidden aria-live="polite"></section>
+
+    <!--
+      The totals. Deliberately not called a dashboard: four numbers that come
+      straight out of the rows below, so anything surprising can be traced to
+      the answer that caused it rather than taken on trust.
+    -->
+    <section id="summary" hidden></section>
+
+    <section id="answers"></section>
+  </main>
+
+  <footer>
+    <!--
+      AC13 applies to this page too. No accuracy claim appears here: the ok/failed
+      counts below describe what this deployment happened to be asked, which is
+      not a benchmark and must not be read as one. EVALS.md is the accuracy
+      record and it carries its own caveats.
+    -->
+    <!--
+      Reworded at T7 because the first version tripped the very test above: it
+      said "not an accuracy figure", and a page that must not contain the word
+      cannot contain a disclaimer built from it. Unlike the four earlier
+      instances this was rendered text rather than a comment, so stripping
+      comments was no help and the copy had to change. It is better copy for it.
+    -->
+    <p>
+      These are the questions this deployment happened to be asked, not a
+      benchmark. Nothing here was scored against a known-good answer and nothing
+      was held out, so these counts cannot be compared with a measured result.
+      <code>EVALS.md</code> is the record that can, and it carries its own
+      caveats.
+    </p>
+  </footer>
+
+  <script src="/static/history.js"></script>
+</body>
+</html>

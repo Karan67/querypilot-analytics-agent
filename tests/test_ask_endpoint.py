@@ -45,7 +45,10 @@ def _answer(monkeypatch, result: AgentResult) -> None:
     `api.agent.orchestrator.answer` would leave the name `api.main` already
     imported pointing at the real function.
     """
-    monkeypatch.setattr("api.main.answer", lambda question: result)
+    # `**_` absorbs `provider=`, which T3 added so the endpoint can time
+    # `complete()` separately (AC2). A double that pins the old signature would
+    # fail for a reason that has nothing to do with what its test asserts.
+    monkeypatch.setattr("api.main.answer", lambda question, **_: result)
 
 
 def _ok(columns, rows, sql="SELECT 1", steps=()) -> AgentResult:
@@ -117,15 +120,31 @@ def test_ac4_the_only_database_call_in_the_module_is_execute_sql():
     )
 
 
-def test_ac4_the_endpoint_reaches_the_database_only_through_the_agent():
-    """The positive half: `ask()` delegates to `answer()`, which is the only
-    path to `execute_sql()` and therefore to Gate 2."""
-    called = {
+def _calls_in(name: str) -> set[str]:
+    """Plain function calls made inside one function of `api/main.py`."""
+    return {
         node.func.id
-        for node in ast.walk(_function_node("ask"))
+        for node in ast.walk(_function_node(name))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-    assert "answer" in called
+
+
+def test_ac4_the_endpoint_reaches_the_database_only_through_the_agent():
+    """The positive half: the endpoint's only route to the database is
+    `answer()`, which is the only route to `execute_sql()` and therefore to
+    Gate 2.
+
+    **Followed through one level of indirection since Iteration 7 T4.** The
+    cache sits between the endpoint and the agent — that is the entire point of
+    it, since an answer already paid for must not be bought twice — so `ask()`
+    calls `_answer_or_replay()`, which calls `answer()`. Asserting that `ask()`
+    itself names `answer` would now fail for a reason that has nothing to do
+    with the property being protected. Asserting the chain keeps the property
+    and still fails closed: insert another hop and this test goes red until
+    somebody looks at it.
+    """
+    assert "_answer_or_replay" in _calls_in("ask")
+    assert "answer" in _calls_in("_answer_or_replay")
 
 
 def test_ac5_the_deployed_api_does_not_pace():
@@ -292,7 +311,7 @@ def test_a_question_containing_sql_is_not_sanitised(client, monkeypatch):
     """
     seen: list[str] = []
 
-    def capture(question: str) -> AgentResult:
+    def capture(question: str, **_) -> AgentResult:
         seen.append(question)
         return _ok(["count"], [[1]])
 
@@ -372,6 +391,15 @@ def test_the_accuracy_guard_is_not_vacuous():
     A regex that over-matched would empty the document and make every
     assertion pass, which is the failure mode of every "assert not present"
     test.
+
+    **Checks that the markup survived, not that the file stayed long.** The
+    first version required the stripped page to be over half the raw file, and
+    T5 broke it by adding two well-commented sections: the page became 55%
+    commentary and the guard read that as an over-matching regex. Length was
+    only ever a proxy, and a proxy that fails when someone explains their work
+    is training to write less of it down. Naming the elements that must survive
+    tests the actual property -- and it fails on a truly greedy regex, which
+    would take the page down to nothing and every landmark with it.
     """
     import re
 
@@ -379,11 +407,24 @@ def test_the_accuracy_guard_is_not_vacuous():
 
     raw = _WEB_DIR.joinpath("index.html").read_text(encoding="utf-8")
     rendered = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+
     assert "QueryPilot" in rendered
-    assert len(rendered) > len(raw) * 0.5
+    for landmark in (
+        '<form id="ask-form"',
+        'id="question"',
+        'id="result"',
+        'id="sql"',
+        'id="quota"',
+        'id="cache-note"',
+        "<footer>",
+        '<script src="/static/app.js">',
+    ):
+        assert landmark in rendered, f"stripping comments removed {landmark}"
+
     # ... and the raw file really does contain what the stripping removes,
     # so the test above is exercising the strip rather than passing by luck.
     assert "accuracy" in raw.lower()
+    assert len(rendered) < len(raw), "nothing was stripped; the test proves nothing"
     assert "accuracy" not in rendered.lower()
 
 

@@ -26,13 +26,16 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
-import inspect
 import os
 import pathlib
 import statistics
 import sys
 
+from api.agent.fingerprints import (
+    FINGERPRINT_LENGTH,
+    fingerprint,
+    loop_prompt_fingerprint,
+)
 from api.agent.prompts import (
     ADOPTED_RENDERING,
     SCHEMA_DDL,
@@ -93,10 +96,11 @@ __all__ = ["CaseResult", "EvalReport", "main", "run_evaluation", "run_pass"]
 #: Where the log lives.
 EVALS_PATH = pathlib.Path(__file__).resolve().parent.parent / "EVALS.md"
 
-#: Characters of the prompt hash kept for the fingerprint. Twelve hex digits is
-#: 48 bits -- unambiguous for a handful of prompt versions and short enough to
-#: read in a table.
-FINGERPRINT_LENGTH = 12
+#: `FINGERPRINT_LENGTH` is imported at the top of this module rather than defined
+#: here. It moved to `api/agent/fingerprints.py` with the hash itself at
+#: Iteration 7 T4; two constants holding one value is the drift that move
+#: existed to remove. It stays importable from here for readers who have found
+#: it at this name since Iteration 4.
 
 
 #: Reproduces the Iteration 3 baseline: `answer_question`, one call, no tools.
@@ -117,7 +121,7 @@ def prompt_fingerprint(template: str = SYSTEM_TEMPLATE) -> str:
     version. A number recorded against the wrong prompt is worse than one
     recorded against none, because it looks comparable.
     """
-    return hashlib.sha256(template.encode("utf-8")).hexdigest()[:FINGERPRINT_LENGTH]
+    return fingerprint(template)
 
 
 def fingerprint_for(strategy: str, glossary: bool = False) -> str:
@@ -148,17 +152,18 @@ def fingerprint_for(strategy: str, glossary: bool = False) -> str:
     The default is therefore `False`: it is Iteration 4's configuration, and
     calling this with no glossary argument reproduces the recorded value
     exactly. `tests/test_glossary.py` pins both.
+
+    **The recipe itself lives in `api/agent/fingerprints.py` since Iteration 7
+    T4**, because the answer cache needs the same hash and `evals/` is not in the
+    Docker build context -- an API module importing this one would work on the
+    host and fail in the container. The material is unchanged by the move, which
+    is what the pinned values in `tests/test_glossary.py` and
+    `tests/test_schema_renderings.py` assert.
     """
     if strategy == STRATEGY_SINGLE_SHOT:
         return prompt_fingerprint(SYSTEM_TEMPLATE)
 
-    from api.agent.glossary import render_glossary
-    from api.agent.prompts import LOOP_SYSTEM_TEMPLATE, render_transcript
-
-    material = LOOP_SYSTEM_TEMPLATE + inspect.getsource(render_transcript)
-    if glossary:
-        material += render_glossary()
-    return prompt_fingerprint(material)
+    return loop_prompt_fingerprint(glossary=glossary)
 
 
 #: A tiny hand-built schema, hashed to fingerprint a rendering (spec AC7).

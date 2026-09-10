@@ -16,6 +16,12 @@
   --accent: #1f6feb;
   --bad: #a3341f;
   --bad-bg: #fdf2f0;
+  /* A caution, not a failure: the answer still arrives, more slowly. Amber
+     rather than the red used for errors, because AC11 is an explanation and
+     colouring it like a fault would say something the measurement does not. */
+  --warn: #7a5300;
+  --warn-bg: #fdf7e3;
+  --warn-line: #eadfae;
 }
 
 * { box-sizing: border-box; }
@@ -72,6 +78,32 @@ h2 {
 #status { margin: 1.5rem 0 0; padding: .8rem 1rem; border-radius: 8px; }
 #status.busy { background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
 #status.error { background: var(--bad-bg); border: 1px solid #f0cfc7; color: var(--bad); }
+
+/* --- AC10: the slow mode, said out loud ---------------------------------- */
+
+#quota { margin: 1.25rem 0 0; padding: .7rem 1rem; border-radius: 8px; font-size: .9rem; }
+#quota.warn {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+}
+
+/* --- AC8: a cached answer says so ---------------------------------------- */
+
+/*
+ * Above the answer and quiet. It has to be seen before the number is read --
+ * a caveat noticed afterwards has already failed -- but it is a provenance
+ * note, not a warning, and styling it as an alarm would misreport a correct
+ * answer as a problem.
+ */
+#cache-note {
+  margin: 0 0 .75rem;
+  padding: .45rem .7rem;
+  border-left: 3px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: .82rem;
+}
 
 /* --- the answer --------------------------------------------------------- */
 
@@ -147,6 +179,7 @@ footer p { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--l
   :root {
     --ink: #e6edf3; --muted: #8b949e; --line: #2b3138; --bg: #0d1117;
     --panel: #161b22; --accent: #4493f8; --bad: #f0836c; --bad-bg: #2b1512;
+    --warn: #e3b341; --warn-bg: #241d0f; --warn-line: #4a3a15;
   }
   pre { background: #0d1117; }
   #status.error { border-color: #56231b; }
@@ -172,3 +205,54 @@ footer p { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--l
 .chart-bar { fill: var(--accent); opacity: .85; }
 
 .chart-note { color: var(--muted); font-size: .85rem; margin: .5rem 0 0; }
+
+/* --- the history reader (T7, AC4) --------------------------------------- */
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: .75rem;
+  margin: 1.5rem 0;
+}
+
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .9rem 1rem;
+}
+.stat-value { margin: 0; font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; }
+.stat-label { margin: .15rem 0 0; font-size: .78rem; color: var(--muted); }
+.stat-note { margin: .3rem 0 0; font-size: .72rem; color: var(--muted); opacity: .85; }
+
+.answer-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 1rem 1.1rem;
+  margin-bottom: .9rem;
+}
+/* Failure is marked on the card, not only in a tag: a reader scanning for what
+   went wrong should not have to read every row to find it. */
+.answer-card.failed { border-left-color: var(--bad); }
+
+.answer-head { display: flex; gap: 1rem; align-items: baseline; justify-content: space-between; }
+.answer-question { margin: 0; font-weight: 600; }
+.answer-when { margin: 0; font-size: .74rem; color: var(--muted); white-space: nowrap; }
+
+.answer-tags { margin: .55rem 0 0; display: flex; flex-wrap: wrap; gap: .35rem; }
+.tag {
+  font-size: .72rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .1rem .5rem;
+}
+.tag.bad { color: var(--bad); border-color: var(--bad); }
+
+.answer-card .panel { margin: .7rem 0 0; padding: 0; border: 0; background: none; }
+.answer-card summary { font-size: .78rem; color: var(--muted); cursor: pointer; }
+.answer-card pre { margin: .45rem 0 0; }
+
+.provenance { margin: .6rem 0 0; font-size: .7rem; color: var(--muted); opacity: .8; }
