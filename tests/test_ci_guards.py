@@ -785,3 +785,62 @@ def test_the_gate_runs_with_no_provider_key():
     assert job_env["GROQ_API_KEY"] == "", (
         f"the gate must spend no tokens; found {job_env['GROQ_API_KEY']!r}"
     )
+
+
+# --- Iteration 9 T5 (B-13): a local run keeps its evidence -------------------
+
+
+def test_local_runs_write_a_junit_report_by_default():
+    """**The mechanism B-13 needed, asserted so it cannot be quietly dropped.**
+
+    B-13's entry says *"what to do when it next happens: read the assertion
+    message"*, and the message has never been read. Both observed occurrences
+    were seen through `-q`, which truncates to `AssertionError: refer...`, and a
+    re-run passes and takes the evidence with it. A third occurrence during
+    Iteration 9 was lost the same way.
+
+    The junit report carries the whole message under `-q`. This asserts that a
+    plain `pytest` writes one, so the evidence exists before anyone knows they
+    want it.
+
+    **Read from the parsed config, not by grepping the file.** The long comment
+    in `pytest.ini` explaining why the flag is there would satisfy a substring
+    search on its own, which is this repository's single most repeated bug --
+    five instances in five costumes, per `HANDOFF.md` section 6.
+    """
+    import configparser
+    import pathlib
+    import shlex
+
+    parser = configparser.ConfigParser()
+    parser.read_string(pathlib.Path("pytest.ini").read_text(encoding="utf-8"))
+    addopts = shlex.split(parser.get("pytest", "addopts", fallback=""))
+
+    junit = [opt for opt in addopts if opt.startswith("--junitxml")]
+    assert junit, (
+        f"pytest.ini's addopts no longer writes a junit report, so a local "
+        f"failure is only as legible as the terminal it scrolled past (B-13). "
+        f"addopts is {addopts!r}"
+    )
+    assert len(junit) == 1, f"more than one --junitxml in addopts: {junit}"
+
+
+def test_the_ci_workflow_overrides_the_local_junit_path():
+    """The two report paths must not collide, and CI's must win.
+
+    `ci/require_executed_tests.py` reads the path CI passes. `addopts` is
+    prepended to the command line, so a `--junitxml` on the command line takes
+    precedence -- verified by running pytest both ways during T5, not inferred
+    from the documentation.
+
+    If CI ever stopped passing its own path, it would silently start reading
+    whatever `pytest.ini` wrote, which is inside the workspace and not uploaded
+    as an artifact. This fails first.
+    """
+    import pathlib
+
+    workflow = pathlib.Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "--junitxml=" in workflow or '--junitxml="$JUNIT_REPORT"' in workflow, (
+        "the workflow no longer passes its own --junitxml, so the floor check "
+        "would read pytest.ini's local report instead of CI's"
+    )

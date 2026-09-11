@@ -22,7 +22,12 @@ from sqlglot import exp
 
 import pytest
 
-from api.db.execution import MAX_ROWS, execute_sql
+from api.db.execution import (
+    CATEGORY_CONNECTION_ERROR,
+    MAX_ROWS,
+    ExecutionResult,
+    execute_sql,
+)
 from evals.dataset import MAX_QUESTIONS, MIN_QUESTIONS, TIERS, load_dataset
 from evals.scoring import normalise_value
 
@@ -92,9 +97,35 @@ def test_ac26_the_union_question_exercises_recursive_branch_validation(dataset):
 # --- §6: a gold query that does not work defines wrong truth ---------------
 
 
+def describe_gold_result(question_id: str, result) -> str:
+    """One diagnostic line for one reference query (Iteration 9 T5, B-13).
+
+    **Both tests below report through this, and that is the point.** They share
+    a module-scoped fixture, so one intermittent execution failure fails the
+    pair — but only `test_every_gold_query_executes` interpolated the category
+    and the error. The other named ids alone, and was legible only because its
+    partner happened to fail alongside it and say why.
+
+    B-13 has been open since Iteration 8 T2 precisely because no single
+    un-truncated occurrence was ever read. A diagnostic that depends on a second
+    test failing in the same run is one accident away from being useless, so the
+    line is built in one place and carries **every field that distinguishes the
+    hypotheses**: `category` separates a connection failure from a broken query,
+    and `rows` separates an empty result from a failed one.
+
+    Taken as a function so it can be asserted on directly. The alternative is
+    proving a message by making a test fail, and a test that must fail to prove
+    itself is one nobody runs.
+    """
+    return (
+        f"{question_id}: ok={result.ok} rows={result.row_count} "
+        f"category={result.category or '-'} error={result.error or '-'}"
+    )
+
+
 def test_every_gold_query_executes(dataset, gold_results):
     failures = [
-        f"{q.id}: {gold_results[q.id].category}: {gold_results[q.id].error}"
+        describe_gold_result(q.id, gold_results[q.id])
         for q in dataset.questions
         if not gold_results[q.id].ok
     ]
@@ -104,9 +135,17 @@ def test_every_gold_query_executes(dataset, gold_results):
 def test_every_gold_query_returns_at_least_one_row(dataset, gold_results):
     """**A zero-row gold is a broken question, not a hard one.** It makes every
     wrong answer that also returns nothing score as correct — and "returns
-    nothing" is exactly what a confused model does."""
-    empty = [q.id for q in dataset.questions if gold_results[q.id].row_count == 0]
-    assert not empty, f"reference queries returning no rows: {empty}"
+    nothing" is exactly what a confused model does.
+
+    Reports through `describe_gold_result` so this is diagnosable on its own,
+    rather than only when its partner fails in the same run (B-13).
+    """
+    empty = [
+        describe_gold_result(q.id, gold_results[q.id])
+        for q in dataset.questions
+        if gold_results[q.id].row_count == 0
+    ]
+    assert not empty, "reference queries returning no rows:\n" + "\n".join(empty)
 
 
 def test_no_gold_query_is_truncated(dataset, gold_results):
@@ -453,3 +492,57 @@ def test_ac12_a_drifted_fingerprint_aborts(dataset, configured_database):
 def test_ac12_the_fingerprint_covers_the_tables_the_corpus_leans_on(dataset):
     for relation in ("track", "invoice", "invoice_line", "customer"):
         assert relation in dataset.fingerprint
+
+
+# --- Iteration 9 T5 (B-13): the diagnostic is asserted, not hoped for --------
+
+
+def test_the_gold_failure_line_names_the_category_and_the_error():
+    """**The message B-13 has been waiting six weeks to read.**
+
+    Constructed rather than sampled: the whole difficulty with B-13 is that its
+    failure cannot be provoked, so the line it would print has to be provable
+    without one. `ExecutionResult` is built by hand with the shape the surviving
+    hypothesis predicts — a client-side connection failure that never reached
+    PostgreSQL — and the line must name it.
+
+    `category` is the field that decides what to do next. `connection_error`
+    means the environment; `database_error` means a reference query is genuinely
+    broken and the dataset is wrong. Those lead to opposite actions, and a
+    message naming only the question id distinguishes neither.
+    """
+    result = ExecutionResult(
+        ok=False,
+        category=CATEGORY_CONNECTION_ERROR,
+        error="Could not connect to the database.",
+    )
+
+    line = describe_gold_result("easy-003", result)
+
+    assert "easy-003" in line
+    assert CATEGORY_CONNECTION_ERROR in line, (
+        f"the line must name the category, which is what separates an "
+        f"environment failure from a broken reference query: {line!r}"
+    )
+    assert "Could not connect" in line
+
+
+def test_the_gold_failure_line_distinguishes_empty_from_failed():
+    """A zero-row gold and a failed gold are different defects.
+
+    The two tests that use this line report different conditions, so the line
+    has to tell them apart on its own. A query that ran fine and returned
+    nothing says `ok=True rows=0` with no category; one that never ran says
+    `ok=False` and names why.
+    """
+    ran_but_empty = ExecutionResult(ok=True, columns=("n",), rows=(), row_count=0)
+    never_ran = ExecutionResult(
+        ok=False, category=CATEGORY_CONNECTION_ERROR, error="boom"
+    )
+
+    empty_line = describe_gold_result("hard-001", ran_but_empty)
+    failed_line = describe_gold_result("hard-001", never_ran)
+
+    assert "ok=True" in empty_line and "rows=0" in empty_line
+    assert "ok=False" in failed_line
+    assert empty_line != failed_line

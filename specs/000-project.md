@@ -343,6 +343,27 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 6 | Frontend | Demoable to a non-technical person — **done 2026-09-09**, see `009-frontend.md` |
 | 7 | Hardening | History, ~~feedback,~~ latency and cost logging, rate limiting, caching — see the amendment below |
 | 8 | Ship | ~~Deployed~~, evals running in CI, README with honest numbers, ~~demo video~~, **and feedback** — see the amendment below |
+| 9 | The board | B-6, B-13 and B-14 each leave §8's board or carry a dated reason for staying — see [`012-board.md`](012-board.md). **Added 2026-09-11; see the note below** |
+
+> **EXTENDED 2026-09-11, at Iteration 9 T1.** This map ended at 8, because it
+> was written as a route to a shipped system and the system shipped. What it did
+> not anticipate is that Iteration 8 would close by *adding* two items to §8's
+> board as fast as it discharged two — B-13 and B-14 — both filed by tests that
+> noticed something and declined to conclude.
+>
+> **The row above is added rather than the map being quietly outgrown**, which is
+> the same reasoning the 2026-09-10 amendment below gives for striking text
+> instead of rewriting it: a plan silently extended to match what was built
+> stops being a plan. An iteration that exists only in its own spec, with no row
+> here, would be invisible to anyone reading the charter for the shape of the
+> project.
+>
+> **Its "done when" is deliberately not a feature.** Iteration 9 ships no new
+> capability; two of its three measurements argue for *less* code than exists
+> today, and its criterion is that three carried debts stop being carried
+> silently. `012-board.md` §6 records the risk that goes with that — a
+> maintenance iteration is the easiest place to do work because it is available
+> rather than because it is warranted.
 
 > **AMENDED 2026-09-10, at Iteration 8 T1: deployment and the demo video are
 > deferred.** The original text is struck above rather than rewritten, for the
@@ -1047,6 +1068,47 @@ whether the fixture should distinguish *connectivity* from *gold-query validity*
 evidence about whether a reference query is correct. That option was offered and
 deliberately not taken here, on the grounds that a retry is a place a real
 failure can hide and there is not yet evidence to justify one.
+
+> **ITERATION 9 T5, 2026-09-11: diagnosed-if-it-recurs, and given a budget.**
+> No retry was added; the reasoning above is unchanged and was reaffirmed.
+> Three things were done instead.
+>
+> **1. It reproduced, and the trace was lost the same way as before.** A full
+> local run failed the pair once on 2026-09-11 — the first occurrence in 21 runs
+> that day — and the assertion was destroyed by a `tail -4` before it could be
+> read. That is the third occurrence and the third lost trace, and it is the
+> argument for the mechanism below rather than a documented habit. What survived
+> matched the recorded signature exactly: a re-run passed, `docker compose logs
+> db` showed only the intended errors from `tests/test_validator_gates.py`, and
+> both containers reported `restarts: 0`. **Whatever failed still never reached
+> Postgres.**
+>
+> **2. The evidence now persists by default.** `pytest.ini` writes
+> `--junitxml=.pytest_cache/junit.xml` on every local run. The junit report
+> carries the complete assertion under `-q`, which the terminal does not, and CI
+> has uploaded one since Iteration 8 T4. And `describe_gold_result` in
+> `tests/test_eval_questions.py` now builds one diagnostic line for **both**
+> tests, so `test_every_gold_query_returns_at_least_one_row` no longer reports
+> bare ids — it had been legible only because its partner failed alongside it
+> and said why.
+>
+> **3. The observation budget: 20 consecutive clean CI runs.** If B-13 does not
+> reproduce within them, it is closed permanently as a Windows Docker Desktop
+> virtualisation artefact rather than carried indefinitely.
+>
+> **What counts, resolved as plan D-6.** A run advances the budget only if the
+> gold-query pair actually **executed and passed**. A build that fails for an
+> unrelated reason — a syntax error, a deterministic test failure, a container
+> that never became healthy — **neither resets nor advances** the count: it is
+> not evidence about database connection stability in either direction. A rule
+> that reset on unrelated failures would make the budget unreachable in a noisy
+> week; one that counted them would make it meaningless.
+>
+> **Counted by hand from this entry**, not by a mechanical counter — that would
+> be CI infrastructure built for a debt we expect to close. The budget starts
+> from the first CI run of Iteration 9; the last run before it is
+> **34533259067** (the merge of PR #10, 2026-09-10), and the nine green runs
+> before that already stand as non-reproductions under the same rule.
 
 ### B-11 — Production deployment
 
