@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from api.agent.fingerprints import deployed_fingerprints
+from api.agent.fingerprints import DeployedPrompt, deployed_fingerprints
 from api.agent.orchestrator import answer
 from api.agent.prompts import ADOPTED_RENDERING
 from api.agent.tools import execute_sql
@@ -641,7 +641,7 @@ class _Answered:
     prompt_fp: str = ""
 
 
-def _deployed_fingerprints() -> tuple[str, str] | None:
+def _deployed_fingerprints() -> DeployedPrompt | None:
     """`(schema_fp, prompt_fp)` for the configuration this API actually sends.
 
     Delegates the schema read to `api/agent/`, which is where reading a schema
@@ -683,7 +683,7 @@ def _answer_or_replay(question: str) -> _Answered:
     """
     timed: list[_TimedProvider] = []
 
-    def compute():
+    def compute(schema=None):
         try:
             provider = _TimedProvider(get_provider())
         except LLMError:
@@ -696,6 +696,7 @@ def _answer_or_replay(question: str) -> _Answered:
                 question,
                 rendering=_DEPLOYED_RENDERING,
                 glossary=_DEPLOYED_GLOSSARY,
+                schema=schema,
             )
 
         timed.append(provider)
@@ -704,15 +705,25 @@ def _answer_or_replay(question: str) -> _Answered:
             provider=provider,
             rendering=_DEPLOYED_RENDERING,
             glossary=_DEPLOYED_GLOSSARY,
+            schema=schema,
         )
 
     fingerprints = _deployed_fingerprints()
     if fingerprints is None:
+        # No schema was read, so there is nothing to hand on: `answer()` reads
+        # its own and reports the unreachable database in its own category.
         return _Answered(compute(), False, timed[0] if timed else None)
 
-    schema_fp, prompt_fp = fingerprints
+    # **Carried, never inspected.** T3 threads the one schema read from
+    # `api/agent/` through to `api/agent/`; this module holds the value and
+    # names neither its type nor any attribute of it, which is what keeps AC4's
+    # two structural assertions true -- no `api.db` import, and no database
+    # call from this module.
+    schema, schema_fp, prompt_fp = fingerprints
     key = cache.cache_key(question, schema_fp, prompt_fp)
-    result, cache_hit = cache.get_or_compute(key, compute, _is_cacheable)
+    result, cache_hit = cache.get_or_compute(
+        key, lambda: compute(schema), _is_cacheable
+    )
     return _Answered(
         result, cache_hit, timed[0] if timed else None, schema_fp, prompt_fp
     )

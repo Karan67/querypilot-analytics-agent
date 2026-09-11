@@ -577,17 +577,23 @@ def test_the_eval_runner_cannot_reach_the_answer_cache():
     )
 
 
-def test_the_schema_cache_is_shared_with_the_eval_runner_deliberately():
+def test_the_schema_path_is_shared_with_the_eval_runner_deliberately():
     """The other half, and the asymmetry is the point.
 
-    T6 put `cached_schema()` in the orchestrator, so an eval run introspects
-    once instead of once per question. That **is** shared, and it is fine for
-    the reason the answer cache is not: it returns the same schema either way,
-    so it changes no answer, no token count and no recorded number -- only how
-    many catalog round trips the run makes. `EVALS.md` records no latency, so
-    there is nothing for it to perturb.
+    The orchestrator reads the schema through the same function an eval run
+    does, so both see one definition of what the database looks like. That **is**
+    shared, and it is fine for the reason the answer cache above is not: it
+    returns the same schema either way, so it changes no answer, no token count
+    and no recorded number. `EVALS.md` records no latency, so there is nothing
+    for it to perturb.
 
-    Pinned so the sharing stays a decision rather than becoming a discovery.
+    **This test was named after `schema_cache` until Iteration 9 T4 retired that
+    module (B-14), and it was updated rather than deleted.** The asymmetry it
+    pins is a property of the project, not of the cache: the answer cache must
+    stay unreachable from `evals/`, and the schema path must stay shared with it.
+    Deleting an assertion because the thing it named moved is how a guarantee
+    quietly narrows -- `HANDOFF.md` §6 records five absence-assertions that
+    rotted this way.
     """
     import ast
     import pathlib
@@ -599,4 +605,8 @@ def test_the_schema_cache_is_shared_with_the_eval_runner_deliberately():
         if isinstance(node, ast.ImportFrom) and node.module
         for alias in node.names
     }
-    assert "api.db.schema_cache.cached_schema" in imported
+    assert "api.db.introspection.get_schema" in imported, (
+        f"the orchestrator no longer reads the schema through the shared "
+        f"introspection path; its api.db imports are "
+        f"{sorted(m for m in imported if m.startswith('api.db'))}"
+    )

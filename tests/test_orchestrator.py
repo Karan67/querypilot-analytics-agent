@@ -394,6 +394,90 @@ def test_full_mode_includes_the_schema_in_the_system_prompt():
     assert "CREATE TABLE track" in system
 
 
+# --- Iteration 9 T3: one schema read per request ----------------------------
+
+
+def test_a_supplied_schema_is_used_instead_of_reading_one(monkeypatch):
+    """`answer(schema=...)` spends no catalog read (T3).
+
+    The point of the parameter is that `/ask` has already read the schema to
+    build its answer-cache key, so the agent should not read it again. Proven by
+    making a second read impossible rather than by counting one: `get_schema` is
+    replaced with something that raises, so the test fails loudly if the
+    supplied schema is ignored.
+    """
+    from api.db.introspection import get_schema
+
+    schema = get_schema()
+
+    def _must_not_be_called():
+        raise AssertionError("answer() read the schema despite being given one")
+
+    monkeypatch.setattr("api.agent.orchestrator.get_schema", _must_not_be_called)
+
+    provider = Scripted(act("execute_sql", "SELECT count(*) FROM track"))
+    result = answer("q", provider=provider, schema_mode=SCHEMA_FULL, schema=schema)
+
+    assert result.ok is True
+    system, _ = provider.prompts[0]
+    assert "track(" in system
+
+
+def test_a_withheld_run_reads_no_schema_even_when_handed_one(monkeypatch):
+    """A withheld run pays for no catalog read, and `/ask` cannot make it.
+
+    **This test claims less than its first draft did, because a mutation showed
+    the first draft was passing for the wrong reason.** It originally asserted
+    that a supplied schema stays out of a withheld prompt; weakening `answer()`'s
+    condition from `schema_mode` to `schema is not None` left it green, because
+    `build_loop_system` substitutes the withheld note on `schema_mode` by itself
+    (`api/agent/prompts.py`). The prompt property is real and is already covered
+    by `test_blind_mode_omits_the_schema_from_the_system_prompt`; asserting it
+    here as though it were this guard's doing is the shape `HANDOFF.md` §6 calls
+    *a default elsewhere silently standing in for the code under test*.
+
+    What this condition uniquely controls is whether a **read happens**, so that
+    is what is asserted: `get_schema` raises, and the run must complete anyway.
+
+    **Both cases are needed, and the second draft still did not discriminate.**
+    Supplying a schema makes the read unreachable whatever the guard says, so a
+    mutation that dropped the mode check entirely also stayed green. The case
+    that catches it is withheld mode with **nothing** supplied, which is how the
+    eval harness actually invokes it. Both run here.
+
+    The prompt assertions stay as a cheap second check, now labelled as
+    `build_loop_system`'s property rather than this one's.
+    """
+    from api.db.introspection import get_schema
+
+    schema = get_schema()
+
+    def _must_not_be_called():
+        raise AssertionError("a withheld run read the schema it was told to ignore")
+
+    monkeypatch.setattr("api.agent.orchestrator.get_schema", _must_not_be_called)
+
+    # The discriminating case: nothing supplied, so only the mode guard stands
+    # between this run and a catalog read. This is how `evals/` invokes it.
+    provider = Scripted(act("execute_sql", "SELECT count(*) FROM track"))
+    result = answer("q", provider=provider, schema_mode=SCHEMA_WITHHELD)
+
+    assert result.ok is True
+    system, _ = provider.prompts[0]
+    assert "NOT been shown the schema" in system
+
+    # And handed one anyway, as `/ask` now always does. The read is still not
+    # made; that the schema also stays out of the prompt is `build_loop_system`'s
+    # doing, kept here as a second check and attributed rather than claimed.
+    provider = Scripted(act("execute_sql", "SELECT count(*) FROM track"))
+    result = answer("q", provider=provider, schema_mode=SCHEMA_WITHHELD, schema=schema)
+
+    assert result.ok is True
+    system, _ = provider.prompts[0]
+    assert "track(" not in system
+    assert "NOT been shown the schema" in system
+
+
 def test_ac4b_the_retired_action_reaches_no_database_path():
     """**The test that would have caught T1's near-miss, and the only one that
     could have.**

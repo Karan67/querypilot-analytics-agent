@@ -190,8 +190,42 @@ begins.
   code (Q-D).
 - **AC8** — **A cached answer is visibly cached.** Presenting stale data as fresh
   is the analytics equivalent of the accuracy claim AC13 banned from the UI.
-- **AC9** — The schema is introspected once and reused (§2.4), and the reuse is
-  invalidated on a schema change rather than trusted forever.
+- ~~**AC9** — The schema is introspected once and reused (§2.4), and the reuse is
+  invalidated on a schema change rather than trusted forever.~~
+
+  > **RETIRED 2026-09-11, at Iteration 9 T4 (B-14).** The schema is no longer
+  > reused: `api/db/schema_cache.py` is gone, and every request introspects.
+  > The text is struck rather than rewritten, for the reason charter §6's
+  > deployment amendment gives — *a commitment quietly edited to match what was
+  > built is the failure `EVALS.md`'s append-only rule exists to prevent.*
+  >
+  > **The criterion did not rot; the thing underneath it moved.** This AC was
+  > written when §2.4 measured `get_schema()` at **143ms** and the cache's own
+  > docstring later recorded **99ms** against a 3-round-trip probe — an 18:1
+  > margin. Iteration 8 T5 discharged B-10 by replacing SQLAlchemy's `Inspector`
+  > with three catalog queries through `execute_sql()`, taking introspection to
+  > **9 round trips and 19.98ms**. `012-board.md` §2.1 then measured what the
+  > cache was still buying a whole request: **13.34ms of one measured between
+  > 1,431ms and 5,901ms**, or 0.4%–0.9%, with no load at which that changes —
+  > the provider's 8,000-token minute bucket caps throughput at about seven
+  > questions a minute.
+  >
+  > Each of 143ms, 99ms and 19.98ms was correct when taken. Three measurements
+  > of one operation, and the third invalidated a design the first two justified.
+  >
+  > **What was given up, stated rather than glossed.** An answer-cache hit was
+  > 6ms and is now 9 catalog round trips; the cold/warm distinction is gone,
+  > because there is no cache to be warm. What was bought is 718 lines — a
+  > 200-line module and 518 lines of tests — plus the one autouse isolator in
+  > `tests/conftest.py` that could hold something *false* rather than merely
+  > stale.
+  >
+  > **AC9's other half held and is why this was safe.** The reuse had to be
+  > invalidated on a schema change; removing the reuse satisfies that trivially,
+  > and the byte-identical rendering gate proved nothing else moved — the
+  > `compact` and `ddl` renderings and the fingerprints `0d280c367c5e` and
+  > `91036a089282` all reproduce unchanged. `012-board.md` AC5 made that a stop
+  > condition, not a goal.
 
 ### Degrading honestly
 

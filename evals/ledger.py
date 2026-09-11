@@ -72,7 +72,33 @@ class DailySpend:
         return not self.reconciled
 
     def describe(self, token_limit: int) -> str:
-        source = "provider-reconciled" if self.reconciled else "local estimate"
+        """What has been spent today, and how much of that this can actually see.
+
+        **The blind spot is named rather than left to the word "floor"**
+        (Iteration 9 T6, B-6). The gap was measured on 2026-09-11: this ledger
+        read **0 tokens for the day** while the deployed API had already spent
+        **3,448**, and 23,131 across its whole recorded history. Nothing was
+        wrong; the API simply does not write here and cannot be made to. Its
+        container has no `.querypilot`, and `evals/` is not in the runtime image
+        at all -- the build context is `./api` -- so closing it from that side
+        would mean a bind mount plus shipping the benchmark harness into the
+        image, to fix a gap smaller than the guard's own error.
+
+        That last point is the one worth carrying: the pre-flight projection
+        assumes three provider calls per question where the loop uses one, so it
+        runs about **3x over reality** and has already refused runs that would
+        have fit. A few thousand unseen tokens sit well inside a ~60,000-token
+        over-estimate, which is why this is documented and not plumbed.
+
+        The note is dropped once a 429 has reconciled the figure, because the
+        provider's own count includes everything this cannot see -- the API,
+        another checkout, a colleague sharing the key. That is the only thing
+        that closes the gap, and it is what `reconcile()` is for.
+        """
+        if self.reconciled:
+            source = "provider-reconciled"
+        else:
+            source = "local estimate; eval runs only, not the API or another checkout"
         return (
             f"today: {self.tokens:,}/{token_limit:,} tokens, "
             f"{self.requests:,} requests ({source})"

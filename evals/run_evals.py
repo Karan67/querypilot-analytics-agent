@@ -338,6 +338,64 @@ def describe_rate_limits(provider) -> str:  # noqa: D401
     return snapshot.summary()
 
 
+#: The limit code that means the *day's* tokens are gone.
+#:
+#: Named rather than spelled inline because the other two codes must not
+#: reconcile: `RPM`/`TPM` refuse for a bucket that refills in a minute, and
+#: `RPD` counts requests rather than tokens. Writing a request count into a
+#: token ledger would be worse than the estimate it replaced.
+TOKENS_PER_DAY_CODE = "TPD"
+
+
+def used_tokens_from_refusals(reports) -> int | None:
+    """The provider's own daily total, from any refusal in a finished run.
+
+    **The figure B-6 exists to capture.** A 429 body names `Used`, which counts
+    spend this project cannot see -- the deployed API, another checkout, a
+    colleague sharing the key -- and it is the only thing that turns the ledger
+    from a floor into the truth. It arrives in `CaseResult.error`, because the
+    orchestrator preserves the provider's message verbatim (`error=str(exc)`).
+
+    **`max`, not the last one** (resolved D-4). A run that hits the daily
+    ceiling refuses every question after the first, so there are many of these
+    and the provider's count only rises within a day. Taking the maximum is
+    order-independent: it survives a change in how reports are iterated, which
+    "the last one" would not, and it cannot be dragged backwards by a refusal
+    that happened to be scored later.
+
+    `None` when no refusal named TPD, which includes the ordinary case of a run
+    that was never refused at all.
+    """
+    used = [
+        detail[2]
+        for report in reports
+        for case in report.cases
+        if case.category == CATEGORY_RATE_LIMITED
+        for detail in [limit_from_message(case.error)]
+        if detail is not None and detail[0] == TOKENS_PER_DAY_CODE
+    ]
+    return max(used) if used else None
+
+
+def reconcile_from_refusals(reports, token_limit: int) -> None:
+    """Correct the ledger from a mid-run refusal, and say so.
+
+    Prints rather than returning a value because this is a diagnostic the next
+    run's pre-flight depends on: `describe()` will report `provider-reconciled`
+    instead of `local estimate`, and an operator should be able to see where
+    that came from.
+    """
+    used = used_tokens_from_refusals(reports)
+    if used is None:
+        return
+
+    spend = ledger.reconcile(used)
+    print(
+        f"  Ledger reconciled from a refusal during the run: "
+        f"{spend.describe(token_limit)}"
+    )
+
+
 def probe_rate_limits(provider) -> str:
     """One minimal call, to learn the limits *before* the run commits to them.
 
@@ -1433,6 +1491,22 @@ def main(argv: list[str] | None = None) -> int:
     if not args.ignore_daily_spend and spent_now.measured:
         after = ledger.record(spent_now.total_tokens, calls_made)
         print(f"  {after.describe(args.daily_token_limit)}")
+
+    # B-6, Iteration 9 T6. A refusal *during* a run carries the provider's own
+    # daily total, and until now only the pre-flight probe ever reconciled from
+    # one -- so a run refused at question 17 counted its rate-limited cases,
+    # refused to record the number, and threw away the one figure worth keeping.
+    #
+    # **After `record()`, never before.** `record()` adds and `reconcile()`
+    # overwrites, so reconciling last leaves the provider's stated total
+    # standing rather than having the local estimate added on top of it. There
+    # is no spend after a TPD refusal to lose by overwriting: the quota is gone.
+    #
+    # `tests/test_daily_quota_guards.py` drives `main()` to prove this line is
+    # actually reached: deleting it once left every direct test of the helpers
+    # green, which is the adoption gap the schema cache taught this project.
+    if not args.ignore_daily_spend:
+        reconcile_from_refusals(reports, args.daily_token_limit)
 
     rate_limited = sum(
         1

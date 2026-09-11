@@ -29,6 +29,7 @@ from api.agent.prompts import (
     SCHEMA_DDL,
     SCHEMA_FULL,
     LOOP_ACTIONS,
+    Schema,
     build_loop_system,
     render_rows,
     render_schema_ddl,
@@ -49,8 +50,7 @@ from api.db.execution import (
     ExecutionResult,
     execute_sql,
 )
-from api.db.introspection import SchemaIntrospectionError
-from api.db.schema_cache import cached_schema
+from api.db.introspection import SchemaIntrospectionError, get_schema
 from api.llm.base import LLMError, LLMProvider, RateLimitError, TokenUsage
 from api.llm.counting import usage_for_call
 
@@ -307,7 +307,7 @@ def _run_get_schema(state: _State) -> Step:
     """Dispatch `get_schema`. This is the action the withheld-schema harness
     exists to exercise -- measured chosen in 10 of 12 cases (plan §2.2)."""
     try:
-        rendered = render_schema_ddl(cached_schema())
+        rendered = render_schema_ddl(get_schema())
         observation = "Observation from get_schema:\n\n" + rendered
         return Step(attempt=state.calls, action="get_schema", ok=True, observation=observation)
     except SchemaIntrospectionError as exc:
@@ -363,6 +363,7 @@ def answer(
     max_calls: int = MAX_PROVIDER_CALLS,
     rendering: str = ADOPTED_RENDERING,
     glossary: bool = True,
+    schema: Schema | None = None,
 ) -> AgentResult:
     """Answer one question, retrying against observed failures.
 
@@ -387,6 +388,12 @@ def answer(
             no opportunity to use anything it learns -- so the only variable
             between it and a full run is the budget. `answer_question` would
             have been a worse control, since its prompt differs too.
+        schema: an already-read schema, so one request reads it once (T3).
+            Optional and defaulted, so every existing caller -- the eval
+            runner, the loop tests, the withheld harness -- is unaffected.
+            **Ignored unless `schema_mode` is `SCHEMA_FULL`**: the mode decides
+            whether the agent is told the schema, and a caller cannot override
+            that by supplying one.
 
     Returns:
         An `AgentResult` carrying the full trace (AC21-AC23).
@@ -409,16 +416,36 @@ def answer(
 
     state = _State(question=question)
 
-    schema = None
+    # **Read at most once per request (Iteration 9 T3).** A caller that has
+    # already read the schema -- `/ask` reads it to build the answer-cache key,
+    # before it knows whether it will need an answer at all -- hands it over
+    # rather than making the path read it a second time. Measured: that second
+    # read was 3 of a warm miss's 9 catalog round trips, and would have been 9
+    # of 21 once T4 removes the cache.
+    #
+    # **The guard is `schema_mode`, not `schema is not None`**, so a withheld
+    # run neither reads a schema nor uses one it was handed. That matters now
+    # that `/ask` passes `schema=` on every call.
+    #
+    # **It is the second guard, not the only one**, and mutation testing is how
+    # that was established rather than assumed: weakening this condition to
+    # `schema is not None` left the withheld tests green, because
+    # `build_loop_system` independently substitutes the withheld note whenever
+    # `schema_mode == SCHEMA_WITHHELD`. What this condition uniquely prevents is
+    # the *read* -- a withheld run paying for a catalog round trip it will not
+    # use -- which is what the original code guarded and what the test asserts.
+    prompt_schema = None
     if schema_mode == SCHEMA_FULL:
-        try:
-            schema = cached_schema()
-        except SchemaIntrospectionError as exc:
-            return _failure(
-                state,
-                CATEGORY_CONNECTION_ERROR,
-                f"Could not read the schema to build a prompt: {exc}",
-            )
+        prompt_schema = schema
+        if prompt_schema is None:
+            try:
+                prompt_schema = get_schema()
+            except SchemaIntrospectionError as exc:
+                return _failure(
+                    state,
+                    CATEGORY_CONNECTION_ERROR,
+                    f"Could not read the schema to build a prompt: {exc}",
+                )
 
     if provider is None:
         try:
@@ -433,7 +460,7 @@ def answer(
     # Fixed for the whole run. Everything learned afterwards arrives through the
     # transcript (resolved Q-C), so there is one prompt shape rather than one
     # that mutates as the run proceeds.
-    system = build_loop_system(schema, schema_mode, rendering, glossary)
+    system = build_loop_system(prompt_schema, schema_mode, rendering, glossary)
 
     while state.calls < max_calls:
         user = render_transcript(

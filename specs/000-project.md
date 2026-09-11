@@ -343,6 +343,39 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 6 | Frontend | Demoable to a non-technical person — **done 2026-09-09**, see `009-frontend.md` |
 | 7 | Hardening | History, ~~feedback,~~ latency and cost logging, rate limiting, caching — see the amendment below |
 | 8 | Ship | ~~Deployed~~, evals running in CI, README with honest numbers, ~~demo video~~, **and feedback** — see the amendment below |
+| 9 | The board | B-6, B-13 and B-14 each leave §8's board or carry a dated reason for staying — see [`012-board.md`](012-board.md). **Closed 2026-09-11**, merged as PR #11 |
+
+> **EXTENDED 2026-09-11, at Iteration 9 T1.** This map ended at 8, because it
+> was written as a route to a shipped system and the system shipped. What it did
+> not anticipate is that Iteration 8 would close by *adding* two items to §8's
+> board as fast as it discharged two — B-13 and B-14 — both filed by tests that
+> noticed something and declined to conclude.
+>
+> **The row above is added rather than the map being quietly outgrown**, which is
+> the same reasoning the 2026-09-10 amendment below gives for striking text
+> instead of rewriting it: a plan silently extended to match what was built
+> stops being a plan. An iteration that exists only in its own spec, with no row
+> here, would be invisible to anyone reading the charter for the shape of the
+> project.
+>
+> **Its "done when" is deliberately not a feature.** Iteration 9 ships no new
+> capability; two of its three measurements argue for *less* code than exists
+> today, and its criterion is that three carried debts stop being carried
+> silently. `012-board.md` §6 records the risk that goes with that — a
+> maintenance iteration is the easiest place to do work because it is available
+> rather than because it is warranted.
+>
+> **CLOSED 2026-09-11, merged as PR #11.** T1-T7, all 12 acceptance criteria.
+> **B-14 discharged** — the schema cache is retired, on a measurement of a whole
+> request rather than of the module. **B-6 half discharged** — mid-run 429
+> reconciliation ships and the live leg stays open, with the entry naming which
+> half. **B-13 budgeted** — 20 clean CI runs, then closed as environmental.
+>
+> It is the first iteration to end with **fewer tests than it began**: 19 added,
+> 22 deleted with the module they covered. The criterion was that three debts
+> stop being carried silently, and none of them left quietly — one was
+> discharged, one was halved and said so, and one was given a countable
+> deadline.
 
 > **AMENDED 2026-09-10, at Iteration 8 T1: deployment and the demo video are
 > deferred.** The original text is struck above rather than rewritten, for the
@@ -410,7 +443,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-2~~ | ~~AC13's glossary-off control arm~~ | Iteration 5 T7 | **discharged 2026-09-08** |
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
-| **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | open — accepted debt |
+| **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | **half discharged 2026-09-11** at Iteration 9 T6 — mid-run reconciliation ships; the live leg stays open |
 | ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
 | ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
@@ -418,8 +451,8 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
-| **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — investigated, not reproduced |
-| **B-14** | Does the schema cache still earn its weight after B-10? | Iteration 8 T5 | open — its own test asked |
+| **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — **budgeted 2026-09-11** at Iteration 9 T5: 20 clean CI runs, then closed as environmental |
+| ~~B-14~~ | ~~Does the schema cache still earn its weight after B-10?~~ | Iteration 8 T5 | **discharged 2026-09-11** at Iteration 9 T4 — it did not; the cache is retired |
 | ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
 
 ### B-1 — Rate-limit telemetry on `GroqProvider`
@@ -662,6 +695,58 @@ that the following run's pre-flight reports `provider-reconciled`.
 Filed here rather than left inside B-5's entry because a discharged row is
 read as finished, and an unverified edge case buried in one stops being
 visible the moment the row is struck through.
+
+> **HALF DISCHARGED 2026-09-11, at Iteration 9 T6 — and the entry says which
+> half, for the reason the paragraph above gives.** Measuring found this was
+> filed as one gap and is three. Two are closed; the one it was filed for is
+> not.
+>
+> **Closed: a refusal *during* a run now reconciles.** `reconcile()` had exactly
+> one caller — the pre-flight probe. A 429 arriving mid-run took a different
+> route: the runner counted its rate-limited cases, refused to record the number
+> (AC18), and **discarded the provider's own `Used` figure**, which was sitting
+> in `CaseResult.error` the whole time because the orchestrator preserves the
+> message verbatim (`error=str(exc)`). A run refused at question 17 is the
+> likely way this project meets a TPD limit in ordinary work, so this was the
+> more useful of the two paths and the one that did not exist.
+>
+> It needed **no live 429 to build or to test**: the captured body from
+> 2026-09-04 — `on tokens per day (TPD): Limit 200000, Used 199301` — was
+> already a fixture. Resolved D-4 takes the **maximum** `Used` across refusals
+> rather than the last, because a run at the ceiling refuses every question
+> after the first and the maximum is order-independent. `RPM`, `TPM` and `RPD`
+> are refused explicitly: writing a request count into a token ledger would be
+> worse than the estimate it replaced.
+>
+> **The adoption gap this nearly had is worth recording.** Every direct test of
+> the new helpers passed with the runner's call to them deleted — correct,
+> tested, unreachable code. That is the shape §6 of `HANDOFF.md` records for the
+> schema cache, and it was caught by mutation rather than by review. A test that
+> drives `main()` end to end and asserts the *ledger* changed now exists, and it
+> names no helper.
+>
+> **Closed: the ledger says what it cannot see.** `describe()` reported `(local
+> estimate)`, which is not a description of a blind spot. Measured 2026-09-11:
+> the ledger read **0 tokens for the day** while the deployed API had spent
+> **3,448**, and 23,131 across its recorded history.
+>
+> **That gap is documented rather than plumbed, and the reasons are measured.**
+> The API *cannot* write here: its container has no `.querypilot`, and `evals/`
+> is not in the runtime image at all — the build context is `./api` — so closing
+> it from that side means a bind mount plus shipping the benchmark harness into
+> the image. And the gap sits **inside the error already there**: the pre-flight
+> projection assumes three provider calls per question where the loop uses one,
+> so it over-estimates by roughly 3× and has already refused runs that would
+> have fit. A ~3,400-token under-report against a ~60,000-token over-estimate is
+> not worth a container boundary.
+>
+> **Still open: the live leg, unchanged.** Refusal → parse → overwrite → the
+> next run's pre-flight reading the corrected figure has still never run against
+> Groq end to end. Forcing it costs roughly **196,552 tokens** from a clean day
+> — most of a daily allowance to watch an error handler — so it stays
+> opportunistic, exactly as decided on 2026-09-08. The cheap way to close it is
+> still the next TPD refusal in the ordinary course of work: check that the
+> ledger was corrected and that the following run reports `provider-reconciled`.
 
 ### B-2 — AC13's glossary-off control
 
@@ -1048,6 +1133,47 @@ evidence about whether a reference query is correct. That option was offered and
 deliberately not taken here, on the grounds that a retry is a place a real
 failure can hide and there is not yet evidence to justify one.
 
+> **ITERATION 9 T5, 2026-09-11: diagnosed-if-it-recurs, and given a budget.**
+> No retry was added; the reasoning above is unchanged and was reaffirmed.
+> Three things were done instead.
+>
+> **1. It reproduced, and the trace was lost the same way as before.** A full
+> local run failed the pair once on 2026-09-11 — the first occurrence in 21 runs
+> that day — and the assertion was destroyed by a `tail -4` before it could be
+> read. That is the third occurrence and the third lost trace, and it is the
+> argument for the mechanism below rather than a documented habit. What survived
+> matched the recorded signature exactly: a re-run passed, `docker compose logs
+> db` showed only the intended errors from `tests/test_validator_gates.py`, and
+> both containers reported `restarts: 0`. **Whatever failed still never reached
+> Postgres.**
+>
+> **2. The evidence now persists by default.** `pytest.ini` writes
+> `--junitxml=.pytest_cache/junit.xml` on every local run. The junit report
+> carries the complete assertion under `-q`, which the terminal does not, and CI
+> has uploaded one since Iteration 8 T4. And `describe_gold_result` in
+> `tests/test_eval_questions.py` now builds one diagnostic line for **both**
+> tests, so `test_every_gold_query_returns_at_least_one_row` no longer reports
+> bare ids — it had been legible only because its partner failed alongside it
+> and said why.
+>
+> **3. The observation budget: 20 consecutive clean CI runs.** If B-13 does not
+> reproduce within them, it is closed permanently as a Windows Docker Desktop
+> virtualisation artefact rather than carried indefinitely.
+>
+> **What counts, resolved as plan D-6.** A run advances the budget only if the
+> gold-query pair actually **executed and passed**. A build that fails for an
+> unrelated reason — a syntax error, a deterministic test failure, a container
+> that never became healthy — **neither resets nor advances** the count: it is
+> not evidence about database connection stability in either direction. A rule
+> that reset on unrelated failures would make the budget unreachable in a noisy
+> week; one that counted them would make it meaningless.
+>
+> **Counted by hand from this entry**, not by a mechanical counter — that would
+> be CI infrastructure built for a debt we expect to close. The budget starts
+> from the first CI run of Iteration 9; the last run before it is
+> **34533259067** (the merge of PR #10, 2026-09-10), and the nine green runs
+> before that already stand as non-reproductions under the same rule.
+
 ### B-11 — Production deployment
 
 Deferred at Iteration 8 T1, from charter §6's *"Deployed"*. **Not deferred for
@@ -1222,6 +1348,127 @@ not stop that from being worth fixing.
 > agent must be told retrying will not help, and a DSN can carry a password.
 > Restoring it was considered and declined. An operator now reads the container
 > logs for that.
+
+---
+
+### B-14 — Does the schema cache still earn its weight after B-10?
+
+Opened 2026-09-11 at Iteration 8 T5, **by a test rather than by a person**.
+
+`tests/test_schema_cache.py::test_introspection_really_is_the_expensive_thing`
+was written to pin the premise the module rested on, and its docstring said in
+advance what should happen if that premise moved:
+
+> *"This test did its job, and the answer moved... It was written to fail 'as a
+> failure asking whether the module is still worth its weight' if introspection
+> ever stopped being many round trips. B-10 is that event... **Whether this
+> module is still worth its weight is a live question and is recorded as such**,
+> not answered by quietly lowering a threshold."*
+
+It went red on the first full run after B-10 landed, and the threshold was not
+lowered. That is the behaviour worth keeping from this entry, whatever happens
+to the cache: **a test that notices its own justification has expired, and
+declines to conclude.**
+
+> **DISCHARGED 2026-09-11, at Iteration 9 T4. It did not earn its weight, and
+> the cache is retired.**
+>
+> **What the module was built on, and what was left of it.** Iteration 7 T6
+> justified the cache on `get_schema()` costing **52 round trips and 99ms**
+> against a 3-trip probe — an 18:1 margin. Iteration 8 T5 discharged B-10 by
+> replacing SQLAlchemy's `Inspector` with three catalog queries through
+> `execute_sql()`, taking introspection to **9 round trips and 19.98ms**. The
+> margin became 3.8:1.
+>
+> **The measurement that decided it was of a request, not of the module** —
+> which is the frame that had made this look settled. `012-board.md` §2.1
+> measured the whole agent path with a stub provider, so it spent no tokens and
+> was deterministic:
+>
+> | `answer()` | round trips | median |
+> |---|---|---|
+> | with the cache | 6 | 8.35ms |
+> | without it | 12 | 21.69ms |
+> | **the saving** | **6** | **13.34ms** |
+>
+> Against a request measured between **1,431ms and 5,901ms**: **0.4% to 0.9%**.
+>
+> **Concurrency does not rescue it**, measured rather than assumed. The cached
+> and uncached ratio is flat at 2.8–3.6× from 1 to 16 threads, the per-read
+> saving stays at 9–14ms, and the pool (size 5) never saturates. And the ceiling
+> above it is the provider: `010` §2.5 measured about **seven questions a
+> minute** before the 8,000-token bucket drives the slow mode, which is 63
+> catalog round trips a minute uncached. There is no load at which this matters.
+>
+> **What it cost to keep:** 200 lines of module, 518 lines and 22 tests, and the
+> one autouse isolator in `tests/conftest.py` that could hold something *false*
+> rather than merely stale — a test monkeypatching `get_schema` left a
+> hand-built `Schema` behind for the next test to build a prompt from. The most
+> intricate correctness argument in the codebase — a fingerprint that must mean
+> *unverifiable* rather than *unchanged*, a lock deliberately not held across
+> the introspection, a rejection of TTLs as not-invalidation — was defending
+> 13.34ms.
+>
+> **Measured after the change, in the rebuilt container (AC4).** Predictions are
+> not accepted here as measurements, and both were checked:
+>
+> | | before | after |
+> |---|---|---|
+> | answer-cache hit | 6ms | **22ms** (six samples, 22–26ms) |
+> | warm miss, non-provider gap | — | **32–38ms**, against a 1,019–1,153ms provider call |
+>
+> The catalog read is ~20ms of that gap, so the schema is about **2% of a
+> miss**. The hit is where the cost landed, and 22ms is still imperceptible.
+>
+> **Round trips through the endpoint**, every figure measured by
+> `tests/test_request_round_trips.py`, which Iteration 9 T2 built *before*
+> touching the request path for exactly this reason:
+>
+> | | cold miss | warm miss | hit |
+> |---|---|---|---|
+> | as found | 18 | 9 | 3 |
+> | after T3 — one schema read | 15 | 6 | 3 |
+> | after T4 — no cache | **12** | **12** | **9** |
+>
+> Cold and warm converge because without a cache there is no warm one.
+>
+> **T2 found the plan wrong before either change landed.** The plan tabulated a
+> miss at 9 round trips; that is the *warm* miss, and a cold one is 18, because
+> the first request after a boot finds the cache empty and pays the probe *and*
+> a full introspection before the prompt's read finds it warm. The distinction
+> did not exist on paper and did on the wire.
+>
+> **AC5 was a gate, not a goal**, in the words Iteration 8 T5 used. Values were
+> recorded before the change and compared after: the `compact` and `ddl`
+> renderings are byte-identical (sha256 `199a51a5f50ac9f8` / 2,356 bytes and
+> `f2105ebe2fed6ea9` / 3,340 bytes), and `0d280c367c5e`, `91036a089282`,
+> `c0418e1ed384` and `6cac588c545e` all reproduce. The gate has teeth: changing
+> one type mapping from `VARCHAR` to `VARCHAR2` turns seven tests red.
+>
+> **`010-hardening.md` AC9 is struck through with a dated note**, because T4
+> makes it false — it required the schema to be introspected once and reused. The
+> criterion did not rot; the thing underneath it moved, through three
+> measurements of one operation that were each correct when taken: **143ms**
+> (`010` §2.4), **99ms** (the module's own docstring), **19.98ms** (today). The
+> third invalidated a design the first two justified.
+>
+> **Two things were updated rather than deleted**, because a deletion is where
+> absence assertions rot — `HANDOFF.md` §6 records five that did.
+> `test_the_schema_cache_is_shared_with_the_eval_runner_deliberately` became
+> `test_the_schema_path_is_shared_with_the_eval_runner_deliberately` and asserts
+> `api.db.introspection.get_schema`; the asymmetry it pins is a property of the
+> project, not of the cache. And `tests/conftest.py` keeps a note where the sixth
+> isolator was, so that anyone adding a schema memo back knows it needs an
+> isolator **on the day it lands**, not the iteration after.
+>
+> **What this does not claim.** Retiring the cache is right for *this* database
+> at *this* scale: twelve relations, 91 signature rows against Gate 3's
+> 1,000-row cap, and a provider that caps throughput two orders of magnitude
+> below where catalog round trips would bite. A warehouse with two hundred
+> tables would move every number here, and the probe's truncation blindness —
+> documented at length in the retired module, since a hash of the first thousand
+> rows of a stable catalog is perfectly stable and completely blind — is a real
+> hazard that the retirement sidesteps rather than solves.
 
 ---
 

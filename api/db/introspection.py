@@ -139,8 +139,10 @@ SELECT c.relname, c.relkind::text
 #: the spelling.
 #:
 #: `attnum` comes back so ordinal order can be restored in Python (AC3) without
-#: an `ORDER BY`, following `schema_cache.py`: row order is not a property of a
-#: schema, and the code should not depend on the server supplying one.
+#: an `ORDER BY`: row order is not a property of a schema, and the code should
+#: not depend on the server supplying one. (The retired `schema_cache.py` reached
+#: the same conclusion about its probe, and sorted in Python for the added reason
+#: that `ORDER BY` would have made a hash depend on the server's collation.)
 #:
 #: The primary key arrives as a `CASE` over `pk.conkey` rather than as a second
 #: query, because membership must be tested against the **whole** key --
@@ -150,10 +152,11 @@ SELECT c.relname, c.relkind::text
 #: primary-key constraint, so `conkey` is NULL and every column reports `f`
 #: (AC11).
 #:
-#: `relkind` and `attnotnull` are cast to text explicitly, for the reason
-#: recorded in `schema_cache.py`: `text || "char"` is ambiguous in PostgreSQL
-#: and fails at *execution* rather than at parse time, so it passes Gate 2 and
-#: then falls over.
+#: `relkind` and `attnotnull` are cast to text explicitly, because
+#: `text || "char"` is ambiguous in PostgreSQL and fails at *execution* rather
+#: than at parse time, so it passes Gate 2 and then falls over. This was first
+#: paid for in `schema_cache.py`, retired at Iteration 9 T4; the lesson outlived
+#: the module.
 COLUMNS_SQL = """
 SELECT c.relname,
        a.attname,
@@ -218,8 +221,8 @@ def _rows(sql: str, what: str) -> tuple[tuple, ...]:
     more than a thousand columns would come back as a *prefix*. Returning that
     would be the worst available outcome -- a schema that looks complete, is
     stable across calls, and silently omits relations the model then cannot
-    query. `schema_cache.py` reached the same conclusion about its probe: a
-    signature it cannot verify is never trusted.
+    query. The retired `schema_cache.py` reached the same conclusion about its
+    probe: a signature it cannot verify is never trusted.
 
     So this raises, and the message says which query and what the cap is,
     because the fix is a different introspection strategy rather than a retry.

@@ -15,7 +15,8 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
 | [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
 | [`specs/010-hardening.md`](specs/010-hardening.md) and its plan | Iteration 7, delivered 2026-09-10. Its §2 holds the latency, cost and quota measurements |
-| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 8 is closed**; the open board is B-4, B-6, B-11, B-12, B-13, B-14 |
+| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 9 is closed**; the open board is B-4, B-6 (live leg), B-11, B-12, B-13 (budgeted) |
+| [`specs/012-board.md`](specs/012-board.md) and its plan | Iteration 9, delivered 2026-09-11. Read it for how a measurement retired working code |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -84,11 +85,18 @@ because a measurement contradicted the premise.
 | **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **Closed 2026-09-11** — T1-T7, all 14 ACs met, merged as PR #10. CI, B-9, B-10 and AC6's feedback all discharged. Deployment and the demo video deferred as B-11/B-12, by decision rather than omission |
+| **9 The board** | **Closed 2026-09-11** — T1-T7, merged as PR #11. **B-14 discharged** (the schema cache retired on its own measurement), **B-6 half discharged** (mid-run 429 reconciliation; the live leg stays open), **B-13 budgeted** (20 clean CI runs). Charter §6's map, which ended at 8, gained a row rather than being outgrown |
 
-**1,220 tests**, ~58s (live provider tests skip when rate-limited, which is
-a working guard rather than a red failure -- see the traps below). Iteration 8
-added 111: T3 hardened the live tests, T4 brought the pipeline's own guards
-and the two defects the pipeline found, T5 discharged B-10, T6 added feedback, T7 the shipping surface.
+**1,217 tests**, ~60s (live provider tests skip when rate-limited, which is
+a working guard rather than a red failure -- see the traps below). Iteration 9
+is the first iteration to end with **fewer** tests than it began: it added 19
+and deleted 22 with the schema cache, which is what retiring a module looks
+like when the tests went with it.
+
+A plain `pytest` now writes `.pytest_cache/junit.xml` (Iteration 9 T5). The
+junit report carries a complete assertion message where `-q` truncates it to
+`AssertionError: refer...`, which is how three B-13 occurrences were lost. **If
+something fails and the terminal ate the reason, read that file.**
 
 **There is a pipeline now** -- `.github/workflows/ci.yml`, on every push and
 pull request. It brings the real stack up with `docker compose up`, needs no
@@ -117,14 +125,17 @@ Operational state lives in **SQLite at `/data/querypilot.db`** in the
 `querypilot_data` named volume. `docker compose down` keeps it; only `down -v`
 discards it. Verified across a real machine shutdown: 23 rows survived.
 
-**Three caches now exist and they are not the same thing.** Confusing them is
+**Two caches now exist and they are not the same thing.** Confusing them is
 the easiest way to misread this code:
 
 | | keyed on | invalidated by | shared with `evals/` |
 |---|---|---|---|
 | answer cache (`api/http/cache.py`) | question + schema fp + prompt fp | a schema or prompt change | **no** — D-1, and a test enforces it |
-| schema cache (`api/db/schema_cache.py`) | nothing; one slot | an 8.5ms catalog probe | yes, deliberately |
 | quota snapshot (`api/http/quota.py`) | nothing; one slot | its own age vs the bucket's reset | n/a |
+
+**There were three until Iteration 9 T4**, when B-14 retired the schema cache.
+Anything written before 2026-09-11 that mentions `api/db/schema_cache.py`,
+`cached_schema()` or a catalog probe is describing code that no longer exists.
 
 **Feedback is collected and deliberately not consumed (AC14).** `POST /feedback`
 stores a `-1` or `1` against an answer id, append-only, and `/history` shows the
@@ -141,14 +152,22 @@ the schema and the prompt, so an added *column* invalidates an entry and an
 added *row* does not. Chinook is static so it never bites here; the page and the
 README both say so rather than leaving it to be discovered.
 
-**The schema cache's margin shrank by a factor of five at Iteration 8 T5, and
-that is filed as B-14.** B-10 replaced SQLAlchemy's `Inspector` with three
-catalog queries through `execute_sql()`, taking `get_schema()` from **52 round
-trips and 99ms to 9 and 29.0ms**. The probe is 3 trips and 8.5ms, so the cache
-still saves something real and saves far less than it was built to save.
-`test_introspection_really_is_the_expensive_thing` was written to fail and ask
-this question if introspection ever got cheap, and it did exactly that on the
-first run after T5. **The question is open, not answered.**
+**The schema cache is gone, and the answer to B-14 was no** (Iteration 9 T4).
+Its margin had shrunk by a factor of five when B-10 replaced SQLAlchemy's
+`Inspector` with three catalog queries, and measuring a whole *request* rather
+than the module showed what was left: **13.34ms and 6 round trips of a request
+measured between 1,431ms and 5,901ms** — 0.4% to 0.9%, with no load at which
+that changes, since the provider caps throughput at about seven questions a
+minute. It cost 718 lines, 22 tests, and the one autouse isolator that could
+hold something *false*. `test_introspection_really_is_the_expensive_thing` was
+written to fail and ask this question if introspection ever got cheap, it did
+exactly that on the first run after T5, and the charter's B-14 entry quotes it.
+
+**Every request now introspects**, so a `/ask` miss is 12 catalog-plus-query
+round trips and an answer-cache hit is 9. Measured after the change: a hit went
+**6ms → 22ms**, and a miss's non-provider gap is 32–38ms against a ~1,100ms
+provider call. `tests/test_request_round_trips.py` pins all of it end to end,
+and it was written *before* the change for that reason.
 
 ### The backlog board, in `specs/000-project.md` section 8
 
@@ -159,14 +178,13 @@ first run after T5. **The question is open, not answered.**
 | ~~B-5~~ | three-limit guards and the daily ledger | verified live 2026-09-08 |
 | ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
-| **B-6** | 429 to ledger reconciliation, live | open, accepted debt |
+| **B-6** | 429 to ledger reconciliation | **half discharged** 2026-09-11 at Iteration 9 T6 -- mid-run reconciliation ships; the live leg is still unexercised |
 | ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
 | ~~B-10~~ | `get_schema()` reached the database around Gate 2 | discharged 2026-09-11 at Iteration 8 T5 |
-| **B-14** | Does the schema cache still earn its weight after B-10? | opened 2026-09-11 -- its own test asked |
-| **B-10** | `get_schema()` reaches the database around Gate 2 | open, filed 2026-09-10 |
+| ~~B-14~~ | did the schema cache still earn its weight after B-10? | **discharged 2026-09-11** at Iteration 9 T4 -- it did not; the cache is retired |
 | **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
-| **B-13** | the gold-query test pair flakes, ~2 in 20 full runs | open — six hypotheses eliminated, not reproduced |
+| **B-13** | the gold-query test pair flakes, ~1 in 46 full runs | open — **budgeted** at Iteration 9 T5: 20 clean CI runs, then closed as environmental |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 
@@ -256,7 +274,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,220 tests, ~58s
+.venv/Scripts/python.exe -m pytest -q                 # 1,217 tests, ~60s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 
@@ -371,11 +389,14 @@ than *called*. A third claimed to cover `observe(None)` and never reached that
 path at all, because a guard higher up returned first. **Assert the call, the
 assignment, or the effect — never that an identifier is present in a file.**
 
-**A cache with good tests can still be dead code.** Reverting the request path
-to raw `get_schema()` left all nineteen `test_schema_cache.py` tests green,
-because every one of them exercised `cached_schema()` directly. Adoption needs
-its own assertion: count the round trips end to end through the endpoint, and
-name the modules structurally so a failure says which one regressed.
+**A cache with good tests can still be dead code, and this has now happened
+twice.** Reverting the request path to raw `get_schema()` left all nineteen
+`test_schema_cache.py` tests green, because every one of them exercised
+`cached_schema()` directly. **Iteration 9 T6 repeated the shape in a different
+module**: deleting the eval runner's call to its new 429-reconciliation helper
+left every direct test of that helper green -- correct, tested, and unreachable.
+Both were caught by mutation, neither by review. Adoption needs its own
+assertion: drive the *entry point* and assert the *effect*, naming no helper.
 
 **A page that serves is not a page that renders.** Every assertion about the
 JavaScript read it as text — no `innerHTML`, no CDN, the right names present —
@@ -423,12 +444,14 @@ in review, and read by the next real run's pre-flight. Per-test discipline
 failed both times; isolation is now an autouse fixture. **Resolve paths at call
 time, and isolate shared state for every test whether it asks or not.**
 
-`tests/conftest.py` now carries six autouse isolators: the spend ledger, the
-history store, the answer cache, the quota snapshot, and the schema cache. The
-last one is the only one that can hold something *false* rather than merely
-stale — a test that monkeypatches `get_schema` leaves a hand-built `Schema`
-behind, and the next test builds its prompt from a database that does not
-exist.
+`tests/conftest.py` carries **five** autouse isolators: the spend ledger, the
+history store, the answer cache and the quota snapshot among them. There were
+six until Iteration 9 T4 retired the schema cache, and the one that went was the
+only one that could hold something *false* rather than merely stale — a test
+that monkeypatched `get_schema` left a hand-built `Schema` behind, and the next
+test built its prompt from a database that did not exist. `conftest.py` keeps a
+note where it was, because **any future memo of the schema needs an isolator on
+the day it lands, not the iteration after.**
 
 **The recorded path and the terminal path drift apart.** Four defects of one
 shape reached `EVALS.md` or its report before anyone noticed: the recorded block

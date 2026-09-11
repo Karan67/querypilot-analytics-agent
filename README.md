@@ -7,7 +7,7 @@ Read [`specs/000-project.md`](specs/000-project.md) first — it is the source o
 truth for intent, scope, non-goals, and the safety rules that bind every
 iteration.
 
-**Current state: Iteration 8 (Ship).** `docker compose up` gives you a working
+**Current state: Iteration 9 (The board).** `docker compose up` gives you a working
 page at **<http://localhost:8000>** — ask a question, get the answer, the SQL
 that produced it, and the agent's steps. Behind it: a hand-written agent loop
 that reads its own execution errors and retries, a four-gate safety layer
@@ -33,7 +33,7 @@ estimate, and each carries the caveat that makes it true.
 | a repeated question | **0 tokens** | the answer cache; caveat below |
 | free-tier ceiling | **200,000 tokens/day** ≈ 180 questions | `010-hardening.md` §2.5 |
 | schema introspection | **9 statements, 29.0ms** | `011-ship.md` B-10, Iteration 8 T5 |
-| the test suite | **1,220 tests, ~58s** | `docker compose up`, then `pytest` |
+| the test suite | **1,217 tests, ~60s** | `docker compose up`, then `pytest` |
 
 Three of those need their caveat stated rather than footnoted:
 
