@@ -85,7 +85,7 @@ because a measurement contradicted the premise.
 | **6 Frontend** | **Done 2026-09-09** — `POST /ask`, a page at `:8000`, all 14 ACs met |
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **Closed 2026-09-11** — T1-T7, all 14 ACs met, merged as PR #10. CI, B-9, B-10 and AC6's feedback all discharged. Deployment and the demo video deferred as B-11/B-12, by decision rather than omission |
-| **9 The board** | **Closed 2026-09-11** — T1-T7. **B-14 discharged** (the schema cache retired on its own measurement), **B-6 half discharged** (mid-run 429 reconciliation; the live leg stays open), **B-13 budgeted** (20 clean CI runs). Charter §6's map, which ended at 8, gained a row rather than being outgrown |
+| **9 The board** | **Closed 2026-09-11** — T1-T7, merged as PR #11. **B-14 discharged** (the schema cache retired on its own measurement), **B-6 half discharged** (mid-run 429 reconciliation; the live leg stays open), **B-13 budgeted** (20 clean CI runs). Charter §6's map, which ended at 8, gained a row rather than being outgrown |
 
 **1,217 tests**, ~60s (live provider tests skip when rate-limited, which is
 a working guard rather than a red failure -- see the traps below). Iteration 9

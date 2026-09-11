@@ -343,7 +343,7 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 6 | Frontend | Demoable to a non-technical person — **done 2026-09-09**, see `009-frontend.md` |
 | 7 | Hardening | History, ~~feedback,~~ latency and cost logging, rate limiting, caching — see the amendment below |
 | 8 | Ship | ~~Deployed~~, evals running in CI, README with honest numbers, ~~demo video~~, **and feedback** — see the amendment below |
-| 9 | The board | B-6, B-13 and B-14 each leave §8's board or carry a dated reason for staying — see [`012-board.md`](012-board.md). **Added 2026-09-11; see the note below** |
+| 9 | The board | B-6, B-13 and B-14 each leave §8's board or carry a dated reason for staying — see [`012-board.md`](012-board.md). **Closed 2026-09-11**, merged as PR #11 |
 
 > **EXTENDED 2026-09-11, at Iteration 9 T1.** This map ended at 8, because it
 > was written as a route to a shipped system and the system shipped. What it did
@@ -364,6 +364,18 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 > silently. `012-board.md` §6 records the risk that goes with that — a
 > maintenance iteration is the easiest place to do work because it is available
 > rather than because it is warranted.
+>
+> **CLOSED 2026-09-11, merged as PR #11.** T1-T7, all 12 acceptance criteria.
+> **B-14 discharged** — the schema cache is retired, on a measurement of a whole
+> request rather than of the module. **B-6 half discharged** — mid-run 429
+> reconciliation ships and the live leg stays open, with the entry naming which
+> half. **B-13 budgeted** — 20 clean CI runs, then closed as environmental.
+>
+> It is the first iteration to end with **fewer tests than it began**: 19 added,
+> 22 deleted with the module they covered. The criterion was that three debts
+> stop being carried silently, and none of them left quietly — one was
+> discharged, one was halved and said so, and one was given a countable
+> deadline.
 
 > **AMENDED 2026-09-10, at Iteration 8 T1: deployment and the demo video are
 > deferred.** The original text is struck above rather than rewritten, for the
