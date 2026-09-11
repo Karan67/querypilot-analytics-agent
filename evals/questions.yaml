@@ -457,7 +457,25 @@ questions:
 
   # ---- hard: one per SQL feature category --------------------------------
 
-  # correlated subquery
+  # per-group comparison. The question invites a correlated subquery and the
+  # model is free to write one; the gold pre-aggregates instead, and the reason
+  # is recorded in charter section 8 under B-13.
+  #
+  # The gold was the correlated form until 2026-09-11. It re-executed its inner
+  # aggregate once per row -- 3,503 loops and 87,784 buffer accesses -- which is
+  # 215ms on a warm database and more than Gate 3's 10s ceiling on a cold one
+  # under load. It was the only reference query in the corpus that could exceed
+  # that ceiling, and it did, intermittently, for six weeks (B-13).
+  #
+  # **What changed is how the reference computes the answer, not the question
+  # and not the expected value.** Scoring compares result sets, so a cheaper
+  # gold does not make this question easier: the model still faces the same
+  # per-group comparison and still tends to answer it with a correlated
+  # subquery. The row is identical (count = 1539), and neither
+  # `split_fingerprint` nor the dataset row-count fingerprint hashes `gold_sql`,
+  # so no recorded number moves. Gate 2's own correlated-subquery coverage is in
+  # `tests/test_validator.py` and never depended on this, and `expert-010` still
+  # carries one in the corpus.
   - id: hard-001
     tier: hard
     split: dev
@@ -465,9 +483,10 @@ questions:
       own genre?
     gold_sql: >-
       SELECT count(*) FROM track t
-      WHERE t.milliseconds > (
-        SELECT avg(t2.milliseconds) FROM track t2 WHERE t2.genre_id = t.genre_id
-      )
+      JOIN (
+        SELECT genre_id, avg(milliseconds) AS avg_ms FROM track GROUP BY genre_id
+      ) g ON g.genre_id = t.genre_id
+      WHERE t.milliseconds > g.avg_ms
     ordered: false
     covers: [track]
 

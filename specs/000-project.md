@@ -451,7 +451,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
-| **B-13** | The gold-query test pair fails intermittently, unexplained | Iteration 8 T2 | open — **budgeted 2026-09-11** at Iteration 9 T5: 20 clean CI runs, then closed as environmental |
+| ~~B-13~~ | ~~The gold-query test pair fails intermittently~~ — `hard-001` exceeded the 10s ceiling under load | Iteration 8 T2 | **discharged 2026-09-11** — diagnosed, then fixed by pre-aggregating the reference query |
 | ~~B-14~~ | ~~Does the schema cache still earn its weight after B-10?~~ | Iteration 8 T5 | **discharged 2026-09-11** at Iteration 9 T4 — it did not; the cache is retired |
 | ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
 
@@ -1085,9 +1085,13 @@ Observed:
 **Six hypotheses, each eliminated by measurement. This list exists so nobody
 runs this investigation a second time:**
 
-1. **`statement_timeout` (10s).** No. Timed all 50 gold queries: the slowest is
+1. ~~**`statement_timeout` (10s).** No. Timed all 50 gold queries: the slowest is
    `hard-001` at 784ms and the median is 6.5ms. Nothing is within an order of
-   magnitude of the ceiling.
+   magnitude of the ceiling.~~
+   **WRONG — this is the cause. See the diagnosis below.** The measurement was
+   right and the inference from it was not: an idle-machine timing says nothing
+   about the ceiling under load, and "an order of magnitude of headroom" is a
+   statement about one machine state rather than about a query.
 2. **A defect in those two tests.** No. Forty consecutive isolated runs passed.
 3. **The engine poisoned by a bad DSN.** `tests/test_execution.py` and
    `tests/test_schema_tool.py` both point `QUERYPILOT_DATABASE_URL` at an
@@ -1104,7 +1108,7 @@ runs this investigation a second time:**
    long run. No: checked-out connections stay at 0 across 120 calls spanning
    successes, `database_error` and Gate 2 rejections.
 
-**The decisive negative is that the database logged nothing.** `docker compose
+~~**The decisive negative is that the database logged nothing.**~~ **This no longer holds; see the diagnosis below.** `docker compose
 logs db` across the window containing a failure shows only the *intended* errors
 from `tests/test_validator_gates.py` — "permission denied for table track",
 "cannot execute DELETE in a read-only transaction" — and the container reports
@@ -1173,6 +1177,155 @@ failure can hide and there is not yet evidence to justify one.
 > from the first CI run of Iteration 9; the last run before it is
 > **34533259067** (the merge of PR #10, 2026-09-10), and the nine green runs
 > before that already stand as non-reproductions under the same rule.
+
+> **DIAGNOSED 2026-09-11, after Iteration 9 merged — and the answer is
+> hypothesis 1, which this entry had eliminated.**
+>
+> The fourth occurrence is the first anybody has **read**, because T5 had just
+> made `pytest.ini` write `.pytest_cache/junit.xml` on every local run. The
+> report was there before anyone knew they wanted it, which is exactly the
+> argument T5 made for the mechanism:
+>
+> ```
+> hard-001: ok=False rows=0 category=timeout
+> error=Query exceeded the 10s statement timeout and was cancelled.
+> ```
+>
+> **Both prior theories are wrong, and both were wrong for the same reason: a
+> measurement taken on an idle machine was read as a property of the query.**
+>
+> **What actually happens.** `hard-001` is a correlated subquery — *"how many
+> tracks are longer than the average track length of their own genre"* — so the
+> inner aggregate is re-executed **once per row**. `EXPLAIN (ANALYZE, BUFFERS)`
+> as `querypilot_ro`:
+>
+> ```
+> Seq Scan on track t  (actual time=105..425 rows=1539 loops=1)
+>   Buffers: shared hit=87784
+>   SubPlan 1
+>     -> Aggregate  (actual time=0.091..0.091 rows=1 loops=3503)
+>          -> Bitmap Heap Scan on track t2  (rows=665 loops=3503)
+>               Heap Blocks: exact=79436
+> ```
+>
+> **3,503 loops and 87,784 buffer accesses** — roughly 700MB of buffer traffic
+> for a query returning one number. Every one is a `shared hit` on a warm
+> database, which is why it measures **215ms median idle today** (not the 784ms
+> this entry recorded — it is *faster* now) with **46× headroom**. When those
+> accesses are not hits, the cost is unbounded by anything this project
+> controls.
+>
+> **The index is not the problem.** `track_genre_id_idx` exists and is used. The
+> cost is the 3,503 re-executions, not a scan.
+>
+> **Why a 46× blowup is credible where "the machine was busy" is not.** The
+> failing suite ran **205.98s against a normal 60–75s**, and
+> `test_every_gold_query_executes` — which carries the module-scoped fixture
+> that runs all 50 gold queries — took **68.1 seconds** against a docstring
+> promising "a few seconds". A 3× slower machine does not turn 215ms into 10s;
+> a 3× slower machine that also cannot serve 87,784 buffer accesses from cache
+> does. The run followed a full `docker compose down`/`up`, a merge and a pull,
+> so Postgres had restarted with cold shared buffers under concurrent I/O.
+>
+> This is hypothesis 5 (*cold shared buffers*) too, which was also dismissed —
+> on a 432ms-cold against 395ms-warm comparison that measured the query alone on
+> an otherwise idle machine. The two dismissed hypotheses are one mechanism, and
+> neither was reproducible the way they were tested because the test removed the
+> condition.
+>
+> **It reached Postgres, and Postgres logged it.** `docker compose logs db`:
+>
+> ```
+> 2026-09-11 14:33:51.711 UTC [1755] ERROR: canceling statement due to statement timeout
+> ```
+>
+> The suite started 14:32:24 UTC and the gold fixture took 68.1s, which lands
+> its end at 14:33:51. So *"whatever failed never reached Postgres"* is false for
+> this occurrence. Whether it was false for the two original ones cannot be
+> recovered — their logs are gone, and the inspection that produced that
+> sentence filtered the log by pattern for expected errors. **The lesson is that
+> an absence in a filtered log is not an absence.**
+>
+> **What this does not establish.** One occurrence has been read. The two
+> 2026-09-11 occurrences and the two original ones may or may not share this
+> cause; their traces are gone. What is now certain is that `hard-001` *can*
+> exceed the ceiling on this hardware, which is sufficient to act on and does not
+> require the older events to be explained.
+>
+> **RESOLVED 2026-09-11 by option 1 below.**
+>
+> | | |
+> |---|---|
+> | **root cause** | a correlated subquery re-executing its inner aggregate once per row — 3,503 loops, 87,784 buffer accesses — exceeding Gate 3's 10s `statement_timeout` on cold shared buffers under load |
+> | **resolution** | `hard-001`'s `gold_sql` pre-aggregates per genre instead. **202.9ms → 4.2ms in the container, a 48× improvement**; on the host, 7.3ms and **1,366× headroom** against the ceiling |
+> | **result unchanged** | one row, `count = 1539`, `row_count=1`, not truncated, Gate 2 clean |
+> | **benchmark record intact** | `split_fingerprint` is `ec65d5ba81d6` before *and* after — the value `EVALS.md` records — because it hashes `(id, split)` pairs, and the dataset fingerprint hashes relation row counts. Neither includes `gold_sql` |
+>
+> **The 20-run observation budget is withdrawn, not completed.** It existed to
+> decide whether an unexplained flake was environmental. The cause is known and
+> removed, so counting clean runs would be measuring the absence of a bug that no
+> longer has a mechanism. What remains true is the general fact the budget was
+> never about: this machine can run the suite 3× slow under load.
+>
+> **What the question still tests is unchanged**, which is the whole argument for
+> editing the gold rather than retiring the id. Scoring compares result sets, so
+> the model still faces the same per-group comparison and still tends to answer
+> it with a correlated subquery — only the *reference* got cheaper. Gate 2's own
+> correlated-subquery coverage lives in `tests/test_validator.py` and never
+> depended on this question, and `expert-010` still carries one in the corpus.
+>
+> **Charter §8's never-edit-a-question rule was read, not waived.** It forbids
+> editing *"because the model got it wrong"*. The model did not get this wrong;
+> a reference query tripped an invariant the product enforces. Question text and
+> expected answer are untouched.
+
+**Three ways to close it, and a constraint that rules one out.**
+
+Raising the fixture's `statement_timeout` is **rejected**: 10s is a Gate 3
+invariant, and widening a limit in tests to accommodate a slow query hides
+exactly the production latency risk the gate exists to surface. A gold query
+that cannot finish inside the ceiling the product enforces is a fact worth
+failing on.
+
+1. **Rewrite `hard-001`'s `gold_sql` to aggregate once.** Measured through
+   `execute_sql()`: **202.9ms → 4.2ms**, a 48× improvement, returning the
+   identical `1539`, passing Gate 2, with **0 rows having a NULL `genre_id`** so
+   the correlated and grouped forms cannot diverge on this data.
+
+   ```sql
+   SELECT count(*)
+   FROM track t
+   JOIN (
+     SELECT genre_id, avg(milliseconds) AS avg_ms
+       FROM track
+      GROUP BY genre_id
+   ) g ON g.genre_id = t.genre_id
+   WHERE t.milliseconds > g.avg_ms
+   ```
+
+   **What it does not disturb, checked rather than assumed:** `split_fingerprint`
+   hashes only `(id, split)` pairs, and `006`'s dataset fingerprint is a dict of
+   relation row counts. **Neither includes `gold_sql`**, and the scored result is
+   unchanged, so no `EVALS.md` number is invalidated.
+
+   **The objection to weigh** is §8's rule that an eval question is never edited
+   and defective ones are retired with new ids. That rule is scoped to *"because
+   the model got it wrong"*, and this is not that: the question text and the
+   expected answer are both untouched, and the gold is a reference for the
+   *answer*, not a target the model must reproduce — scoring compares result
+   sets. Making the reference cheaper does not make the question easier. But it
+   is still an edit to a benchmark artifact, and that is a decision rather than a
+   detail.
+
+2. **Retire `hard-001` and issue a new id** carrying the cheap query. Follows
+   §8's letter exactly and costs the dev-split its only question of this shape
+   plus the comparability of every run that scored the old id.
+
+3. **Accept it and document the condition.** `hard-001` is the most expensive
+   reference query in the corpus by two orders of magnitude, and the corpus
+   *should* contain one. Costs a known flake under load, which the 20-run budget
+   would then be measuring forever rather than settling.
+
 
 ### B-11 — Production deployment
 
