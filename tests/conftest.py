@@ -300,22 +300,16 @@ def isolated_quota_snapshot():
     quota.clear()
 
 
-@pytest.fixture(autouse=True)
-def isolated_schema_cache():
-    """The sixth, and the one with a way to hold something that is not real.
-
-    The ledger, the history store, the answer cache and the quota snapshot can
-    all be *polluted* by a test. This one can be **falsified**: a test that
-    monkeypatches `get_schema` to return a hand-built `Schema` leaves that fake
-    cached behind, and the next test builds its prompt from a database that
-    does not exist.
-
-    It costs the suite a real introspection per test that needs one, which is
-    what the suite already paid before T6 existed. Correctness is not the thing
-    to spend for speed here.
-    """
-    from api.db import schema_cache
-
-    schema_cache.clear()
-    yield
-    schema_cache.clear()
+# --- there was a sixth isolator here, and B-14 removed the thing it guarded ---
+#
+# `isolated_schema_cache` cleared `api/db/schema_cache.py` around every test.
+# It was the one isolator that could hold something **false** rather than merely
+# stale: a test monkeypatching `get_schema` to return a hand-built `Schema` left
+# that fake cached behind, and the next test built its prompt from a database
+# that does not exist.
+#
+# Iteration 9 T4 retired the cache (B-14), so there is no slot left to falsify —
+# every caller reads the catalog. This note stays because the hazard was real and
+# is the kind of thing that gets re-introduced by someone adding a cache back
+# without knowing what it cost: any future memo of the schema needs an isolator
+# here on the day it lands, not the iteration after.

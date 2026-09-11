@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from typing import NamedTuple
 
 from api.agent.glossary import render_glossary
 from api.agent.prompts import (
@@ -52,8 +53,7 @@ from api.agent.prompts import (
     render_schema,
     render_transcript,
 )
-from api.db.introspection import SchemaIntrospectionError
-from api.db.schema_cache import cached_schema
+from api.db.introspection import SchemaIntrospectionError, get_schema
 
 #: Characters of the hash kept. Twelve hex digits is 48 bits -- unambiguous for
 #: a handful of prompt versions and short enough to read in a table.
@@ -115,10 +115,26 @@ def live_schema_fingerprint(
     return fingerprint(f"{rendering}\n{render_schema(schema, rendering)}")
 
 
+class DeployedPrompt(NamedTuple):
+    """What one request needs from one schema read (Iteration 9 T3).
+
+    A tuple rather than three return values because the **schema and the
+    fingerprints must come from the same read**. Returning only the hashes and
+    letting the caller read the schema again is what the path did until T3, and
+    it cost a warm miss 3 of its 9 catalog round trips; worse, the two reads
+    could in principle straddle a schema change and produce a cache key
+    describing a schema the prompt never saw.
+    """
+
+    schema: Schema
+    schema_fingerprint: str
+    prompt_fingerprint: str
+
+
 def deployed_fingerprints(
     *, rendering: str, glossary: bool
-) -> tuple[str, str] | None:
-    """`(schema_fp, prompt_fp)` for a live configuration, or `None`.
+) -> DeployedPrompt | None:
+    """The schema and `(schema_fp, prompt_fp)` for a live configuration, or `None`.
 
     **This function is why the schema read lives in `api/agent/` rather than in
     the endpoint.** `api/main.py` is asserted to reach the database only through
@@ -135,15 +151,21 @@ def deployed_fingerprints(
     category it already uses.
     """
     try:
-        # `cached_schema` since T6 (AC9). This runs on **every** request,
-        # including cache hits, so it was the single largest thing T4 added to
-        # the request path -- 99ms of introspection to compute a key whose whole
-        # purpose is to avoid work.
-        schema = cached_schema()
+        # **The request's only schema read** (Iteration 9 T3). The schema goes
+        # back with the hashes so `answer()` does not repeat it.
+        #
+        # It went through `cached_schema()` from Iteration 7 T6 until Iteration
+        # 9 T4, when B-14 retired that module. The cache was justified on
+        # introspection costing 52 round trips and 99ms; B-10 replaced
+        # SQLAlchemy's `Inspector` with three catalog queries and took it to 9
+        # and 20ms, which left the cache saving 13ms of a request measured
+        # between 1,431ms and 5,901ms. `012-board.md` §2.1 has the numbers.
+        schema = get_schema()
     except SchemaIntrospectionError:
         return None
 
-    return (
+    return DeployedPrompt(
+        schema,
         live_schema_fingerprint(schema, rendering),
         loop_prompt_fingerprint(glossary=glossary),
     )
