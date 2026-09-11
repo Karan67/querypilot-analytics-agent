@@ -184,7 +184,7 @@ and it was written *before* the change for that reason.
 | ~~B-14~~ | did the schema cache still earn its weight after B-10? | **discharged 2026-09-11** at Iteration 9 T4 -- it did not; the cache is retired |
 | **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
-| **B-13** | the gold-query pair flakes — **`hard-001` exceeds the 10s ceiling under load** | **diagnosed 2026-09-11**; hypothesis 1 was right and had been eliminated. The fix is an open decision |
+| ~~B-13~~ | the gold-query pair flaked — `hard-001` exceeded the 10s ceiling under load | **discharged 2026-09-11** — the reference query now pre-aggregates: 48x faster, identical result, fingerprints unmoved |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
 

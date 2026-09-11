@@ -451,7 +451,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
-| **B-13** | The gold-query test pair fails intermittently — **`hard-001` exceeds the 10s ceiling under load** | Iteration 8 T2 | **diagnosed 2026-09-11**; the fix is an open decision, see the entry |
+| ~~B-13~~ | ~~The gold-query test pair fails intermittently~~ — `hard-001` exceeded the 10s ceiling under load | Iteration 8 T2 | **discharged 2026-09-11** — diagnosed, then fixed by pre-aggregating the reference query |
 | ~~B-14~~ | ~~Does the schema cache still earn its weight after B-10?~~ | Iteration 8 T5 | **discharged 2026-09-11** at Iteration 9 T4 — it did not; the cache is retired |
 | ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
 
@@ -1252,9 +1252,32 @@ failure can hide and there is not yet evidence to justify one.
 > exceed the ceiling on this hardware, which is sufficient to act on and does not
 > require the older events to be explained.
 >
-> **The fix is open, and `--` see the three options below.** The observation
-> budget of 20 clean CI runs stands meanwhile: it stops being a question about
-> the *environment* and becomes one about whether the chosen fix holds.
+> **RESOLVED 2026-09-11 by option 1 below.**
+>
+> | | |
+> |---|---|
+> | **root cause** | a correlated subquery re-executing its inner aggregate once per row — 3,503 loops, 87,784 buffer accesses — exceeding Gate 3's 10s `statement_timeout` on cold shared buffers under load |
+> | **resolution** | `hard-001`'s `gold_sql` pre-aggregates per genre instead. **202.9ms → 4.2ms in the container, a 48× improvement**; on the host, 7.3ms and **1,366× headroom** against the ceiling |
+> | **result unchanged** | one row, `count = 1539`, `row_count=1`, not truncated, Gate 2 clean |
+> | **benchmark record intact** | `split_fingerprint` is `ec65d5ba81d6` before *and* after — the value `EVALS.md` records — because it hashes `(id, split)` pairs, and the dataset fingerprint hashes relation row counts. Neither includes `gold_sql` |
+>
+> **The 20-run observation budget is withdrawn, not completed.** It existed to
+> decide whether an unexplained flake was environmental. The cause is known and
+> removed, so counting clean runs would be measuring the absence of a bug that no
+> longer has a mechanism. What remains true is the general fact the budget was
+> never about: this machine can run the suite 3× slow under load.
+>
+> **What the question still tests is unchanged**, which is the whole argument for
+> editing the gold rather than retiring the id. Scoring compares result sets, so
+> the model still faces the same per-group comparison and still tends to answer
+> it with a correlated subquery — only the *reference* got cheaper. Gate 2's own
+> correlated-subquery coverage lives in `tests/test_validator.py` and never
+> depended on this question, and `expert-010` still carries one in the corpus.
+>
+> **Charter §8's never-edit-a-question rule was read, not waived.** It forbids
+> editing *"because the model got it wrong"*. The model did not get this wrong;
+> a reference query tripped an invariant the product enforces. Question text and
+> expected answer are untouched.
 
 **Three ways to close it, and a constraint that rules one out.**
 
