@@ -62,6 +62,21 @@ services:
       QUERYPILOT_LLM_PROVIDER: ${QUERYPILOT_LLM_PROVIDER:-groq}
       QUERYPILOT_LLM_MODEL: ${QUERYPILOT_LLM_MODEL:-openai/gpt-oss-120b}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Who may spend that quota (Iteration 10, specs/013-auth.md). A JSON
+      # object of name to secret, read at request time so rotating a credential
+      # is an environment change and not a rebuild (AC9).
+      #
+      # **No default credential is shipped here, deliberately.** A default
+      # secret is worse than none: it survives into a deployment, it is in a
+      # public repository, and it looks like a configured system. The default
+      # below is *empty*, which fails closed -- every route except /health
+      # returns 401, and /health reports `auth.configured: false` with a message
+      # naming this variable, so an operator can see why rather than guess.
+      #
+      # `.env.example` carries a local-development value, on the same terms as
+      # the Postgres passwords beside it: copying it is a deliberate act, and
+      # `cp .env.example .env && docker compose up -d` has to keep working.
+      QUERYPILOT_USERS: ${QUERYPILOT_USERS:-}
       # Operational history (Iteration 7). SQLite, deliberately NOT a schema in
       # the Postgres target: charter §5 wants the metadata store separate, and
       # §4 means the only Postgres credential this container holds is read-only,

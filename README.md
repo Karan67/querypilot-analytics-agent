@@ -7,11 +7,13 @@ Read [`specs/000-project.md`](specs/000-project.md) first — it is the source o
 truth for intent, scope, non-goals, and the safety rules that bind every
 iteration.
 
-**Current state: Iteration 9 (The board).** `docker compose up` gives you a working
-page at **<http://localhost:8000>** — ask a question, get the answer, the SQL
-that produced it, and the agent's steps. Behind it: a hand-written agent loop
-that reads its own execution errors and retries, a four-gate safety layer
-nothing bypasses, and a 50-question benchmark with a held-out split.
+**Current state: Iteration 10 (Authentication).** `docker compose up` gives you a working
+page at **<http://localhost:8000>** — sign in, ask a question, get the answer,
+the SQL that produced it, and the agent's steps. Behind it: a hand-written agent
+loop that reads its own execution errors and retries, a four-gate safety layer
+nothing bypasses, and a 50-question benchmark with a held-out split. Every
+endpoint but `/health` now needs a credential, because `POST /ask` spends real
+provider quota — see [Who can ask](#who-can-ask-authentication).
 
 Every accuracy number lives in [`EVALS.md`](EVALS.md) with its caveats, and the
 numbers are deliberately not repeated here — the honest reading of the held-out
@@ -33,7 +35,7 @@ estimate, and each carries the caveat that makes it true.
 | a repeated question | **0 tokens** | the answer cache; caveat below |
 | free-tier ceiling | **200,000 tokens/day** ≈ 180 questions | `010-hardening.md` §2.5 |
 | schema introspection | **9 statements, 29.0ms** | `011-ship.md` B-10, Iteration 8 T5 |
-| the test suite | **1,217 tests, ~60s** | `docker compose up`, then `pytest` |
+| the test suite | **1,348 tests, ~60s** | `docker compose up`, then `pytest` |
 
 Three of those need their caveat stated rather than footnoted:
 
@@ -103,19 +105,33 @@ Expected:
     "database": "chinook",
     "public_tables": 12
   },
-  "history": { "writable": true, "error": "" }
+  "history": { "writable": true, "error": "" },
+  "auth": { "configured": true, "error": "" }
 }
 ```
 
 `user` must read `querypilot_ro`. If it reads anything else, the API is holding
 a privileged credential and Gate 1 of the safety layer is not in place.
 
+`auth` reports whether the credential map parsed. `/health` is the **only**
+endpoint that answers without a credential, so if everything else is returning
+`401` this field is where the reason is: `configured: false` with a message
+naming the variable to set means the gate is refusing because it has nothing to
+check against, not because your password is wrong.
+
 `history` reports whether the question log can be written. A failure there shows
 up as `degraded_history` and **still returns 200**: recording a question and
 answering it are independent, and reporting the service as down because logging
 broke would be the cascade that arrangement exists to prevent.
 
-Then open **<http://localhost:8000>** and ask something:
+Then open **<http://localhost:8000>**. The browser will ask for a name and
+password: that is HTTP Basic, and the values come from `QUERYPILOT_USERS` in
+your `.env` — `analyst` / `localdevonly-change-me` if you copied `.env.example`
+unchanged. **Change it before this is reachable by anyone else**, and read
+[Who can ask](#who-can-ask-authentication) for what this does and does not
+protect.
+
+Ask something:
 
 > *How many tracks are in the library?*
 > *Show the 10 genres with the most tracks, giving the genre name and the count.*
@@ -132,7 +148,8 @@ only setup instruction.
 Or ask it over HTTP:
 
 ```bash
-curl -X POST http://localhost:8000/ask \
+curl -u analyst:localdevonly-change-me \
+  -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question":"What is the total value of all invoices?"}'
 ```
@@ -163,7 +180,8 @@ Under each answer is a **Was this answer useful?** control, and the mark it
 stores shows up on the history page:
 
 ```bash
-curl -X POST http://localhost:8000/feedback \
+curl -u analyst:localdevonly-change-me \
+  -X POST http://localhost:8000/feedback \
   -H "Content-Type: application/json" \
   -d '{"id":"<the id from /ask>","rating":1,"note":"optional"}'
 ```
@@ -185,7 +203,7 @@ the exact question text plus fingerprints of the schema and the prompt, so a
 schema change or a prompt edit invalidates it — a change to the *data* does not.
 
 ```bash
-curl http://localhost:8000/quota
+curl -u analyst:localdevonly-change-me http://localhost:8000/quota
 ```
 
 reports what the provider last said about its limits. It is worth knowing that
@@ -194,6 +212,58 @@ the free tier does not refuse when its per-minute token bucket runs low — it
 a user would ever see. That is what this endpoint and the page's banner exist to
 explain. It reports two buckets and not three: the 200,000-tokens-per-day limit
 appears in no response header at all, only in the body of a 429.
+
+---
+
+## Who can ask (authentication)
+
+Every endpoint except `/health` requires **HTTP Basic** credentials. It exists
+for one reason: `POST /ask` spends real provider quota, and an unauthenticated
+one is an open invitation to spend somebody else's — 1,208 tokens per anonymous
+question, against a measured ceiling of 200,000 tokens a day.
+
+Identities live in `QUERYPILOT_USERS`, a JSON object of name to secret:
+
+```bash
+QUERYPILOT_USERS='{"analyst":"<a long random string>","ops":"<another>"}'
+```
+
+Add a caller by adding an entry. Rotate a secret by changing it — the value is
+read per request, so no rebuild and no code change. Generate one with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+
+### What this protects, and what it does not
+
+**It is a spend gate, not transport security.** Basic sends the secret
+base64-encoded on every request, which is encoding and not encryption. Over
+plain HTTP anyone on the network path can read it and replay it. TLS is a
+deployment concern and is tracked separately; until it exists, treat these
+credentials as protecting a localhost or trusted-network service and nothing
+more.
+
+**There is no per-user separation.** Every signed-in identity has the same
+capabilities and sees the same data — including `/history`, where **every
+signed-in user sees every question anybody has asked**, with its SQL and its
+cost. Names exist so that a credential can be revoked individually, not so that
+two people's work is kept apart. The answer cache is shared for the same reason:
+the answer to a question does not depend on who asked it.
+
+**There is no logout.** A browser holds Basic credentials until the tab closes,
+and a wrong password entered into the dialog is awkward to clear. That is the
+price of adding a gate with no login page, no cookie, no session store and no
+new dependency.
+
+**Unset means locked, not open.** With `QUERYPILOT_USERS` empty or malformed,
+every protected route returns `401` and `/health` reports `auth.configured:
+false` with a message naming the variable. A deployment that forgets to set it
+is refused, never silently public — the failure mode that makes an unset
+variable look exactly like a working one is the thing this design spends its
+complexity avoiding.
+
+**The secret is never logged.** It does not appear in an error message, a trace,
+a history row, or the page — the same rule `GROQ_API_KEY` has. A refused request
+gets one identical `401` whatever went wrong, so the response cannot be read as
+a hint about whether the name exists.
 
 ---
 

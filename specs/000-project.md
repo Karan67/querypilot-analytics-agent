@@ -344,6 +344,7 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 7 | Hardening | History, ~~feedback,~~ latency and cost logging, rate limiting, caching — see the amendment below |
 | 8 | Ship | ~~Deployed~~, evals running in CI, README with honest numbers, ~~demo video~~, **and feedback** — see the amendment below |
 | 9 | The board | B-6, B-13 and B-14 each leave §8's board or carry a dated reason for staying — see [`012-board.md`](012-board.md). **Closed 2026-09-11**, merged as PR #11 |
+| 10 | Authentication | An unauthenticated request is refused and **spends nothing**; `/health` still answers — see [`013-auth.md`](013-auth.md). **Added 2026-09-12; see the note below** |
 
 > **EXTENDED 2026-09-11, at Iteration 9 T1.** This map ended at 8, because it
 > was written as a route to a shipped system and the system shipped. What it did
@@ -376,6 +377,31 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 > stop being carried silently, and none of them left quietly — one was
 > discharged, one was halved and said so, and one was given a countable
 > deadline.
+
+> **EXTENDED AGAIN 2026-09-12, at Iteration 10 T1.** The row above is added the
+> way Iteration 9's was, and for a related reason: the map has outlived the plan
+> it was, and quietly appending to it without saying so would make it a record
+> of what happened rather than of what was decided.
+>
+> **This iteration was carved out of B-11, not added beside it.** Deployment is
+> blocked on three things — *whose key a deployed instance spends, where the
+> secret lives, and who may spend it* — and **only the third is engineering**.
+> The first two are decisions about custody and a platform bill, which no amount
+> of code settles. `011-ship.md` §4 had already ruled that authentication "is its
+> own iteration"; this is that iteration, taken **before** deployment rather than
+> inside it, so that a platform conversation cannot stall work that does not
+> depend on it.
+>
+> **Its "done when" is a refusal, not a feature.** The criterion is that an
+> unauthenticated request is turned away *and costs nothing* — `013-auth.md` §2.2
+> measured one anonymous question at **1,208 tokens**, which against a 200,000
+> daily ceiling is about 165 questions, or under half an hour of sustained
+> asking. The unspent token is the property worth asserting; the login prompt is
+> a side effect.
+>
+> **B-11 stays open and is not advanced by this.** Two of its three blockers are
+> untouched, and the honest description of what changes is that the remaining
+> conversation gets shorter, not that it gets answered.
 
 > **AMENDED 2026-09-10, at Iteration 8 T1: deployment and the demo video are
 > deferred.** The original text is struck above rather than rewritten, for the
@@ -449,8 +475,9 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 | ~~B-9~~ | ~~AC14's live injection test asserts a model behaviour~~ | Iteration 7 T4 | **discharged 2026-09-10** at Iteration 8 T3 |
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
-| **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task |
+| **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task. **One of three blockers discharged 2026-09-14** by Iteration 10; see the entry below |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
+| **B-15** | `tests/test_auth.py` cannot run without a database it does not need | Iteration 10 T4 | open — small, and recorded so it is not rediscovered |
 | ~~B-13~~ | ~~The gold-query test pair fails intermittently~~ — `hard-001` exceeded the 10s ceiling under load | Iteration 8 T2 | **discharged 2026-09-11** — diagnosed, then fixed by pre-aggregating the reference query |
 | ~~B-14~~ | ~~Does the schema cache still earn its weight after B-10?~~ | Iteration 8 T5 | **discharged 2026-09-11** at Iteration 9 T4 — it did not; the cache is retired |
 | ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
@@ -1354,6 +1381,57 @@ empty volume on every push (AC11), a pinned interpreter and a lockfile so a
 build is reproducible (AC4, AC5), and a healthcheck on the `api` service so an
 orchestrator can tell a running container from a working one (AC12). What is
 missing is a decision, and the decision is not the assistant's to make.
+
+> **BLOCKER 3 DISCHARGED 2026-09-14, at Iteration 10. The other two are
+> untouched, and B-11 stays open.**
+>
+> *Who may spend it* was the one blocker of the three that was engineering, so
+> it was carved out into its own iteration and built: HTTP Basic against an
+> env-configured credential map, every endpoint but `/health` refused without
+> one, and an unconfigured deployment failing **closed** rather than open. See
+> [`013-auth.md`](013-auth.md).
+>
+> **It is worth being precise about what this does and does not change**, because
+> "authentication shipped" is exactly the kind of sentence that gets read as
+> "deployment is unblocked". Blocker 1 — *whose key* — is unchanged: a credential
+> gate decides who may spend the quota, not whose quota it is, and the 200,000-
+> token ceiling still belongs to one person's free tier. Blocker 2 — *where the
+> secret lives* — is arguably slightly **worse**, because there are now two
+> secrets to store rather than one.
+>
+> What it does buy is that blocker 1 stops being a denial-of-service surface and
+> becomes a bill with a known list of people attached to it. That is a smaller
+> conversation, not a finished one.
+>
+> **TLS belongs to this entry.** Basic sends the secret base64-encoded on every
+> request, which is encoding and not encryption; over plain HTTP it is readable
+> and replayable by anyone on the path. Iteration 10 states this in the README
+> rather than letting a reader infer more safety than exists, and transport
+> security is a deployment concern that lands here with the rest.
+
+### B-15 — `tests/test_auth.py` cannot run without a database it does not need
+
+Opened at Iteration 10 T4, and **found by running the suite with the stack
+down** rather than by reasoning about it.
+
+The gate runs above routing, so a refused request never reaches a handler and
+needs no database — which is part of what the negative suite asserts. The suite
+skips anyway: `configured_database` in `tests/conftest.py` is session-scoped and
+autouse, so an unreachable database skips every test in the project, these
+included. Measured: all 64 tests in the file skipped.
+
+**CI is unaffected**, and that is why this is small rather than urgent.
+`QUERYPILOT_TESTS_REQUIRE_DATABASE=1` turns the skip into a failure, and
+`ci/require_executed_tests.py` asserts a floor on tests actually executed. The
+exposure is a developer with the stack down, who gets a green-looking run that
+never exercised the gate — the same green-and-empty shape `011-ship.md` §2.1
+measured, in a smaller costume.
+
+The fix is not obviously worth its complexity: splitting the autouse fixture so
+that database-independent tests survive its skip means deciding, per test, which
+kind it is, and getting that wrong in the *other* direction gives a test that
+runs without the database it silently needed. Recorded so the next person meets
+it as a known limitation rather than as a surprise.
 
 ### B-12 — Demo video
 

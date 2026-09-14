@@ -21,7 +21,6 @@ import threading
 import time
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api.agent.fingerprints import (
     fingerprint,
@@ -34,13 +33,7 @@ from api.agent.single_shot import CATEGORY_NO_SQL
 from api.db.execution import ExecutionResult
 from api.http import cache
 from api.llm.base import TokenUsage
-from api.main import app
 from api.store import history
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 def _always(_value) -> bool:
@@ -315,7 +308,7 @@ class _CountingAgent:
         )
 
 
-def test_a_repeated_question_costs_zero_tokens(client, monkeypatch):
+def test_a_repeated_question_costs_zero_tokens(authed_client, monkeypatch):
     """**The headline, and the criterion the plan insisted on.**
 
     Not a stopwatch. The second request would be faster with no cache at all --
@@ -325,8 +318,8 @@ def test_a_repeated_question_costs_zero_tokens(client, monkeypatch):
     agent = _CountingAgent()
     monkeypatch.setattr("api.main.answer", agent)
 
-    first = client.post("/ask", json={"question": "how many tracks?"}).json()
-    second = client.post("/ask", json={"question": "how many tracks?"}).json()
+    first = authed_client.post("/ask", json={"question": "how many tracks?"}).json()
+    second = authed_client.post("/ask", json={"question": "how many tracks?"}).json()
 
     assert agent.calls == 1, "the second question was answered by the provider again"
 
@@ -343,7 +336,7 @@ def test_a_repeated_question_costs_zero_tokens(client, monkeypatch):
     assert second["sql"] == first["sql"]
 
 
-def test_a_hit_gets_its_own_id_and_is_recorded_as_a_hit(client, monkeypatch):
+def test_a_hit_gets_its_own_id_and_is_recorded_as_a_hit(authed_client, monkeypatch):
     """A hit is still a question somebody asked, so it is still a row.
 
     It gets a **new** id: feedback attaches to an answer given to a person, and
@@ -351,8 +344,8 @@ def test_a_hit_gets_its_own_id_and_is_recorded_as_a_hit(client, monkeypatch):
     """
     monkeypatch.setattr("api.main.answer", _CountingAgent())
 
-    first = client.post("/ask", json={"question": "how many tracks?"}).json()
-    second = client.post("/ask", json={"question": "how many tracks?"}).json()
+    first = authed_client.post("/ask", json={"question": "how many tracks?"}).json()
+    second = authed_client.post("/ask", json={"question": "how many tracks?"}).json()
 
     assert first["id"] != second["id"]
 
@@ -362,7 +355,7 @@ def test_a_hit_gets_its_own_id_and_is_recorded_as_a_hit(client, monkeypatch):
     assert rows[second["id"]]["cache_hit"] == 1
 
 
-def test_the_recorded_tokens_sum_to_what_was_billed(client, monkeypatch):
+def test_the_recorded_tokens_sum_to_what_was_billed(authed_client, monkeypatch):
     """**Resolved at T4**, and the reason a hit records zero rather than
     replaying the original figures.
 
@@ -373,7 +366,7 @@ def test_the_recorded_tokens_sum_to_what_was_billed(client, monkeypatch):
     monkeypatch.setattr("api.main.answer", _CountingAgent(tokens=1069))
 
     for _ in range(4):
-        client.post("/ask", json={"question": "how many tracks?"})
+        authed_client.post("/ask", json={"question": "how many tracks?"})
 
     rows = history.recent()
     assert len(rows) == 4
@@ -382,7 +375,7 @@ def test_the_recorded_tokens_sum_to_what_was_billed(client, monkeypatch):
     assert sum(row["cache_hit"] for row in rows) == 3
 
 
-def test_a_failed_question_is_asked_again(client, monkeypatch):
+def test_a_failed_question_is_asked_again(authed_client, monkeypatch):
     """End to end, the rule `_is_cacheable` encodes: a failure is not kept.
 
     With no expiry, caching this would make the question unanswerable until the
@@ -391,14 +384,14 @@ def test_a_failed_question_is_asked_again(client, monkeypatch):
     agent = _CountingAgent(ok=False)
     monkeypatch.setattr("api.main.answer", agent)
 
-    client.post("/ask", json={"question": "unanswerable"})
-    second = client.post("/ask", json={"question": "unanswerable"})
+    authed_client.post("/ask", json={"question": "unanswerable"})
+    second = authed_client.post("/ask", json={"question": "unanswerable"})
 
     assert agent.calls == 2
     assert second.json()["cache_hit"] is False
 
 
-def test_a_cache_hit_does_not_build_a_provider(client, monkeypatch):
+def test_a_cache_hit_does_not_build_a_provider(authed_client, monkeypatch):
     """**The provider is never constructed on a hit**, not merely unused.
 
     Which means a cached answer survives a provider outage or a revoked key --
@@ -406,24 +399,24 @@ def test_a_cache_hit_does_not_build_a_provider(client, monkeypatch):
     was started and never used.
     """
     monkeypatch.setattr("api.main.answer", _CountingAgent())
-    client.post("/ask", json={"question": "how many tracks?"})
+    authed_client.post("/ask", json={"question": "how many tracks?"})
 
     def no_provider_today(*_args, **_kwargs):
         raise AssertionError("a hit must not reach the provider factory")
 
     monkeypatch.setattr("api.main.get_provider", no_provider_today)
 
-    body = client.post("/ask", json={"question": "how many tracks?"}).json()
+    body = authed_client.post("/ask", json={"question": "how many tracks?"}).json()
     assert body["cache_hit"] is True
     assert body["rows"] == [[3503]]
 
 
-def test_the_row_records_which_schema_and_prompt_produced_it(client, monkeypatch):
+def test_the_row_records_which_schema_and_prompt_produced_it(authed_client, monkeypatch):
     """The two columns have existed since T2 and were always empty. They are the
     same two numbers the key is built from, which is what lets a stored answer
     still be interpreted after either one moves."""
     monkeypatch.setattr("api.main.answer", _CountingAgent())
-    client.post("/ask", json={"question": "how many tracks?"})
+    authed_client.post("/ask", json={"question": "how many tracks?"})
 
     row = history.recent()[0]
     assert row["prompt_fp"] == loop_prompt_fingerprint(glossary=True)
@@ -610,3 +603,123 @@ def test_the_schema_path_is_shared_with_the_eval_runner_deliberately():
         f"introspection path; its api.db imports are "
         f"{sorted(m for m in imported if m.startswith('api.db'))}"
     )
+
+
+# --- Iteration 10 Q-E: the cache stays shared, and that is a decision ---------
+#
+# Resolved Q-E kept `cache_key(question, schema_fp, prompt_fp)` unchanged: the
+# answer to "how many tracks are there" does not depend on who asked, so
+# partitioning it per identity would multiply the provider calls by the number
+# of callers to protect nothing. These tests pin that decision so the day it
+# stops being true is a day somebody notices.
+
+
+def test_the_cache_key_takes_no_identity():
+    """**The structural half**, asserted on the signature rather than the docs.
+
+    Authorisation is a non-goal of Iteration 10: every identity has the same
+    capabilities, so two callers asking the same question under the same schema
+    and prompt must get the same key. The moment a key could carry a user, a
+    cached answer could be served across an authorisation boundary that does not
+    exist yet -- which is exactly when this test should stop being true, and
+    exactly when somebody should have to come here and say so.
+    """
+    import inspect
+
+    parameters = list(inspect.signature(cache.cache_key).parameters)
+
+    assert parameters == ["question", "schema_fp", "prompt_fp"], (
+        f"cache_key takes {parameters}; if an identity has been added, the "
+        f"answer cache now crosses a boundary Iteration 10 said it would not"
+    )
+
+
+def test_nothing_in_the_key_material_mentions_an_identity():
+    """The stronger half: a parameter could be renamed and the behaviour kept.
+
+    Asserted against the parsed AST of `cache_key`, never by grepping -- a
+    substring search for "user" over this file would match this docstring, which
+    is the single most repeated bug in this repository.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(cache.cache_key))
+    names = {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    } | {
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    }
+
+    leaked = {n for n in names if any(w in n.lower() for w in ("user", "identity", "auth"))}
+    assert not leaked, f"cache_key reads {sorted(leaked)}, so the key is per-caller"
+
+
+def test_two_identities_share_one_answer_and_one_provider_call(monkeypatch):
+    """**The behavioural half, and the property that keeps a hit free.**
+
+    Two *different* authenticated callers, one question, one provider call. The
+    structural tests above would both pass against a key that happened to be
+    per-caller for some other reason -- a request header folded in upstream, an
+    identity baked into the prompt fingerprint -- so this asks the question the
+    way a deployment does.
+
+    Proved by a call that did not happen rather than by comparing keys, for the
+    reason this whole file states: a cache that still calls the provider is
+    invisible to timing and obvious to a counter.
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from api.http.auth import USERS_ENV
+    from api.main import app
+
+    monkeypatch.setenv(
+        USERS_ENV, json.dumps({"analyst": "one-secret", "ops": "another-secret"})
+    )
+    agent = _CountingAgent()
+    monkeypatch.setattr("api.main.answer", agent)
+
+    analyst = TestClient(app)
+    analyst.auth = ("analyst", "one-secret")
+    ops = TestClient(app)
+    ops.auth = ("ops", "another-secret")
+
+    first = analyst.post("/ask", json={"question": "how many tracks?"}).json()
+    second = ops.post("/ask", json={"question": "how many tracks?"}).json()
+
+    assert agent.calls == 1, (
+        "the second identity paid for an answer the first had already bought; "
+        "the cache has been partitioned per caller"
+    )
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is True
+    assert second["usage"]["total_tokens"] == 0
+    assert second["rows"] == first["rows"]
+
+
+def test_the_two_identities_are_genuinely_different(monkeypatch):
+    """The counter-assertion for the test above.
+
+    If both clients somehow presented the same credential -- a fixture that
+    overwrote one, a client that dropped its auth -- the sharing test would pass
+    while proving nothing about two identities. So each credential is checked to
+    work only for its own name.
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from api.http.auth import USERS_ENV
+    from api.main import app
+
+    monkeypatch.setenv(
+        USERS_ENV, json.dumps({"analyst": "one-secret", "ops": "another-secret"})
+    )
+    client = TestClient(app)
+
+    assert client.get("/quota", auth=("analyst", "one-secret")).status_code == 200
+    assert client.get("/quota", auth=("ops", "another-secret")).status_code == 200
+    assert client.get("/quota", auth=("analyst", "another-secret")).status_code == 401
+    assert client.get("/quota", auth=("ops", "one-secret")).status_code == 401
