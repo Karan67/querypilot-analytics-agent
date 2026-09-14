@@ -74,6 +74,8 @@ FROZEN_SCHEMA_FINGERPRINTS = {
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 @pytest.mark.parametrize("rendering", SCHEMA_RENDERINGS)
 def test_ac9_the_rendered_schema_is_byte_identical(schema, rendering):
     """**The gate.** If this fails, §4.3 says revert; it does not say widen."""
@@ -106,6 +108,8 @@ def test_every_rendering_has_a_frozen_fixture():
         assert path.stat().st_size > 500, f"{path.name} is suspiciously small"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac9_the_structural_map_is_unchanged_field_by_field(schema):
     """The same claim at field granularity, so a failure names the column.
 
@@ -141,6 +145,8 @@ def test_ac9_the_structural_map_is_unchanged_field_by_field(schema):
     assert current == frozen
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 @pytest.mark.parametrize("rendering,expected", sorted(FROZEN_SCHEMA_FINGERPRINTS.items()))
 def test_the_schema_fingerprints_reproduce(schema, rendering, expected):
     assert live_schema_fingerprint(schema, rendering) == expected
@@ -162,6 +168,7 @@ RECORDED_EVAL_SCHEMA_FINGERPRINTS = {
 }
 
 
+@pytest.mark.needs_db
 @pytest.mark.parametrize(
     "rendering,expected", sorted(RECORDED_EVAL_SCHEMA_FINGERPRINTS.items())
 )

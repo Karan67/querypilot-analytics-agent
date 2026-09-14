@@ -123,6 +123,8 @@ def describe_gold_result(question_id: str, result) -> str:
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_every_gold_query_executes(dataset, gold_results):
     failures = [
         describe_gold_result(q.id, gold_results[q.id])
@@ -132,6 +134,8 @@ def test_every_gold_query_executes(dataset, gold_results):
     assert not failures, "reference queries must run:\n" + "\n".join(failures)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_every_gold_query_returns_at_least_one_row(dataset, gold_results):
     """**A zero-row gold is a broken question, not a hard one.** It makes every
     wrong answer that also returns nothing score as correct — and "returns
@@ -148,6 +152,8 @@ def test_every_gold_query_returns_at_least_one_row(dataset, gold_results):
     assert not empty, "reference queries returning no rows:\n" + "\n".join(empty)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_no_gold_query_is_truncated(dataset, gold_results):
     """A gold at the 1000-row cap makes scoring arbitrary: two correct queries
     with different unspecified orderings would be truncated to different
@@ -161,6 +167,8 @@ def test_no_gold_query_is_truncated(dataset, gold_results):
     assert not truncated, f"reference queries hitting the row cap: {truncated}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_no_gold_query_returns_duplicate_identical_rows(dataset, gold_results):
     """Identical duplicate rows in a gold almost always mean an ambiguous
     grouping, and this check is in the suite because one did.
@@ -195,6 +203,8 @@ def test_d2_every_easy_question_carries_an_expect(dataset):
     assert not without, f"easy questions with no `expect` sanity check: {without}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_d2_expect_holds_against_the_live_database(dataset, gold_results):
     """The check that would catch a typo in a gold query — a `WHERE` that
     silently filters everything, a join that fans rows out."""
@@ -219,6 +229,8 @@ def test_d2_expect_holds_against_the_live_database(dataset, gold_results):
 # --- AC5: coverage is derived from the schema, not from taste --------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac5_every_relation_is_covered(dataset, schema):
     """Coverage is computed against `get_schema()`, so a relation added to the
     database breaks this test until someone writes a question for it. That
@@ -229,6 +241,8 @@ def test_ac5_every_relation_is_covered(dataset, schema):
     assert not missing, f"relations with no question: {sorted(missing)}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac5_the_view_is_covered(dataset, schema):
     """Called out separately because a view is where schema grounding fails: it
     has no primary key, no NOT NULL and no foreign keys, so a model
@@ -241,6 +255,8 @@ def test_ac5_the_view_is_covered(dataset, schema):
     assert views and views <= covered, f"uncovered views: {sorted(views - covered)}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac5_every_foreign_key_path_is_covered(dataset, schema):
     """Every FK path needs a question that touches both of its endpoints.
 
@@ -262,6 +278,8 @@ def test_ac5_every_foreign_key_path_is_covered(dataset, schema):
     assert not uncovered, f"foreign-key paths with no question: {uncovered}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac5_the_self_referencing_path_has_a_real_self_join(dataset, schema):
     """`employee.reports_to -> employee` is the one path a coverage rule stated
     in terms of relation names cannot check, because both endpoints are the same
@@ -302,6 +320,8 @@ def test_covers_matches_the_relations_the_gold_query_uses(dataset):
     assert not mismatches, "\n".join(mismatches)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_every_covered_relation_exists(dataset, schema):
     known = {table.name for table in schema.tables}
     unknown = {r for q in dataset.questions for r in q.covers} - known
@@ -469,12 +489,14 @@ def test_unordered_questions_are_the_majority(dataset):
 # --- AC12: the fingerprint --------------------------------------------------
 
 
+@pytest.mark.needs_db
 def test_ac12_the_fingerprint_matches_the_live_database(dataset, configured_database):
     from evals.dataset import verify_fingerprint
 
     verify_fingerprint(dataset)
 
 
+@pytest.mark.needs_db
 def test_ac12_a_drifted_fingerprint_aborts(dataset, configured_database):
     """The failure mode this exists for: a reseeded database producing a number
     that is not comparable to the entries above it in `EVALS.md`. Aborting is

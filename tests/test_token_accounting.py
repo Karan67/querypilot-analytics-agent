@@ -32,7 +32,10 @@ from api.llm.counting import (
     usage_for_call,
 )
 
-pytestmark = pytest.mark.usefixtures("configured_database")
+pytestmark = [
+    pytest.mark.usefixtures('configured_database'),
+    pytest.mark.needs_db,
+]
 
 
 def act(name: str, argument: str = "") -> str:

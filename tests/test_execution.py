@@ -150,6 +150,8 @@ def test_ac3_rejected_query_acquires_no_connection(monkeypatch):
 # --- contract ---------------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_result_is_frozen_and_compares_structurally():
     import dataclasses
 
@@ -187,6 +189,7 @@ def test_ac23_never_raises_on_hostile_input():
 # --- T2: the read-only transaction (AC5-AC9) -------------------------------
 
 
+@pytest.mark.needs_db
 def test_ac5_transaction_is_read_only(configured_database):
     """Asserted against the database, not against the code that sets it."""
     from sqlalchemy import text
@@ -203,6 +206,7 @@ def test_ac5_transaction_is_read_only(configured_database):
             trans.rollback()
 
 
+@pytest.mark.needs_db
 def test_ac9_timeout_is_actually_in_force(configured_database, monkeypatch):
     """`SET LOCAL` outside a transaction is a silent no-op — PostgreSQL only
     warns — so this asserts the *effect*, not that the statement was issued.
@@ -237,6 +241,7 @@ def test_ac9_timeout_is_actually_in_force(configured_database, monkeypatch):
     )
 
 
+@pytest.mark.needs_db
 def test_ac9_timeout_is_enforced_not_merely_set(configured_database, monkeypatch):
     """The behavioural half: a query exceeding the limit is actually killed.
 
@@ -268,6 +273,7 @@ def test_ac9_timeout_is_enforced_not_merely_set(configured_database, monkeypatch
     assert elapsed < 3, f"took {elapsed:.1f}s; the timeout was not enforced"
 
 
+@pytest.mark.needs_db
 def test_ac7_read_only_transaction_refuses_writes_distinctly(configured_database):
     """The read-only transaction is a gate *independent* of role privileges —
     measured to refuse even a superuser.
@@ -292,6 +298,7 @@ def test_ac7_read_only_transaction_refuses_writes_distinctly(configured_database
             trans.rollback()
 
 
+@pytest.mark.needs_db
 def test_ac8_settings_do_not_leak_to_the_next_checkout(configured_database):
     """A leaked `SET` would poison every later query on that pooled connection —
     silently, and in a way no single test of this module would notice."""
@@ -306,6 +313,7 @@ def test_ac8_settings_do_not_leak_to_the_next_checkout(configured_database):
         assert conn.execute(text("SHOW statement_timeout")).scalar_one() == "10s"
 
 
+@pytest.mark.needs_db
 def test_ac6_nothing_is_committed(configured_database):
     """There is no commit anywhere in this module, on either path."""
     import inspect as pyi
@@ -317,6 +325,7 @@ def test_ac6_nothing_is_committed(configured_database):
     assert "rollback()" in source
 
 
+@pytest.mark.needs_db
 def test_ac6_rollback_happens_even_when_the_body_raises(configured_database, monkeypatch):
     """The rollback is in a `finally`. If it were only on the success path, an
     exception would leave the transaction open until the pool recycled it."""
@@ -349,6 +358,7 @@ def test_ac6_rollback_happens_even_when_the_body_raises(configured_database, mon
 # --- T3: results (AC16, AC17, AC18) ----------------------------------------
 
 
+@pytest.mark.needs_db
 def test_ac17_returns_columns_and_rows(configured_database):
     result = execute_sql("SELECT track_id, name FROM track ORDER BY track_id LIMIT 3")
     assert result.ok is True
@@ -359,6 +369,7 @@ def test_ac17_returns_columns_and_rows(configured_database):
     assert result.category == "" and result.error == ""
 
 
+@pytest.mark.needs_db
 def test_ac18_empty_result_is_a_success_with_columns(configured_database):
     """An empty result is not an error. The agent needs the column names to
     answer "none" rather than reporting a failure it cannot fix."""
@@ -370,6 +381,7 @@ def test_ac18_empty_result_is_a_success_with_columns(configured_database):
     assert result.error == ""
 
 
+@pytest.mark.needs_db
 def test_native_types_survive_unconverted(configured_database):
     """Resolved Q-B: numeric fidelity is preserved here and JSON conversion
     happens at the API boundary. A future "helpful" `float()` in this module
@@ -384,6 +396,7 @@ def test_native_types_survive_unconverted(configured_database):
     assert isinstance(result.rows[0][0], datetime), "TIMESTAMP was converted away"
 
 
+@pytest.mark.needs_db
 def test_realistic_analytics_query(configured_database):
     result = execute_sql(
         "SELECT g.name, count(*) AS tracks FROM track t "
@@ -395,6 +408,7 @@ def test_realistic_analytics_query(configured_database):
     assert result.row_count == 5
 
 
+@pytest.mark.needs_db
 def test_the_view_is_queryable(configured_database):
     """Ties `001` AC12 to real execution: a relation the schema tool reports
     must actually be readable through this path."""
@@ -403,6 +417,7 @@ def test_the_view_is_queryable(configured_database):
     assert result.row_count == 3
 
 
+@pytest.mark.needs_db
 def test_set_operations_execute(configured_database):
     """Ties `002` AC25 to real execution."""
     result = execute_sql(
@@ -414,6 +429,7 @@ def test_set_operations_execute(configured_database):
 # --- T4: row cap and truncation (AC11-AC13, AC15) --------------------------
 
 
+@pytest.mark.needs_db
 def test_ac11_ac12_large_result_is_capped_and_flagged(configured_database):
     """Silently returning a capped result would let the agent state a
     conclusion drawn from partial data as fact — worse than an error."""
@@ -424,6 +440,7 @@ def test_ac11_ac12_large_result_is_capped_and_flagged(configured_database):
     assert result.truncated is True
 
 
+@pytest.mark.needs_db
 def test_ac13_boundary_exactly_max_rows_is_not_truncated(configured_database):
     """The off-by-one that matters. Fetching MAX_ROWS + 1 and comparing with
     `>` is what makes exactly-MAX_ROWS report honestly; `>=` would claim a
@@ -434,12 +451,14 @@ def test_ac13_boundary_exactly_max_rows_is_not_truncated(configured_database):
     assert result.truncated is False
 
 
+@pytest.mark.needs_db
 def test_ac13_boundary_one_over_is_truncated(configured_database):
     result = execute_sql(f"SELECT track_id FROM track LIMIT {MAX_ROWS + 1}")
     assert result.row_count == MAX_ROWS
     assert result.truncated is True
 
 
+@pytest.mark.needs_db
 def test_ac15_a_smaller_limit_in_the_query_is_respected(configured_database):
     """No LIMIT is injected, so a query carrying its own smaller limit comes
     back untouched and unflagged."""
@@ -448,6 +467,7 @@ def test_ac15_a_smaller_limit_in_the_query_is_respected(configured_database):
     assert result.truncated is False
 
 
+@pytest.mark.needs_db
 def test_ac15_no_limit_is_injected_into_the_sql(configured_database):
     """The SQL shown to the user must be byte-identical to the SQL that ran.
     Capping happens on the fetch, never by rewriting."""
@@ -463,6 +483,7 @@ def test_ac15_no_limit_is_injected_into_the_sql(configured_database):
 # --- T5-T6: categorisation (AC10, AC19-AC22) -------------------------------
 
 
+@pytest.mark.needs_db
 def test_ac19_bad_column_is_a_database_error(configured_database):
     from api.db.execution import CATEGORY_DATABASE_ERROR
 
@@ -473,6 +494,7 @@ def test_ac19_bad_column_is_a_database_error(configured_database):
     assert "artist_name" in result.error
 
 
+@pytest.mark.needs_db
 def test_ac19_bad_table_is_a_database_error(configured_database):
     from api.db.execution import CATEGORY_DATABASE_ERROR
 
@@ -481,6 +503,7 @@ def test_ac19_bad_table_is_a_database_error(configured_database):
     assert result.sqlstate == "42P01"
 
 
+@pytest.mark.needs_db
 def test_ac20_sqlstate_is_the_categorisation_signal(configured_database):
     """SQLSTATE, not message text. Wording varies with server version and
     locale; the code does not."""
@@ -493,6 +516,7 @@ def test_ac20_sqlstate_is_the_categorisation_signal(configured_database):
     assert "in str(" not in source and ".lower()" not in source
 
 
+@pytest.mark.needs_db
 def test_ac21_hint_is_preserved_when_offered(configured_database):
     """Frequently the answer outright, and free."""
     result = execute_sql("SELECT count(*) FROM track GROUP BY nope")
@@ -500,6 +524,7 @@ def test_ac21_hint_is_preserved_when_offered(configured_database):
     assert "track.name" in result.hint
 
 
+@pytest.mark.needs_db
 def test_ac21_absent_hint_is_not_an_error(configured_database):
     """Measured: Postgres offers no hint for `SELECT artist_name FROM album`.
     The hint is passed through when offered and never depended on."""
@@ -508,6 +533,7 @@ def test_ac21_absent_hint_is_not_an_error(configured_database):
     assert result.error and result.sqlstate == "42703"
 
 
+@pytest.mark.needs_db
 def test_ac10_timeout_is_its_own_category(configured_database, monkeypatch):
     """The agent's correct response to a timeout — narrow the query — differs
     from its response to a bad column, so the categories must differ."""
@@ -570,6 +596,7 @@ def test_ac22_no_result_leaks_connection_details(monkeypatch):
         engine_module.get_engine.cache_clear()
 
 
+@pytest.mark.needs_db
 def test_ac22_database_errors_carry_no_sql_echo_or_docs_link(configured_database):
     """SQLAlchemy's `str(exc)` appends the whole statement and a docs URL.
     `diag.message_primary` is the one line the server actually sent."""
@@ -625,6 +652,7 @@ def test_ac26_read_only_violation_maps_to_gate_violation(caplog):
     assert any("GATE 2 FAILURE" in record.message for record in caplog.records)
 
 
+@pytest.mark.needs_db
 def test_ac26_is_not_reachable_by_any_known_input(configured_database):
     """The canary must stay silent. Every write form Gate 2 knows about is
     stopped before execution, so none of these should reach SQLSTATE 25006."""
@@ -649,6 +677,7 @@ def test_ac26_is_not_reachable_by_any_known_input(configured_database):
 # --- T8: hostile input, determinism, no retries (AC23-AC25) ---------------
 
 
+@pytest.mark.needs_db
 @pytest.mark.parametrize(
     "sql",
     [
@@ -699,6 +728,7 @@ def test_ac24_no_retry_machinery_in_the_source():
         assert smell not in source, f"retry machinery crept in: {smell!r}"
 
 
+@pytest.mark.needs_db
 def test_ac25_deterministic(configured_database):
     for sql in [
         "SELECT track_id FROM track ORDER BY track_id LIMIT 5",

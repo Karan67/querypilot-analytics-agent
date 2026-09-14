@@ -74,6 +74,11 @@ from fastapi.testclient import TestClient
 from api.db.engine import get_engine
 from api.main import app
 
+pytestmark = [
+    pytest.mark.needs_db,
+    pytest.mark.usefixtures("configured_database"),
+]
+
 #: One `execute_sql()` is three statements: `SET TRANSACTION READ ONLY`,
 #: `SET LOCAL statement_timeout`, and the query. Named rather than spelled `3`
 #: at each site, so a change to the preamble reads as one edit.

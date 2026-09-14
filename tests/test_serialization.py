@@ -12,6 +12,8 @@ import datetime
 import decimal
 import json
 
+import pytest
+
 from api.agent.tools import execute_sql
 from api.http.serialization import encode_rows, to_jsonable
 
@@ -136,6 +138,8 @@ def test_encode_rows_preserves_shape_and_order():
     assert encode_rows(rows) == [["Rock", "1.50"], ["Jazz", "2.25"]]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_real_result_set_round_trips_through_json():
     """End to end against the live database, on the question whose answer is a
     money column -- the case D-1 was decided for."""
@@ -146,6 +150,8 @@ def test_a_real_result_set_round_trips_through_json():
     assert json.loads(json.dumps(encoded)) == [["2328.60"]]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_every_corpus_result_is_json_serialisable():
     """The boundary must not raise on anything the benchmark can produce.
 

@@ -32,7 +32,10 @@ from api.agent.prompts import (
 )
 from api.db.introspection import KIND_TABLE, KIND_VIEW, Column, ForeignKey, Schema, Table
 
-pytestmark = pytest.mark.usefixtures("configured_database")
+pytestmark = [
+    pytest.mark.usefixtures('configured_database'),
+    pytest.mark.needs_db,
+]
 
 
 def _fixture_schema() -> Schema:

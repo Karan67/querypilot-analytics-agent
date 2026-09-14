@@ -149,6 +149,8 @@ def test_the_payload_invents_no_daily_token_bucket(authed_client):
 # --- what a question teaches it ---------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_question_records_what_the_provider_said(authed_client, monkeypatch):
     """The snapshot has to be kept somewhere that outlives the request.
 
@@ -164,6 +166,8 @@ def test_a_question_records_what_the_provider_said(authed_client, monkeypatch):
     assert body["requests"]["remaining"] == 900
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_window_is_derived_rather_than_declared(authed_client, monkeypatch):
     """B-1's property, surfaced. The window comes out of the arithmetic between
     limit, remaining and reset time, so it survives a provider changing tiers --
@@ -175,6 +179,8 @@ def test_the_window_is_derived_rather_than_declared(authed_client, monkeypatch):
     assert body["requests"]["window"] == "per day"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_cache_hit_does_not_erase_the_last_reading(authed_client, monkeypatch):
     """A cache hit builds no provider, so there is nothing to observe.
 
@@ -197,6 +203,8 @@ def test_a_cache_hit_does_not_erase_the_last_reading(authed_client, monkeypatch)
     assert body["low"] is True
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_provider_that_reports_nothing_does_not_erase_the_last_reading(
     authed_client, monkeypatch
 ):

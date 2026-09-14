@@ -31,6 +31,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+pytestmark = [
+    pytest.mark.needs_db,
+    pytest.mark.usefixtures("configured_database"),
+]
+
 #: Valid PostgreSQL that Gate 2 rejects. Only statements Postgres will actually
 #: parse belong here -- the point is what its *privilege* system does with them.
 GATE_TWO_REJECTS = [

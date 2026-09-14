@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from api.llm.rate_limits import Bucket, RateLimitSnapshot
 from evals import ledger
 from evals.run_evals import DEFAULT_DAILY_TOKEN_LIMIT, check_quota, project_requests
@@ -275,6 +277,8 @@ def _patch_provider(monkeypatch, provider):
     monkeypatch.setattr(factory, "get_provider", lambda *a, **k: provider)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_spent_day_blocks_the_run_before_any_question(monkeypatch, tmp_path):
     """**The whole of B-5, end to end.**
 
@@ -297,6 +301,8 @@ def test_a_spent_day_blocks_the_run_before_any_question(monkeypatch, tmp_path):
     assert provider.calls == 1, "only the pre-flight probe should have been made"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_request_limit_also_blocks_before_the_run(monkeypatch, tmp_path):
     """Unguarded before B-5. A three-pass dev run is 90 calls, and nothing
     anywhere counted them."""
@@ -310,6 +316,8 @@ def test_the_request_limit_also_blocks_before_the_run(monkeypatch, tmp_path):
     assert runner.main(["--split", "test", "--strategy", "loop"]) == 1
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_fresh_day_is_allowed_through(monkeypatch, tmp_path):
     """The guard has to let work happen. Reaching the sentinel is the proof
     that the pre-flight approved the run rather than silently refusing it."""
@@ -323,6 +331,8 @@ def test_a_fresh_day_is_allowed_through(monkeypatch, tmp_path):
         runner.main(["--split", "test", "--strategy", "loop"])
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ignore_daily_spend_bypasses_the_ledger(monkeypatch, tmp_path):
     """For a run against a different key than the ledger was built from, where
     its totals describe someone else's day."""
@@ -358,6 +368,8 @@ def test_the_real_ledger_is_isolated_from_the_whole_suite():
     assert ledger.DEFAULT_PATH.name == "spend.json"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_ledger_records_the_wrapper_not_the_reports(monkeypatch, tmp_path):
     """**Found by the first live run**, which recorded 30 requests against
     Groq's 32.
@@ -565,6 +577,8 @@ def test_an_unreconciled_ledger_names_what_it_cannot_see():
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_main_actually_reconciles_from_a_refused_run(monkeypatch, tmp_path):
     """**The adoption test, and it exists because its absence was measured.**
 
@@ -629,6 +643,8 @@ def test_main_actually_reconciles_from_a_refused_run(monkeypatch, tmp_path):
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_clean_run_leaves_the_ledger_on_its_own_estimate(monkeypatch, tmp_path):
     """The other half of adoption: reconciliation must not fire without cause.
 

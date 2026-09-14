@@ -76,18 +76,24 @@ def schema() -> Schema:
 # --- AC7–AC10: rendering ---------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac7_every_relation_appears(schema):
     rendered = render_schema_ddl(schema)
     for table in schema.tables:
         assert table.name in rendered
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac7_views_are_distinguishable_from_tables(schema):
     rendered = render_schema_ddl(schema)
     assert "CREATE VIEW invoice_totals" in rendered
     assert "CREATE TABLE album" in rendered
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac8_column_types_are_the_schema_tools_rendering(schema):
     """`VARCHAR(160)`, not `character varying`. specs/001 AC5 preserved that
     detail deliberately; flattening it here would throw it away at the last
@@ -97,14 +103,20 @@ def test_ac8_column_types_are_the_schema_tools_rendering(schema):
     assert "character varying" not in rendered
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac9_primary_keys_appear(schema):
     assert "PRIMARY KEY (album_id)" in render_schema_ddl(schema)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac9_composite_primary_key_lists_every_column(schema):
     assert "PRIMARY KEY (playlist_id, track_id)" in render_schema_ddl(schema)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac10_foreign_keys_appear_with_direction(schema):
     """The highest-value lines in the prompt. A model that knows
     `album.artist_id -> artist.artist_id` writes the join; one guessing invents
@@ -113,6 +125,8 @@ def test_ac10_foreign_keys_appear_with_direction(schema):
     assert "FOREIGN KEY (artist_id) REFERENCES artist(artist_id)" in rendered
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac10_self_referencing_foreign_key_appears(schema):
     assert (
         "FOREIGN KEY (reports_to) REFERENCES employee(employee_id)"
@@ -120,16 +134,22 @@ def test_ac10_self_referencing_foreign_key_appears(schema):
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac10_relation_with_two_foreign_keys_shows_both(schema):
     rendered = render_schema_ddl(schema)
     assert "REFERENCES playlist(playlist_id)" in rendered
     assert "REFERENCES track(track_id)" in rendered
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_not_null_is_rendered_for_tables(schema):
     assert "title VARCHAR(160) NOT NULL" in render_schema_ddl(schema)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_not_null_is_never_claimed_for_a_view(schema):
     """PostgreSQL does not propagate NOT NULL through a view (specs/001 AC4),
     so asserting it would tell the model something untrue about the data."""
@@ -141,6 +161,8 @@ def test_not_null_is_never_claimed_for_a_view(schema):
 # --- AC11, AC12: purity and scope ------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac11_rendering_is_deterministic(schema):
     assert render_schema_ddl(schema) == render_schema_ddl(schema)
 
@@ -153,6 +175,8 @@ def test_ac11_rendering_needs_no_database():
     assert "CREATE TABLE t" in render_schema_ddl(tiny)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac12_no_sample_values_appear(schema):
     """Sample values arrive in Iteration 5, and with them the untrusted-content
     concern from specs/004 §1. Not before."""
@@ -164,6 +188,8 @@ def test_ac12_no_sample_values_appear(schema):
 # --- AC13–AC15: the prompt --------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac13_instruction_states_the_rules(schema):
     system, _ = build_prompt(schema, "how many albums?")
     lowered = system.lower()
@@ -174,6 +200,8 @@ def test_ac13_instruction_states_the_rules(schema):
     assert "do not invent" in lowered
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac13_instruction_asks_for_raw_sql(schema):
     """Resolved Q-C: the extraction strategy is "SQL only" plus defensive
     stripping, so the instruction has to actually ask for it."""
@@ -181,11 +209,15 @@ def test_ac13_instruction_asks_for_raw_sql(schema):
     assert "no markdown fences" in system.lower()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac13_schema_is_embedded_in_the_system_message(schema):
     system, _ = build_prompt(schema, "q")
     assert render_schema_ddl(schema) in system
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 @pytest.mark.parametrize(
     "question",
     [
@@ -209,6 +241,8 @@ def test_ac14_question_is_passed_through_unsanitised(schema, question):
     assert user == question
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac15_prompt_is_deterministic(schema):
     """Iteration 5 diffs prompt versions against eval numbers. A prompt that
     varied between runs would make an accuracy delta unattributable."""

@@ -133,6 +133,8 @@ def test_an_undescribed_action_fails_loudly():
 # --- AC3: the system prompt -------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_system_prompt_offers_exactly_the_loop_actions(schema):
     system = build_loop_system(schema, SCHEMA_FULL)
     for name in LOOP_ACTIONS:
@@ -141,12 +143,16 @@ def test_the_system_prompt_offers_exactly_the_loop_actions(schema):
         assert f"ACTION: {name}" not in system, f"{name} is excluded but described"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac1_the_retired_action_is_absent_from_the_rendered_prompt(schema):
     """Absent, not merely undescribed — in both schema modes."""
     for mode in SCHEMA_MODES:
         assert "sample_rows" not in build_loop_system(schema, mode)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac1_the_measured_saving_is_19_tokens(schema):
     """**The number in spec AC1, asserted with a real tokenizer.**
 
@@ -189,6 +195,8 @@ def test_ac1_the_measured_saving_is_19_tokens(schema):
     assert count(build_loop_system(schema, SCHEMA_FULL, SCHEMA_COMPACT, glossary=True)) == 916
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_full_mode_includes_the_schema(schema):
     """Asserted in both renderings, because "the schema is in there" is the
     contract and DDL keywords are only how one of them says it."""
@@ -201,6 +209,8 @@ def test_full_mode_includes_the_schema(schema):
     assert "FK[" in default
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_withheld_mode_omits_the_schema_and_says_so(schema):
     """The secondary benchmark of resolved Q-A. The note is what turns a
     hopeless guess into a `get_schema` call — measured at 10 of 12."""
@@ -210,6 +220,8 @@ def test_withheld_mode_omits_the_schema_and_says_so(schema):
     assert "get_schema" in system
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_withheld_mode_ignores_a_schema_it_was_handed(schema):
     """Passing a schema must not leak it into a withheld run, or the secondary
     benchmark would quietly measure the primary one."""
@@ -220,6 +232,8 @@ def test_a_missing_schema_is_treated_as_withheld():
     assert "NOT been shown the schema" in build_loop_system(None, SCHEMA_FULL)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_an_unknown_schema_mode_is_refused(schema):
     with pytest.raises(ValueError, match="unknown schema mode"):
         build_loop_system(schema, "partial")

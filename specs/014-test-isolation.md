@@ -202,6 +202,45 @@ closest call in the iteration and it was decided by a measurement, not a guess.
 The margin erodes as the suite grows, so §3 requires a second belt that measures
 the database lane directly rather than inferring its health from a total.
 
+### 2.8 After the partition (T4)
+
+Re-measured with the same command once `configured_database` became opt-in. The
+suite grew by the tests this iteration added; nothing was deleted or retired.
+
+| | before (T1) | after (T4) |
+|---|---:|---:|
+| collected items | 1,348 | 1,377 |
+| `marked` | 0 | **460** |
+| `closure` | 395 | **460** |
+| `marked − closure` / `closure − marked` | — | **0 / 0** |
+| `traffic_without_closure` | 65 | **0** |
+| `hermetic` | 888 | 917 |
+| `closure_walk_agrees_with_fixturenames` | `false` | **`true`** |
+
+459 tests were marked from the census; the 460th is
+`test_the_census_counts_statements_a_test_really_issued`, marked by hand — see
+below.
+
+Three lanes, all measured rather than asserted:
+
+| lane | command | result |
+|---|---|---|
+| everything, stack up | `pytest` | 1,377 passed |
+| hermetic, stack **down** | `pytest -m "not needs_db"` | **917 passed, 460 deselected, 0 skipped** |
+| database, stack **down**, `REQUIRE=1` | `pytest -m needs_db` | 460 errors — still a red build |
+
+The middle row is B-15 discharged. `tests/test_auth.py` alone gives **61 passed,
+6 deselected, 0 skipped** against a dead DSN.
+
+**A limit of the instrument, found by the hermetic lane rather than by the
+census.** `test_the_census_counts_statements_a_test_really_issued` runs pytest in
+a subprocess and asserts the child recorded traffic. The child's statements never
+reach the parent's listener, so the census scored that test `hermetic` — and it
+failed the moment the stack went down. A `before_cursor_execute` listener cannot
+see across a process boundary, so any test that shells out must be marked by
+hand. It is the one mark in the partition the census did not derive, and it is
+the argument for CI running the hermetic lane rather than trusting the census.
+
 ---
 
 ## 3. Acceptance criteria

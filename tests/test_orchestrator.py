@@ -31,7 +31,10 @@ from api.agent.orchestrator import (
 from api.agent.prompts import SCHEMA_DDL, SCHEMA_FULL, SCHEMA_WITHHELD
 from api.llm.base import LLMError
 
-pytestmark = pytest.mark.usefixtures("configured_database")
+pytestmark = [
+    pytest.mark.usefixtures('configured_database'),
+    pytest.mark.needs_db,
+]
 
 
 class Scripted:

@@ -122,6 +122,8 @@ def test_chart_series_refuses_a_result_it_cannot_chart():
 # --- the pinned corpus distribution -----------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_corpus_distribution_matches_the_spec():
     """`009-frontend.md` §2.3, re-derived through the product's own classifier.
 
@@ -144,6 +146,8 @@ def test_the_corpus_distribution_matches_the_spec():
     assert sum(counts.values()) == 50
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_easy_010_is_chartable_on_a_column_of_identifiers():
     """**The false positive, pinned deliberately.**
 

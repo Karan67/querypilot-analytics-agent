@@ -46,10 +46,11 @@ import pytest
 
 from api.llm.base import LLMError
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("GROQ_API_KEY", "").strip(),
-    reason="no GROQ_API_KEY configured; live provider tests skipped",
-)
+pytestmark = [
+    pytest.mark.skipif(not os.environ.get('GROQ_API_KEY', '').strip(), reason='no GROQ_API_KEY configured; live provider tests skipped'),
+    pytest.mark.needs_db,
+    pytest.mark.usefixtures("configured_database"),
+]
 
 #: Chinook's `track` count. Fixed by the dataset, and the reason it can be
 #: asserted here while the *model's* answer cannot.

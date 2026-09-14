@@ -23,10 +23,13 @@ This is ground truth and it is the only thing that cannot be argued with.
 **Was the dependency declared?** (the fixture closure) The test, or its module,
 *asked* for `configured_database` — by parameter or by `usefixtures`.
 
-The gap between them is the finding. `tests/conftest.py` makes
-`configured_database` `autouse=True`, so today every test inherits a database
-whether it declared one or not, and the instrument exists to say exactly which
-tests that is doing real work for.
+The gap between them is the finding. Before Iteration 11 T4, `tests/conftest.py`
+made `configured_database` `autouse=True`, so every test inherited a database
+whether it declared one or not; this instrument existed to say which tests that
+was doing real work for, and measured 65 across 12 files. After T4 the gap is
+closed and the plugin's job changes: it is what
+`tests/test_isolation.py::test_the_marked_set_equals_the_closure_set` uses to
+prove the gap stays closed.
 
 ---
 
@@ -105,6 +108,22 @@ CLOSURE_LANDMARKS = {
     "tests/test_tools.py": "direct parameter on the test function",
 }
 
+#: An autouse fixture in `tests/conftest.py` that **no test requests by name**
+#: (verified: zero references outside its own definition).
+#:
+#: It is the positive control for the walk's one hard requirement — that autouse
+#: fixtures are excluded. Before the partition, that property could be inferred
+#: from `configured_database` itself: `initialnames` would report every item as
+#: declaring a database, and a count told you so. After the partition
+#: `configured_database` is no longer autouse and that signal is gone, so
+#: swapping `argnames` for `initialnames` would once again fold autouse in and
+#: nothing would notice.
+#:
+#: This name would appear in every closure under `initialnames` and appears in
+#: none under `argnames`, which makes the distinction observable no matter what
+#: else changes.
+AUTOUSE_SENTINEL = "isolated_spend_ledger"
+
 
 def requested_fixture_closure(item: pytest.Item) -> set[str]:
     """Fixtures this item reaches by *asking*, transitively. Autouse excluded.
@@ -166,6 +185,7 @@ class _Census:
         self.closure: dict[str, bool] = {}
         self.marked: dict[str, bool] = {}
         self.fixturenames: dict[str, bool] = {}
+        self.autouse_leaks: list[str] = []
         self.collected: list[str] = []
 
     def record(self, statement: str) -> None:
@@ -229,6 +249,8 @@ def pytest_collection_modifyitems(
         _CENSUS.fixturenames[item.nodeid] = DATABASE_FIXTURE in getattr(
             item, "fixturenames", ()
         )
+        if AUTOUSE_SENTINEL in closure:
+            _CENSUS.autouse_leaks.append(item.nodeid)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -362,6 +384,10 @@ def _build_report() -> dict[str, object]:
         # private-API walk behind in tools/.
         "closure_walk_agrees_with_fixturenames": walk_agrees,
         "closure_landmarks": _landmark_report(),
+        # Must be 0. Non-zero means the walk is folding autouse fixtures in,
+        # which makes every item look like it declared whatever conftest
+        # supplies and turns the whole census into noise.
+        "autouse_sentinel_leaks": len(_CENSUS.autouse_leaks),
         "totals": totals,
         "outside_any_test": outside,
         "by_file": dict(sorted(by_file.items())),

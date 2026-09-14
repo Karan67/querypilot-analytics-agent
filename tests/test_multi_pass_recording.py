@@ -35,6 +35,11 @@ from evals.run_evals import (
 )
 from api.agent.single_shot import CATEGORY_RATE_LIMITED
 
+pytestmark = [
+    pytest.mark.needs_db,
+    pytest.mark.usefixtures("configured_database"),
+]
+
 
 def act(name: str, argument: str = "") -> str:
     return f"ACTION: {name}\n{argument}".strip()

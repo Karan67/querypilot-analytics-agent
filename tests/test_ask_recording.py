@@ -54,6 +54,8 @@ def _failed(category: str) -> AgentResult:
 # --- AC1: the cost crosses the boundary -------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_usage_survives_the_api_boundary(authed_client, monkeypatch):
     """The defect this task exists to fix."""
     _answer(monkeypatch, _ok(
@@ -68,6 +70,8 @@ def test_usage_survives_the_api_boundary(authed_client, monkeypatch):
     assert body["usage"]["calls"] == 1
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_payload_says_which_instrument_measured_the_cost(authed_client, monkeypatch):
     """D-1's standing rule, carried across the boundary. A billed number and a
     locally counted one are different quantities, and a payload that does not
@@ -86,6 +90,8 @@ def test_the_payload_says_which_instrument_measured_the_cost(authed_client, monk
         assert body["usage"]["measured"] is measured
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_cost_reaches_the_store_as_well_as_the_payload(authed_client, monkeypatch):
     """Returning it and recording it are different guarantees, and only one of
     them survives the browser tab being closed."""
@@ -105,6 +111,8 @@ def test_the_cost_reaches_the_store_as_well_as_the_payload(authed_client, monkey
 # --- AC2: two durations, kept apart -----------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_two_durations_are_reported_separately(authed_client, monkeypatch):
     """010 §2.2 measured the provider at 94.2% of wall clock; a single duration
     would hide the only number that moves."""
@@ -115,6 +123,8 @@ def test_the_two_durations_are_reported_separately(authed_client, monkeypatch):
     assert body["total_ms"] >= body["provider_ms"] >= 0
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_durations_are_recorded_not_only_returned(authed_client, monkeypatch):
     _answer(monkeypatch, _ok(["count"], [[1]]))
     authed_client.post("/ask", json={"question": "?"})
@@ -126,6 +136,8 @@ def test_the_durations_are_recorded_not_only_returned(authed_client, monkeypatch
 # --- AC4: the answer is recorded --------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_an_answer_is_recorded_and_returns_its_id(authed_client, monkeypatch):
     """The id Iteration 8's feedback attaches to -- an answer, never a question
     string, because the agent may answer the same question differently next
@@ -142,6 +154,8 @@ def test_an_answer_is_recorded_and_returns_its_id(authed_client, monkeypatch):
     assert rows[0]["shape"] == "scalar"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_failed_answer_is_recorded_too(authed_client, monkeypatch):
     """A history that keeps only successes cannot answer *what does it get
     wrong*, which is most of what AC1 is for."""
@@ -153,6 +167,8 @@ def test_a_failed_answer_is_recorded_too(authed_client, monkeypatch):
     assert row["category"] == CATEGORY_NO_SQL
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_trace_is_recorded_with_the_answer(authed_client, monkeypatch):
     """Charter §1's claim is *read the error, revise*. A record of only the
     final answer cannot show that ever happened."""
@@ -173,6 +189,8 @@ def test_the_trace_is_recorded_with_the_answer(authed_client, monkeypatch):
 # --- resolved D-2, end to end -----------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_broken_store_never_fails_the_answer(authed_client, monkeypatch):
     """**The mutation that matters for T3.** An observability failure must never
     cascade into user-facing downtime: make the store raise, and the question
@@ -191,6 +209,8 @@ def test_a_broken_store_never_fails_the_answer(authed_client, monkeypatch):
     assert body["id"] is None, "no id when the write failed, and no exception"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_broken_store_is_reported_by_health(authed_client, monkeypatch):
     """D-2's other half: swallowing the error is right, swallowing it silently
     is not.
@@ -214,6 +234,8 @@ def test_a_broken_store_is_reported_by_health(authed_client, monkeypatch):
     assert body["status"] == "degraded_history"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_health_reports_a_working_store_as_healthy(authed_client):
     body = authed_client.get("/health").json()
     assert body["status"] == "ok"
@@ -224,6 +246,8 @@ def test_health_reports_a_working_store_as_healthy(authed_client):
 # --- AC8's field, plumbed early ---------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_cache_hit_is_present_and_false_before_the_cache_exists(authed_client, monkeypatch):
     """Plumbed in T3 so the contract does not change under the page when T4
     lands. False everywhere until there is a cache to hit."""

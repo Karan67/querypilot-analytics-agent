@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import configparser
 import json
+import os
 import pathlib
 import shlex
 import subprocess
@@ -301,8 +302,17 @@ def test_addopts_still_carries_strict_markers():
 # --- The instrument -----------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_census_counts_statements_a_test_really_issued(tmp_path):
     """Mutations (a) and (b): the listener exists, and it survives a cache_clear.
+
+    **Marked by hand, not by the census.** The traffic this asserts happens in a
+    child process, where the parent's `before_cursor_execute` listener cannot see
+    it, so the census scores this test hermetic. It is not: with the stack down
+    the child records nothing and the assertion fails. The hermetic lane found
+    that, which is the argument for running `-m "not needs_db"` in CI rather than
+    trusting the partition — a census cannot measure a subprocess.
 
     `tests/test_tools.py` calls `get_engine.cache_clear()` twice partway through,
     so the engine object changes mid-file. A listener attached to an *instance*
@@ -394,6 +404,171 @@ def test_the_committed_census_backs_the_numbers_in_the_spec():
             "closure_without_traffic",
         )
     ) == totals["items"]
+
+
+# --- The partition (T4) -------------------------------------------------------
+
+
+def _collect_census(tmp_path: pathlib.Path) -> dict:
+    """Collect the whole suite under the plugin. No database required."""
+    census = tmp_path / "collected.json"
+    completed = _run_pytest(
+        ["--collect-only", "-q", "-p", "tools.measure_db_access",
+         f"--db-access-out={census}"],
+        tmp_path,
+    )
+    assert completed.returncode == 0, completed.stdout[-2000:]
+    return json.loads(census.read_text(encoding="utf-8"))
+
+
+def test_the_marked_set_equals_the_closure_set(tmp_path):
+    """AC3, both directions, over the whole suite.
+
+    Collection-only, so it runs with the stack down — which is the point: the
+    invariant is about declarations, not about traffic, and it must be checkable
+    on a machine that cannot reach Postgres.
+
+    Both halves bite because the marker does not apply the fixture (D-2). Had the
+    marker injected `configured_database`, `marked - closure` would be empty by
+    construction and this would be half a test.
+    """
+    data = _collect_census(tmp_path)
+    marked = {nodeid for nodeid, e in data["tests"].items() if e["marked"]}
+    closure = {nodeid for nodeid, e in data["tests"].items() if e["closure"]}
+
+    assert len(data["tests"]) > 1_000, "collection returned almost nothing"
+    assert marked, "no test carries the marker; this assertion would be vacuous"
+
+    assert not marked - closure, (
+        "marked but nothing in the closure reaches `configured_database` — these "
+        "run unprobed against whatever DSN _load_dotenv() left behind: "
+        f"{sorted(marked - closure)[:5]}"
+    )
+    assert not closure - marked, (
+        "requests `configured_database` but carries no marker — deselected from "
+        f"the database lane and refused an Engine by the prohibition: "
+        f"{sorted(closure - marked)[:5]}"
+    )
+
+
+def test_the_closure_walk_still_excludes_autouse_fixtures(tmp_path):
+    """The `argnames`-not-`initialnames` choice, kept observable after T4.
+
+    Before the partition this was self-evident: `initialnames` folds autouse in,
+    `configured_database` was autouse, so the wrong attribute reported all 1,348
+    items as declaring a database and any count caught it. T4 removed that
+    autouse and with it the signal — swapping the attribute back would now be
+    invisible, because nothing else autouse reaches the database.
+
+    `isolated_spend_ledger` restores the discrimination. It is autouse, no test
+    requests it by name, so it belongs to **every** closure under `initialnames`
+    and to **none** under `argnames`.
+    """
+    data = _collect_census(tmp_path)
+    assert data["autouse_sentinel_leaks"] == 0, (
+        "an autouse fixture no test requested appeared in the computed closure, "
+        "so the walk is reporting inherited fixtures as declarations"
+    )
+
+
+def test_the_closure_walk_now_agrees_with_pytests_public_attribute(tmp_path):
+    """Retires the private-API walk as a source of risk.
+
+    While `configured_database` was autouse, `item.fixturenames` held it for
+    every item and only the private walk could tell a declaration from an
+    inheritance. With autouse gone the two must agree, and the guard above can
+    rely on the public attribute.
+    """
+    data = _collect_census(tmp_path)
+    assert data["closure_walk_agrees_with_fixturenames"] is True
+
+
+def test_the_readiness_probe_does_not_mark_the_test_it_lands_on(tmp_path):
+    """The one test the census over-counted, kept unmarked on purpose.
+
+    `configured_database` is session-scoped, so its `SELECT 1` runs in the setup
+    phase of whichever test is collected first and a per-test instrument charges
+    it there. Marking on total traffic would give a database dependency to a test
+    whose entire assertion is that no endpoint has one.
+    """
+    data = _collect_census(tmp_path)
+    probe_victim = (
+        "tests/test_ask_endpoint.py::"
+        "test_ac4_no_endpoint_touches_the_database_directly"
+    )
+    assert probe_victim in data["tests"]
+    assert not data["tests"][probe_victim]["marked"]
+    assert not data["tests"][probe_victim]["closure"]
+
+
+def test_the_ci_gate_subject_is_a_database_test(tmp_path):
+    """`tests/test_ci_guards.py` aims two subprocess guards at one nodeid.
+
+    Both assert a non-zero exit when the database is unreachable. If that subject
+    ever became hermetic, the runs would still exit non-zero — from the
+    prohibition, or from deselection — and both guards would pass **for the wrong
+    reason** while no longer testing the require-database gate at all.
+    """
+    from tests.test_ci_guards import GATE_SUBJECT
+
+    data = _collect_census(tmp_path)
+    matching = [n for n in data["tests"] if n.startswith(GATE_SUBJECT)]
+    assert matching, f"{GATE_SUBJECT} no longer exists"
+    assert all(data["tests"][n]["marked"] for n in matching), (
+        f"{GATE_SUBJECT} is the subject of two require-database guards and must "
+        "stay in the database lane"
+    )
+
+
+def test_the_auth_suite_runs_without_a_database(tmp_path):
+    """B-15, executed rather than asserted.
+
+    The charter opened B-15 because all 64 tests in `tests/test_auth.py` skipped
+    with the stack down. Measurement corrected both halves of that: the file
+    holds 67 tests, and six of them really do need Postgres because `/health`
+    goes through `execute_sql()` by design. So the deselection is part of the
+    claim, not a way around it — 61 run, 6 are the database's.
+
+    Restore `autouse=True` on `configured_database` and every one of the 61
+    skips instead.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_auth.py", "-m", "not needs_db",
+         "-q", "--no-header", "-p", "no:cacheprovider",
+         f"--junitxml={tmp_path / 'junit.xml'}"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ,
+             "TEST_DATABASE_URL": UNDIALLED_DSN,
+             "QUERYPILOT_TESTS_REQUIRE_DATABASE": ""},
+    )
+
+    assert completed.returncode == 0, (
+        "the auth suite cannot run without a database it does not need — B-15 is "
+        f"back:\n{completed.stdout[-1500:]}"
+    )
+    assert "skipped" not in completed.stdout, (
+        f"something skipped rather than ran:\n{completed.stdout[-800:]}"
+    )
+    assert "61 passed" in completed.stdout, completed.stdout[-400:]
+
+
+def test_the_partition_script_is_idempotent():
+    """Re-deriving the partition from the census must change nothing.
+
+    The guarantee that the 214 committed edits are what the census implies,
+    rather than what a one-off run happened to produce. If this fails, either a
+    test moved between lanes or someone hand-edited a marker.
+    """
+    completed = subprocess.run(
+        [sys.executable, "tools/apply_partition.py", "--check"],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=120,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "target tests: 459" in completed.stdout
+    assert "parametrized functions with mixed cases" not in completed.stdout
 
 
 def test_the_hermetic_lane_stays_below_the_ci_floor():

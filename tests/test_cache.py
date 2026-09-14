@@ -308,6 +308,8 @@ class _CountingAgent:
         )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_repeated_question_costs_zero_tokens(authed_client, monkeypatch):
     """**The headline, and the criterion the plan insisted on.**
 
@@ -336,6 +338,8 @@ def test_a_repeated_question_costs_zero_tokens(authed_client, monkeypatch):
     assert second["sql"] == first["sql"]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_hit_gets_its_own_id_and_is_recorded_as_a_hit(authed_client, monkeypatch):
     """A hit is still a question somebody asked, so it is still a row.
 
@@ -355,6 +359,8 @@ def test_a_hit_gets_its_own_id_and_is_recorded_as_a_hit(authed_client, monkeypat
     assert rows[second["id"]]["cache_hit"] == 1
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_recorded_tokens_sum_to_what_was_billed(authed_client, monkeypatch):
     """**Resolved at T4**, and the reason a hit records zero rather than
     replaying the original figures.
@@ -375,6 +381,8 @@ def test_the_recorded_tokens_sum_to_what_was_billed(authed_client, monkeypatch):
     assert sum(row["cache_hit"] for row in rows) == 3
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_failed_question_is_asked_again(authed_client, monkeypatch):
     """End to end, the rule `_is_cacheable` encodes: a failure is not kept.
 
@@ -391,6 +399,8 @@ def test_a_failed_question_is_asked_again(authed_client, monkeypatch):
     assert second.json()["cache_hit"] is False
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_cache_hit_does_not_build_a_provider(authed_client, monkeypatch):
     """**The provider is never constructed on a hit**, not merely unused.
 
@@ -411,6 +421,8 @@ def test_a_cache_hit_does_not_build_a_provider(authed_client, monkeypatch):
     assert body["rows"] == [[3503]]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_row_records_which_schema_and_prompt_produced_it(authed_client, monkeypatch):
     """The two columns have existed since T2 and were always empty. They are the
     same two numbers the key is built from, which is what lets a stored answer
@@ -492,6 +504,8 @@ def test_the_glossary_changes_the_prompt_fingerprint():
         loop_prompt_fingerprint()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_live_schema_fingerprint_moves_with_the_database(schema):
     """**Different from `evals.run_evals.schema_fingerprint`, deliberately.**
 
@@ -511,6 +525,8 @@ def test_the_live_schema_fingerprint_moves_with_the_database(schema):
     assert live_schema_fingerprint(schema) == before, "and it must be stable otherwise"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_rendering_is_part_of_the_schema_fingerprint(schema):
     """Two renderings describe the same tables differently, and the model reads
     the rendering, not the `Schema` object."""
@@ -655,6 +671,8 @@ def test_nothing_in_the_key_material_mentions_an_identity():
     assert not leaked, f"cache_key reads {sorted(leaked)}, so the key is per-caller"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_two_identities_share_one_answer_and_one_provider_call(monkeypatch):
     """**The behavioural half, and the property that keeps a hit free.**
 
