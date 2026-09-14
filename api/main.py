@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import pathlib
 import time
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -37,7 +38,7 @@ from api.llm.base import LLMError, TokenUsage
 from api.llm.factory import get_provider
 from api.store import history
 from api.store.history import AskRecord
-from api.http import cache, quota
+from api.http import auth, cache, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
 from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
@@ -134,6 +135,96 @@ app = FastAPI(
 )
 
 
+def _unauthorized() -> JSONResponse:
+    """The one refusal, for all four ways of failing (AC6).
+
+    Same status, same body, same headers whether the header was absent,
+    malformed, named an identity that does not exist, or named one that does
+    and got the secret wrong. A gate that distinguishes them tells an attacker
+    which half of the guess was right; "no such user" tells them the endpoint
+    is worth attacking at all.
+    """
+    return JSONResponse(
+        status_code=401,
+        content=auth.UNAUTHORIZED_BODY,
+        headers=auth.UNAUTHORIZED_HEADERS,
+    )
+
+
+@app.middleware("http")
+async def require_credentials(request: Request, call_next):
+    """The gate (AC1), and it is middleware for a measured reason.
+
+    **A route dependency cannot protect the static mount.** `013-auth-plan.md`
+    §1 tested it rather than assuming: against an app-level deny-all dependency,
+    `GET /` returned 401 and `GET /static/x.js` returned 200, because
+    `app.mount("/static", StaticFiles(...))` is a sub-application and the
+    parent's dependency injection does not run inside it. Middleware sits above
+    routing, so the mount is covered by the same rule as everything else
+    (resolved D-1, D-3).
+
+    The second thing middleware buys is that a route added next year is
+    protected by default. The exemption is data — `auth.OPEN_PATHS` — and T5's
+    completeness test reads it, so a new unprotected path fails the suite rather
+    than shipping quietly.
+
+    **A 401 is never routed through `api/http/errors.py`.** That table maps
+    *answer* failures onto status codes; an unauthorised caller has not asked a
+    question and there is nothing to report `ok: false` about (`013-auth.md` §5).
+    """
+    if auth.is_open(request.url.path):
+        return await call_next(request)
+
+    try:
+        identities = auth.current_identities(os.environ.get(auth.USERS_ENV))
+    except auth.AuthConfigurationError as exc:
+        # **Fail closed** (resolved D-2). A deployment with a typo in the
+        # variable name refuses everything rather than serving the API to the
+        # internet, which is the whole argument: a mechanism that is switched
+        # off must not look identical to one that is working.
+        #
+        # Logged on every protected request rather than once at startup, and
+        # that is deliberate -- the reason is then discoverable from any point
+        # in the log, not only from the lines nobody scrolls back to. The
+        # message names the variable and never quotes its value (AC5).
+        # Prefixed with where, not with what: the exception already says "no
+        # request can be authorised", and a prefix repeating it produced
+        # "no request can be authorised: ... so no request can be authorised"
+        # in the container log. Seen in the real container at T6, not guessed.
+        logger.error("QueryPilot auth gate: %s", exc)
+        return _unauthorized()
+
+    presented = auth.parse_basic(request.headers.get("Authorization"))
+    if presented is None:
+        return _unauthorized()
+
+    if auth.verify(identities, *presented) is None:
+        return _unauthorized()
+
+    return await call_next(request)
+
+
+def _auth_status() -> dict:
+    """Whether the credential map is usable, for `/health` to report.
+
+    **The other half of failing closed.** D-2 chose 401-everything over
+    refusing to boot precisely so an operator can still ask the container what
+    is wrong — and that answer has to be somewhere. `api/http/auth.py`'s own
+    docstring promises it lands here and in the logs.
+
+    Shaped like the `history` block beside it, which reports the same kind of
+    thing: a subsystem that is degraded while the service is up. The message is
+    safe to return to an anonymous caller because `load_identities` is tested
+    never to quote a secret, and because when this is `false` every protected
+    route is refusing anyway.
+    """
+    try:
+        auth.current_identities(os.environ.get(auth.USERS_ENV))
+    except auth.AuthConfigurationError as exc:
+        return {"configured": False, "error": str(exc)}
+    return {"configured": True, "error": ""}
+
+
 @app.get("/health", tags=["ops"])
 def health() -> JSONResponse:
     """Liveness plus target-database readiness.
@@ -151,13 +242,22 @@ def health() -> JSONResponse:
             "user": "querypilot_ro",
             "database": "chinook",
             "public_tables": 12
-          }
+          },
+          "auth": {"configured": true, "error": ""}
         }
 
     and 503 with ``{"status": "degraded", "database": {"connected": false,
     "error": "..."}}`` if the database is unreachable. A health check that
     reports healthy while its dependency is down is worse than no health check,
     so the database round-trip is not optional here.
+
+    **Iteration 10 made this the only endpoint an anonymous caller can reach**
+    (`013-auth.md` §2.7: the compose healthcheck probes it with a bare
+    ``urlopen`` and no credentials, so a gate here makes the container
+    permanently unhealthy). Every field it returns was already here and none is
+    a secret — ``querypilot_ro`` and ``chinook`` are both in the README.
+    ``auth`` is new and reports whether the credential map parsed, which is the
+    only way an operator can see *why* everything else is returning 401.
 
     Goes through `execute_sql()` like everything else (see `_HEALTH_QUERY`).
     That also simplifies the failure handling: the exception cases this used to
@@ -173,6 +273,7 @@ def health() -> JSONResponse:
             content={
                 "status": "degraded",
                 "database": {"connected": False, "error": result.error},
+                "auth": _auth_status(),
             },
         )
 
@@ -197,6 +298,13 @@ def health() -> JSONResponse:
                 "public_tables": public_tables,
             },
             "history": {"writable": not store_error, "error": store_error},
+            # Iteration 10. `status` is deliberately **not** widened to a
+            # `degraded_auth` value: resolved D-4 said leave `/health` exactly
+            # as it is, and the compose healthcheck reads the status code
+            # rather than this field. A misconfigured gate is reported, not
+            # escalated -- the container is genuinely up, and every protected
+            # route is genuinely refusing.
+            "auth": _auth_status(),
         },
     )
 
