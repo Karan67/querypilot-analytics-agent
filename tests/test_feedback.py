@@ -38,19 +38,12 @@ import re
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
 
-from api.main import app
 from api.store import history
 from api.store.history import AskRecord, UnknownAsk, record_ask, record_feedback
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = REPO_ROOT / "api" / "web"
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 def _record(**overrides) -> str:
@@ -214,10 +207,10 @@ def test_no_marks_is_an_absent_key_rather_than_a_zero():
 # --- the endpoint -----------------------------------------------------------
 
 
-def test_ac13_posting_a_mark_returns_201_and_stores_it(client):
+def test_ac13_posting_a_mark_returns_201_and_stores_it(authed_client):
     ask_id = _record()
 
-    response = client.post("/feedback", json={"id": ask_id, "rating": 1})
+    response = authed_client.post("/feedback", json={"id": ask_id, "rating": 1})
 
     assert response.status_code == 201
     body = response.json()
@@ -230,7 +223,7 @@ def test_ac13_posting_a_mark_returns_201_and_stores_it(client):
         assert list(conn.execute("SELECT ask_id FROM feedback"))[0]["ask_id"] == ask_id
 
 
-def test_ac13_an_unknown_id_is_a_404(client):
+def test_ac13_an_unknown_id_is_a_404(authed_client):
     """Not a quiet accept, and not a 422.
 
     A `404` says the thing being marked does not exist, which is true and
@@ -238,7 +231,7 @@ def test_ac13_an_unknown_id_is_a_404(client):
     would claim the request was malformed, when it was well-formed and pointed
     at nothing.
     """
-    response = client.post("/feedback", json={"id": "not-an-answer", "rating": -1})
+    response = authed_client.post("/feedback", json={"id": "not-an-answer", "rating": -1})
 
     assert response.status_code == 404
     body = response.json()
@@ -247,7 +240,7 @@ def test_ac13_an_unknown_id_is_a_404(client):
 
 
 @pytest.mark.parametrize("rating", [0, 2, -2, 5, 100, -1.5, "1", True, None])
-def test_ac13_only_minus_one_and_one_are_accepted(client, rating):
+def test_ac13_only_minus_one_and_one_are_accepted(authed_client, rating):
     """Resolved D-6, enforced by the schema rather than by a hand-written check.
 
     `0` is in the list because it is the most likely thing a caller would send
@@ -257,7 +250,7 @@ def test_ac13_only_minus_one_and_one_are_accepted(client, rating):
     """
     ask_id = _record()
 
-    response = client.post("/feedback", json={"id": ask_id, "rating": rating})
+    response = authed_client.post("/feedback", json={"id": ask_id, "rating": rating})
 
     assert response.status_code == 422, f"{rating!r} was accepted"
     with history._connect() as conn:
@@ -265,12 +258,12 @@ def test_ac13_only_minus_one_and_one_are_accepted(client, rating):
 
 
 @pytest.mark.parametrize("rating", [-1, 1])
-def test_both_valid_ratings_are_accepted(client, rating):
+def test_both_valid_ratings_are_accepted(authed_client, rating):
     ask_id = _record()
-    assert client.post("/feedback", json={"id": ask_id, "rating": rating}).status_code == 201
+    assert authed_client.post("/feedback", json={"id": ask_id, "rating": rating}).status_code == 201
 
 
-def test_the_note_is_length_capped(client):
+def test_the_note_is_length_capped(authed_client):
     """**The project's first unauthenticated write** (§4 of the spec names it).
 
     Capped at the same length as `AskRequest.question`, so the one thing a
@@ -278,35 +271,35 @@ def test_the_note_is_length_capped(client):
     """
     ask_id = _record()
 
-    too_long = client.post(
+    too_long = authed_client.post(
         "/feedback", json={"id": ask_id, "rating": 1, "note": "x" * 1001}
     )
     assert too_long.status_code == 422
 
-    at_the_limit = client.post(
+    at_the_limit = authed_client.post(
         "/feedback", json={"id": ask_id, "rating": 1, "note": "x" * 1000}
     )
     assert at_the_limit.status_code == 201
 
 
-def test_a_broken_store_is_a_503_and_not_a_201(client, monkeypatch):
+def test_a_broken_store_is_a_503_and_not_a_201(authed_client, monkeypatch):
     def explode(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(history, "record_feedback", explode)
 
-    response = client.post("/feedback", json={"id": "anything", "rating": 1})
+    response = authed_client.post("/feedback", json={"id": "anything", "rating": 1})
 
     assert response.status_code == 503
     assert response.json()["ok"] is False
     assert "OperationalError" in response.json()["error"]
 
 
-def test_the_mark_is_surfaced_in_the_history_data(client):
+def test_the_mark_is_surfaced_in_the_history_data(authed_client):
     ask_id = _record()
-    client.post("/feedback", json={"id": ask_id, "rating": -1, "note": "missed a join"})
+    authed_client.post("/feedback", json={"id": ask_id, "rating": -1, "note": "missed a join"})
 
-    answers = client.get("/history/data").json()["answers"]
+    answers = authed_client.get("/history/data").json()["answers"]
     row = next(a for a in answers if a["id"] == ask_id)
 
     assert row["feedback"] == [
@@ -314,18 +307,18 @@ def test_the_mark_is_surfaced_in_the_history_data(client):
     ]
 
 
-def test_an_unmarked_answer_carries_an_empty_list(client):
+def test_an_unmarked_answer_carries_an_empty_list(authed_client):
     """Present and empty, not absent.
 
     A reader that has to test for the key's existence will one day forget, and
     the failure is a crash on the history page rather than a missing tag.
     """
     _record()
-    answers = client.get("/history/data").json()["answers"]
+    answers = authed_client.get("/history/data").json()["answers"]
     assert answers[0]["feedback"] == []
 
 
-def test_the_history_read_still_fails_loudly_when_the_store_is_broken(client, monkeypatch):
+def test_the_history_read_still_fails_loudly_when_the_store_is_broken(authed_client, monkeypatch):
     """T7's asymmetry, re-checked now that a third query joins the page.
 
     `feedback_for_ids` raising must produce a 503, not a page of answers with
@@ -337,7 +330,7 @@ def test_the_history_read_still_fails_loudly_when_the_store_is_broken(client, mo
 
     monkeypatch.setattr(history, "feedback_for_ids", explode)
 
-    response = client.get("/history/data")
+    response = authed_client.get("/history/data")
 
     assert response.status_code == 503
     assert response.json()["ok"] is False
@@ -415,7 +408,7 @@ def test_ac13_the_page_posts_the_answer_id_with_the_rating():
 
 
 def test_ac13_the_answer_page_offers_the_control():
-    """A user must be able to mark an answer, not just an API client.
+    """A user must be able to mark an answer, not just an API authed_client.
 
     The endpoint having no caller is the failure Iteration 7 T6 caught as *"a
     cache with good tests and no callers"*. Asserted against the markup and the
@@ -506,7 +499,7 @@ def test_ac14_the_api_never_reduces_the_marks():
                 )
 
 
-def test_ac14_the_history_payload_carries_no_derived_feedback_field(client):
+def test_ac14_the_history_payload_carries_no_derived_feedback_field(authed_client):
     """The payload's shape is the last line of defence.
 
     A `feedback_count`, `feedback_score` or `useful_rate` key would let any
@@ -514,10 +507,10 @@ def test_ac14_the_history_payload_carries_no_derived_feedback_field(client):
     tests guard. The list is the whole contract.
     """
     ask_id = _record()
-    client.post("/feedback", json={"id": ask_id, "rating": 1})
-    client.post("/feedback", json={"id": ask_id, "rating": -1})
+    authed_client.post("/feedback", json={"id": ask_id, "rating": 1})
+    authed_client.post("/feedback", json={"id": ask_id, "rating": -1})
 
-    row = client.get("/history/data").json()["answers"][0]
+    row = authed_client.get("/history/data").json()["answers"][0]
 
     derived = [
         key

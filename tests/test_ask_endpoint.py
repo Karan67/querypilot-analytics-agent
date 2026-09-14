@@ -18,7 +18,6 @@ import ast
 import pathlib
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api.agent.orchestrator import AgentResult, Step
 from api.db.execution import (
@@ -28,14 +27,8 @@ from api.db.execution import (
 )
 from api.agent.single_shot import CATEGORY_NO_SQL, CATEGORY_RATE_LIMITED
 from api.http.errors import STATUS_ANSWERED, STATUS_UNAVAILABLE
-from api.main import app
 
 MAIN_SOURCE = pathlib.Path("api/main.py").read_text(encoding="utf-8")
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 def _answer(monkeypatch, result: AgentResult) -> None:
@@ -170,9 +163,9 @@ def test_ac5_the_deployed_api_does_not_pace():
 # --- the contract -----------------------------------------------------------
 
 
-def test_a_scalar_answer_carries_its_shape_and_sql(client, monkeypatch):
+def test_a_scalar_answer_carries_its_shape_and_sql(authed_client, monkeypatch):
     _answer(monkeypatch, _ok(["count"], [[3503]], sql="SELECT count(*) FROM track"))
-    response = client.post("/ask", json={"question": "how many tracks?"})
+    response = authed_client.post("/ask", json={"question": "how many tracks?"})
 
     assert response.status_code == STATUS_ANSWERED
     body = response.json()
@@ -183,33 +176,33 @@ def test_a_scalar_answer_carries_its_shape_and_sql(client, monkeypatch):
     assert body["error"] == ""
 
 
-def test_decimals_reach_the_client_as_exact_strings(client, monkeypatch):
+def test_decimals_reach_the_client_as_exact_strings(authed_client, monkeypatch):
     """D-1 end to end. The float round trip renders this `2328.6`."""
     import decimal
 
     _answer(monkeypatch, _ok(["sum"], [[decimal.Decimal("2328.60")]]))
-    body = client.post("/ask", json={"question": "total?"}).json()
+    body = authed_client.post("/ask", json={"question": "total?"}).json()
     assert body["rows"] == [["2328.60"]]
 
 
-def test_a_chartable_result_is_labelled_not_charted(client, monkeypatch):
+def test_a_chartable_result_is_labelled_not_charted(authed_client, monkeypatch):
     """Q-B: the server says a chart is *offerable*; the human decides."""
     _answer(monkeypatch, _ok(["genre", "n"], [["Rock", 1297], ["Jazz", 130]]))
-    body = client.post("/ask", json={"question": "genres?"}).json()
+    body = authed_client.post("/ask", json={"question": "genres?"}).json()
     assert body["shape"] == "chartable"
 
 
-def test_an_empty_result_is_not_a_failure(client, monkeypatch):
+def test_an_empty_result_is_not_a_failure(authed_client, monkeypatch):
     """Zero rows answers the question; `ok` stays true."""
     _answer(monkeypatch, _ok(["name"], []))
-    response = client.post("/ask", json={"question": "customers in Antarctica?"})
+    response = authed_client.post("/ask", json={"question": "customers in Antarctica?"})
     assert response.status_code == STATUS_ANSWERED
     body = response.json()
     assert body["ok"] is True
     assert body["shape"] == "empty"
 
 
-def test_the_trace_shows_the_retry_and_the_error_that_caused_it(client, monkeypatch):
+def test_the_trace_shows_the_retry_and_the_error_that_caused_it(authed_client, monkeypatch):
     """Q-E, and charter §1's diagram: *read the error, revise*.
 
     A trace that showed the retry without the error it reacted to would omit
@@ -227,7 +220,7 @@ def test_the_trace_shows_the_retry_and_the_error_that_caused_it(client, monkeypa
         Step(attempt=2, action="execute_sql", sql="SELECT name FROM artist", ok=True),
     )
     _answer(monkeypatch, _ok(["name"], [["AC/DC"], ["Aerosmith"]], steps=steps))
-    body = client.post("/ask", json={"question": "artists?"}).json()
+    body = authed_client.post("/ask", json={"question": "artists?"}).json()
 
     assert [entry["attempt"] for entry in body["trace"]] == [1, 2]
     assert body["trace"][0]["ok"] is False
@@ -242,10 +235,10 @@ def _failed(category: str) -> AgentResult:
     return AgentResult(ok=False, question="q", category=category)
 
 
-def test_a_question_the_agent_could_not_answer_returns_200(client, monkeypatch):
+def test_a_question_the_agent_could_not_answer_returns_200(authed_client, monkeypatch):
     """D-2. The request was understood and processed; the answer is negative."""
     _answer(monkeypatch, _failed(CATEGORY_NO_SQL))
-    response = client.post("/ask", json={"question": "?"})
+    response = authed_client.post("/ask", json={"question": "?"})
     assert response.status_code == STATUS_ANSWERED
     body = response.json()
     assert body["ok"] is False
@@ -253,16 +246,16 @@ def test_a_question_the_agent_could_not_answer_returns_200(client, monkeypatch):
     assert body["error"]
 
 
-def test_an_unreachable_database_is_a_service_error(client, monkeypatch):
+def test_an_unreachable_database_is_a_service_error(authed_client, monkeypatch):
     _answer(monkeypatch, _failed(CATEGORY_CONNECTION_ERROR))
-    response = client.post("/ask", json={"question": "?"})
+    response = authed_client.post("/ask", json={"question": "?"})
     assert response.status_code == STATUS_UNAVAILABLE
 
 
-def test_a_rate_limit_is_a_service_error_and_says_so_plainly(client, monkeypatch):
+def test_a_rate_limit_is_a_service_error_and_says_so_plainly(authed_client, monkeypatch):
     """B-1: a billing condition must never arrive wearing a security message."""
     _answer(monkeypatch, _failed(CATEGORY_RATE_LIMITED))
-    response = client.post("/ask", json={"question": "?"})
+    response = authed_client.post("/ask", json={"question": "?"})
     assert response.status_code == STATUS_UNAVAILABLE
     body = response.json()
     assert body["retryable"] is True
@@ -270,7 +263,7 @@ def test_a_rate_limit_is_a_service_error_and_says_so_plainly(client, monkeypatch
     assert "limit" in body["error"].lower()
 
 
-def test_a_failure_still_carries_the_sql_that_failed(client, monkeypatch):
+def test_a_failure_still_carries_the_sql_that_failed(authed_client, monkeypatch):
     """AC12: a demo audience learns more from a legible failure than a spinner
     that stops."""
     result = AgentResult(
@@ -280,13 +273,13 @@ def test_a_failure_still_carries_the_sql_that_failed(client, monkeypatch):
         category=CATEGORY_DATABASE_ERROR,
     )
     _answer(monkeypatch, result)
-    body = client.post("/ask", json={"question": "?"}).json()
+    body = authed_client.post("/ask", json={"question": "?"}).json()
     assert body["sql"] == "SELECT nope FROM track"
 
 
-def test_no_failure_message_leaks_internals_to_the_caller(client, monkeypatch):
+def test_no_failure_message_leaks_internals_to_the_caller(authed_client, monkeypatch):
     _answer(monkeypatch, _failed(CATEGORY_DATABASE_ERROR))
-    body = client.post("/ask", json={"question": "?"}).json()
+    body = authed_client.post("/ask", json={"question": "?"}).json()
     for leak in ("sqlstate", "traceback", "groq"):
         assert leak not in body["error"].lower()
 
@@ -294,15 +287,15 @@ def test_no_failure_message_leaks_internals_to_the_caller(client, monkeypatch):
 # --- request validation -----------------------------------------------------
 
 
-def test_an_empty_question_is_refused(client):
-    assert client.post("/ask", json={"question": ""}).status_code == 422
+def test_an_empty_question_is_refused(authed_client):
+    assert authed_client.post("/ask", json={"question": ""}).status_code == 422
 
 
-def test_a_missing_question_is_refused(client):
-    assert client.post("/ask", json={}).status_code == 422
+def test_a_missing_question_is_refused(authed_client):
+    assert authed_client.post("/ask", json={}).status_code == 422
 
 
-def test_a_question_containing_sql_is_not_sanitised(client, monkeypatch):
+def test_a_question_containing_sql_is_not_sanitised(authed_client, monkeypatch):
     """`007` AC20: the question reaches the agent verbatim.
 
     Stripping or escaping would corrupt legitimate English -- apostrophes and
@@ -317,35 +310,35 @@ def test_a_question_containing_sql_is_not_sanitised(client, monkeypatch):
 
     monkeypatch.setattr("api.main.answer", capture)
     hostile = "'; DROP TABLE track; -- how many tracks?"
-    client.post("/ask", json={"question": hostile})
+    authed_client.post("/ask", json={"question": hostile})
     assert seen == [hostile]
 
 
 # --- T6: the page ------------------------------------------------------------
 
 
-def test_the_page_is_served_at_the_root(client):
+def test_the_page_is_served_at_the_root(authed_client):
     """AC7: a question can be asked in a browser with no terminal."""
-    response = client.get("/")
+    response = authed_client.get("/")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "QueryPilot" in response.text
 
 
-def test_the_static_assets_are_reachable(client):
+def test_the_static_assets_are_reachable(authed_client):
     for path, fragment in (
         ("/static/app.js", "renderScalar"),
         ("/static/styles.css", ".scalar-value"),
     ):
-        response = client.get(path)
+        response = authed_client.get(path)
         assert response.status_code == 200, path
         assert fragment in response.text, path
 
 
-def test_the_page_references_the_assets_it_is_served_with(client):
+def test_the_page_references_the_assets_it_is_served_with(authed_client):
     """Catches the rename that leaves a page loading a stylesheet that 404s --
     a failure a human notices only by the page looking wrong."""
-    page = client.get("/").text
+    page = authed_client.get("/").text
     assert "/static/app.js" in page
     assert "/static/styles.css" in page
 
@@ -363,7 +356,7 @@ def test_the_web_directory_resolves_from_the_module_not_the_cwd(tmp_path, monkey
     assert os.getcwd() != str(_WEB_DIR.parent.parent)
 
 
-def test_no_accuracy_claim_appears_in_the_interface(client):
+def test_no_accuracy_claim_appears_in_the_interface(authed_client):
     """AC13. The held-out figure is one pass at 100.0% and honestly reads
     *between 90% and 100%*; a product surface is where that nuance dies.
 
@@ -380,7 +373,7 @@ def test_no_accuracy_claim_appears_in_the_interface(client):
     """
     import re
 
-    rendered = re.sub(r"<!--.*?-->", "", client.get("/").text, flags=re.DOTALL).lower()
+    rendered = re.sub(r"<!--.*?-->", "", authed_client.get("/").text, flags=re.DOTALL).lower()
     for claim in ("100%", "100.0%", "accurate", "accuracy", "confidence", "always correct"):
         assert claim not in rendered, f"the page claims {claim!r}"
 
@@ -428,10 +421,10 @@ def test_the_accuracy_guard_is_not_vacuous():
     assert "accuracy" not in rendered.lower()
 
 
-def test_the_page_does_not_hide_the_sql_behind_a_toggle(client):
+def test_the_page_does_not_hide_the_sql_behind_a_toggle(authed_client):
     """AC8. The SQL is the audit of the answer and is always visible; only the
     trace -- the audit of the *process* -- is collapsed (Q-E)."""
-    page = client.get("/").text
+    page = authed_client.get("/").text
     sql_index = page.index('id="sql"')
     details_index = page.index("<details")
     assert sql_index < details_index, "the SQL block must not be inside <details>"
@@ -440,7 +433,7 @@ def test_the_page_does_not_hide_the_sql_behind_a_toggle(client):
 # --- T7: the chart toggle ----------------------------------------------------
 
 
-def test_a_chartable_result_says_which_column_the_bars_come_from(client, monkeypatch):
+def test_a_chartable_result_says_which_column_the_bars_come_from(authed_client, monkeypatch):
     """The client must not re-derive the measure.
 
     Deriving it separately is how a chart ends up plotting the label column:
@@ -448,27 +441,27 @@ def test_a_chartable_result_says_which_column_the_bars_come_from(client, monkeyp
     considered. `chart_series()` decides once, server-side.
     """
     _answer(monkeypatch, _ok(["genre", "n"], [["Rock", 1297], ["Jazz", 130]]))
-    body = client.post("/ask", json={"question": "genres?"}).json()
+    body = authed_client.post("/ask", json={"question": "genres?"}).json()
     assert body["shape"] == "chartable"
     assert body["series"] == {"label": 0, "measure": 1}
 
 
-def test_the_series_survives_the_columns_being_the_other_way_round(client, monkeypatch):
+def test_the_series_survives_the_columns_being_the_other_way_round(authed_client, monkeypatch):
     _answer(monkeypatch, _ok(["n", "genre"], [[1297, "Rock"], [130, "Jazz"]]))
-    body = client.post("/ask", json={"question": "genres?"}).json()
+    body = authed_client.post("/ask", json={"question": "genres?"}).json()
     assert body["series"] == {"label": 1, "measure": 0}
 
 
-def test_a_non_chartable_result_offers_no_series(client, monkeypatch):
+def test_a_non_chartable_result_offers_no_series(authed_client, monkeypatch):
     """A scalar has nothing to chart, and the payload says so rather than
     leaving the client to infer it from `shape`."""
     _answer(monkeypatch, _ok(["count"], [[3503]]))
-    body = client.post("/ask", json={"question": "how many?"}).json()
+    body = authed_client.post("/ask", json={"question": "how many?"}).json()
     assert body["shape"] == "scalar"
     assert body["series"] is None
 
 
-def test_the_chart_starts_hidden_in_the_served_markup(client):
+def test_the_chart_starts_hidden_in_the_served_markup(authed_client):
     """Resolved Q-B: the toggle defaults to **off**.
 
     Asserted against the page rather than against app.js, because the default
@@ -476,7 +469,7 @@ def test_the_chart_starts_hidden_in_the_served_markup(client):
     script would be a default no test could see without a browser, and it could
     drift from the `aria-expanded` the same script sets.
     """
-    page = client.get("/").text
+    page = authed_client.get("/").text
 
     controls = page[page.index('id="chart-controls"') : page.index('id="chart-toggle"')]
     assert "hidden" in controls, "the chart controls must not appear before a result"
@@ -489,19 +482,19 @@ def test_the_chart_starts_hidden_in_the_served_markup(client):
     assert "Show chart" in page and "Hide chart" not in page
 
 
-def test_the_chart_is_drawn_without_a_charting_library(client):
+def test_the_chart_is_drawn_without_a_charting_library(authed_client):
     """Resolved D-3, and Q-A's dependency-free property.
 
     A CDN script tag would make "the only setup instruction is
     `docker compose up`" false, and would put a demo at the mercy of a network
     it should not need.
     """
-    page = client.get("/").text
+    page = authed_client.get("/").text
     assert "<script" in page
     assert "cdn" not in page.lower()
     assert "https://" not in page, "the page must not load anything remote"
 
-    app_js = client.get("/static/app.js").text
+    app_js = authed_client.get("/static/app.js").text
     assert "createElementNS" in app_js, "the chart is built as real SVG nodes"
     assert "import " not in app_js, "no module imports; this file is loaded as-is"
 
@@ -522,7 +515,7 @@ def _javascript_code(source: str) -> str:
     )
 
 
-def test_the_chart_never_builds_markup_from_a_string(client):
+def test_the_chart_never_builds_markup_from_a_string(authed_client):
     """Database values and model-written SQL are data, not markup.
 
     `innerHTML` anywhere in this file would be an injection route from a table
@@ -536,7 +529,7 @@ def test_the_chart_never_builds_markup_from_a_string(client):
     generalises: any "this string must not appear" test in this repository has
     to look at code rather than commentary.
     """
-    code = _javascript_code(client.get("/static/app.js").text)
+    code = _javascript_code(authed_client.get("/static/app.js").text)
     assert "innerHTML" not in code
     assert "insertAdjacentHTML" not in code
     assert "document.write" not in code
