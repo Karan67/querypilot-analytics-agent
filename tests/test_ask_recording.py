@@ -20,20 +20,13 @@ import dataclasses
 import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api.agent.orchestrator import AgentResult, Step
 from api.agent.single_shot import CATEGORY_NO_SQL
 from api.db.execution import CATEGORY_DATABASE_ERROR, ExecutionResult
 from api.http.errors import STATUS_ANSWERED
 from api.llm.base import TokenUsage
-from api.main import app
 from api.store import history
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 def _answer(monkeypatch, result: AgentResult) -> None:
@@ -61,21 +54,21 @@ def _failed(category: str) -> AgentResult:
 # --- AC1: the cost crosses the boundary -------------------------------------
 
 
-def test_usage_survives_the_api_boundary(client, monkeypatch):
+def test_usage_survives_the_api_boundary(authed_client, monkeypatch):
     """The defect this task exists to fix."""
     _answer(monkeypatch, _ok(
         ["count"], [[3503]],
         usage=TokenUsage(prompt_tokens=1000, completion_tokens=69, calls=1, measured=True),
     ))
 
-    body = client.post("/ask", json={"question": "how many?"}).json()
+    body = authed_client.post("/ask", json={"question": "how many?"}).json()
     assert body["usage"]["total_tokens"] == 1069
     assert body["usage"]["prompt_tokens"] == 1000
     assert body["usage"]["completion_tokens"] == 69
     assert body["usage"]["calls"] == 1
 
 
-def test_the_payload_says_which_instrument_measured_the_cost(client, monkeypatch):
+def test_the_payload_says_which_instrument_measured_the_cost(authed_client, monkeypatch):
     """D-1's standing rule, carried across the boundary. A billed number and a
     locally counted one are different quantities, and a payload that does not
     say which it holds is not reporting a measurement."""
@@ -89,18 +82,18 @@ def test_the_payload_says_which_instrument_measured_the_cost(client, monkeypatch
             usage=TokenUsage(prompt_tokens=10, completion_tokens=1, calls=1,
                              measured=measured),
         ))
-        body = client.post("/ask", json={"question": f"measured={measured}?"}).json()
+        body = authed_client.post("/ask", json={"question": f"measured={measured}?"}).json()
         assert body["usage"]["measured"] is measured
 
 
-def test_the_cost_reaches_the_store_as_well_as_the_payload(client, monkeypatch):
+def test_the_cost_reaches_the_store_as_well_as_the_payload(authed_client, monkeypatch):
     """Returning it and recording it are different guarantees, and only one of
     them survives the browser tab being closed."""
     _answer(monkeypatch, _ok(
         ["count"], [[1]],
         usage=TokenUsage(prompt_tokens=900, completion_tokens=100, calls=1, measured=True),
     ))
-    client.post("/ask", json={"question": "?"})
+    authed_client.post("/ask", json={"question": "?"})
 
     row = history.recent()[0]
     assert row["total_tokens"] == 1000
@@ -112,19 +105,19 @@ def test_the_cost_reaches_the_store_as_well_as_the_payload(client, monkeypatch):
 # --- AC2: two durations, kept apart -----------------------------------------
 
 
-def test_the_two_durations_are_reported_separately(client, monkeypatch):
+def test_the_two_durations_are_reported_separately(authed_client, monkeypatch):
     """010 §2.2 measured the provider at 94.2% of wall clock; a single duration
     would hide the only number that moves."""
     _answer(monkeypatch, _ok(["count"], [[1]]))
-    body = client.post("/ask", json={"question": "?"}).json()
+    body = authed_client.post("/ask", json={"question": "?"}).json()
 
     assert "total_ms" in body and "provider_ms" in body
     assert body["total_ms"] >= body["provider_ms"] >= 0
 
 
-def test_the_durations_are_recorded_not_only_returned(client, monkeypatch):
+def test_the_durations_are_recorded_not_only_returned(authed_client, monkeypatch):
     _answer(monkeypatch, _ok(["count"], [[1]]))
-    client.post("/ask", json={"question": "?"})
+    authed_client.post("/ask", json={"question": "?"})
 
     row = history.recent()[0]
     assert row["total_ms"] >= row["provider_ms"] >= 0
@@ -133,12 +126,12 @@ def test_the_durations_are_recorded_not_only_returned(client, monkeypatch):
 # --- AC4: the answer is recorded --------------------------------------------
 
 
-def test_an_answer_is_recorded_and_returns_its_id(client, monkeypatch):
+def test_an_answer_is_recorded_and_returns_its_id(authed_client, monkeypatch):
     """The id Iteration 8's feedback attaches to -- an answer, never a question
     string, because the agent may answer the same question differently next
     time."""
     _answer(monkeypatch, _ok(["count"], [[3503]], sql="SELECT count(*) FROM track"))
-    body = client.post("/ask", json={"question": "how many tracks?"}).json()
+    body = authed_client.post("/ask", json={"question": "how many tracks?"}).json()
 
     assert body["id"]
     rows = history.recent()
@@ -149,18 +142,18 @@ def test_an_answer_is_recorded_and_returns_its_id(client, monkeypatch):
     assert rows[0]["shape"] == "scalar"
 
 
-def test_a_failed_answer_is_recorded_too(client, monkeypatch):
+def test_a_failed_answer_is_recorded_too(authed_client, monkeypatch):
     """A history that keeps only successes cannot answer *what does it get
     wrong*, which is most of what AC1 is for."""
     _answer(monkeypatch, _failed(CATEGORY_NO_SQL))
-    client.post("/ask", json={"question": "unanswerable"})
+    authed_client.post("/ask", json={"question": "unanswerable"})
 
     row = history.recent()[0]
     assert row["ok"] == 0
     assert row["category"] == CATEGORY_NO_SQL
 
 
-def test_the_trace_is_recorded_with_the_answer(client, monkeypatch):
+def test_the_trace_is_recorded_with_the_answer(authed_client, monkeypatch):
     """Charter §1's claim is *read the error, revise*. A record of only the
     final answer cannot show that ever happened."""
     _answer(monkeypatch, _ok(["name"], [["AC/DC"]], steps=(
@@ -168,7 +161,7 @@ def test_the_trace_is_recorded_with_the_answer(client, monkeypatch):
              category=CATEGORY_DATABASE_ERROR, error="boom", sql="SELECT nope"),
         Step(attempt=2, action="execute_sql", ok=True, sql="SELECT name FROM artist"),
     )))
-    body = client.post("/ask", json={"question": "artists?"}).json()
+    body = authed_client.post("/ask", json={"question": "artists?"}).json()
 
     steps = history.steps_for(body["id"])
     assert [s["attempt"] for s in steps] == [1, 2]
@@ -180,7 +173,7 @@ def test_the_trace_is_recorded_with_the_answer(client, monkeypatch):
 # --- resolved D-2, end to end -----------------------------------------------
 
 
-def test_a_broken_store_never_fails_the_answer(client, monkeypatch):
+def test_a_broken_store_never_fails_the_answer(authed_client, monkeypatch):
     """**The mutation that matters for T3.** An observability failure must never
     cascade into user-facing downtime: make the store raise, and the question
     must still be answered."""
@@ -190,7 +183,7 @@ def test_a_broken_store_never_fails_the_answer(client, monkeypatch):
     _answer(monkeypatch, _ok(["count"], [[3503]]))
     monkeypatch.setattr(history, "_connect", explode)
 
-    response = client.post("/ask", json={"question": "how many?"})
+    response = authed_client.post("/ask", json={"question": "how many?"})
     assert response.status_code == STATUS_ANSWERED
     body = response.json()
     assert body["ok"] is True
@@ -198,7 +191,7 @@ def test_a_broken_store_never_fails_the_answer(client, monkeypatch):
     assert body["id"] is None, "no id when the write failed, and no exception"
 
 
-def test_a_broken_store_is_reported_by_health(client, monkeypatch):
+def test_a_broken_store_is_reported_by_health(authed_client, monkeypatch):
     """D-2's other half: swallowing the error is right, swallowing it silently
     is not.
 
@@ -211,9 +204,9 @@ def test_a_broken_store_is_reported_by_health(client, monkeypatch):
 
     _answer(monkeypatch, _ok(["count"], [[1]]))
     monkeypatch.setattr(history, "_connect", explode)
-    client.post("/ask", json={"question": "?"})
+    authed_client.post("/ask", json={"question": "?"})
 
-    health = client.get("/health")
+    health = authed_client.get("/health")
     assert health.status_code == 200
     body = health.json()
     assert body["history"]["writable"] is False
@@ -221,8 +214,8 @@ def test_a_broken_store_is_reported_by_health(client, monkeypatch):
     assert body["status"] == "degraded_history"
 
 
-def test_health_reports_a_working_store_as_healthy(client):
-    body = client.get("/health").json()
+def test_health_reports_a_working_store_as_healthy(authed_client):
+    body = authed_client.get("/health").json()
     assert body["status"] == "ok"
     assert body["history"]["writable"] is True
     assert body["database"]["connected"] is True
@@ -231,11 +224,11 @@ def test_health_reports_a_working_store_as_healthy(client):
 # --- AC8's field, plumbed early ---------------------------------------------
 
 
-def test_cache_hit_is_present_and_false_before_the_cache_exists(client, monkeypatch):
+def test_cache_hit_is_present_and_false_before_the_cache_exists(authed_client, monkeypatch):
     """Plumbed in T3 so the contract does not change under the page when T4
     lands. False everywhere until there is a cache to hit."""
     _answer(monkeypatch, _ok(["count"], [[1]]))
-    body = client.post("/ask", json={"question": "?"}).json()
+    body = authed_client.post("/ask", json={"question": "?"}).json()
 
     assert body["cache_hit"] is False
     assert history.recent()[0]["cache_hit"] == 0

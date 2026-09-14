@@ -313,3 +313,83 @@ def isolated_quota_snapshot():
 # is the kind of thing that gets re-introduced by someone adding a cache back
 # without knowing what it cost: any future memo of the schema needs an isolator
 # here on the day it lands, not the iteration after.
+
+
+# --- Iteration 10 T3: authenticating, visibly ---------------------------------
+#
+# **Never autouse, and that is the whole design.** `013-auth.md` §2.6 counted 100
+# endpoint calls across seven files that will meet the gate T4 wires in. An
+# autouse credential fixture would carry all of them through it, leaving AC1 --
+# *an unauthenticated request is refused and spends nothing* -- asserted by
+# nothing while the suite stayed green. That is the shape `HANDOFF.md` §6 records
+# twice, most recently at Iteration 9 T6 where a helper was correct, tested and
+# unreachable.
+#
+# So there are two clients and each test names the one it wants. A reader can see
+# from the signature whether a test authenticates, which is the property that
+# makes the negative suite in `tests/test_auth.py` meaningful.
+
+#: The identity the suite presents. Not a secret and not reused anywhere: it
+#: exists only inside tests, and `QUERYPILOT_USERS` is set per-test rather than
+#: read from the developer's environment.
+TEST_USER = "test-analyst"
+TEST_SECRET = "test-secret-not-used-anywhere-else"
+
+
+@pytest.fixture
+def authed_client(monkeypatch):
+    """A `TestClient` presenting valid Basic credentials.
+
+    **At T3 this authenticates against a gate that does not exist yet**, which is
+    deliberate: the credential logic landed unwired at T2, the call sites learn
+    to carry credentials here, and only then does T4 turn the gate on. Wiring it
+    first would have put 100 call sites in the red at once.
+
+    The consequence worth stating plainly: **this fixture proves nothing until
+    T4.** Passing tests here mean the credentials are syntactically fine, not
+    that anything checks them. T4's mutation -- remove the middleware and require
+    `tests/test_auth.py` to go red -- is what proves the gate.
+
+    Sets `QUERYPILOT_USERS` because that is where the app will look for its
+    credential map. T4 adds whatever step is needed to make the running app
+    re-read it; that step belongs with the mechanism, not here.
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from api.http.auth import USERS_ENV
+    from api.main import app
+
+    monkeypatch.setenv(USERS_ENV, json.dumps({TEST_USER: TEST_SECRET}))
+    client = TestClient(app)
+    # Assigned rather than passed to the constructor: this `TestClient` takes no
+    # `auth=` keyword, and `httpx` does the Basic encoding itself -- a hand-built
+    # `Authorization: Basic <base64>` header would be a second implementation of
+    # something the library already gets right.
+    client.auth = (TEST_USER, TEST_SECRET)
+    return client
+
+
+@pytest.fixture
+def anonymous_client(monkeypatch):
+    """A `TestClient` presenting nothing, for the tests that must be refused.
+
+    **Named `anonymous_client` rather than `client` on purpose.** A fixture
+    called `client` is what a new test asks for without thinking, and it would
+    hand back an unauthenticated one that works today and fails confusingly the
+    first time the test touches a protected route. The name is the warning.
+
+    The credential map is still configured, so a refusal here is the gate saying
+    *these credentials are wrong*, not the app saying *I have no credentials at
+    all*. Those are different failures and `tests/test_auth.py` covers both.
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from api.http.auth import USERS_ENV
+    from api.main import app
+
+    monkeypatch.setenv(USERS_ENV, json.dumps({TEST_USER: TEST_SECRET}))
+    return TestClient(app)

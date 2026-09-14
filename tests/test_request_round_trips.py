@@ -163,16 +163,23 @@ class _StubProvider:
 
 
 @pytest.fixture
-def client(monkeypatch):
+def authed_client(monkeypatch, authed_client):
+    """The shared authenticated client, with this file's stub provider.
+
+    Shadows `conftest.py`'s fixture by requesting it -- the credentials and the
+    `QUERYPILOT_USERS` setup stay in one place, and only the provider patch is
+    local. Writing a second `TestClient(app, auth=...)` here would be a second
+    copy of the credential arrangement, free to drift.
+    """
     # Patched where `api.main` looked it up, for the reason `_answer` in
     # `tests/test_ask_endpoint.py` gives: patching the factory's home would
     # leave the already-imported name pointing at the real one.
     monkeypatch.setattr("api.main.get_provider", lambda: _StubProvider())
-    return TestClient(app)
+    return authed_client
 
 
-def _ask(client, question: str):
-    response = client.post("/ask", json={"question": question})
+def _ask(authed_client, question: str):
+    response = authed_client.post("/ask", json={"question": question})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"], f"the stub's answer did not succeed: {body.get('error')}"
@@ -182,7 +189,7 @@ def _ask(client, question: str):
 # --- the three shapes --------------------------------------------------------
 
 
-def test_a_miss_introspects_once_and_runs_the_query(client, configured_database):
+def test_a_miss_introspects_once_and_runs_the_query(authed_client, configured_database):
     """Any miss, cold or warm — there is no longer a difference (T4).
 
     **One schema read, 12 round trips.** `_deployed_fingerprints()` introspects
@@ -195,7 +202,7 @@ def test_a_miss_introspects_once_and_runs_the_query(client, configured_database)
     pays. Six of those nine statements are preamble.
     """
     with counting_round_trips() as trips:
-        body = _ask(client, "How many tracks?")
+        body = _ask(authed_client, "How many tracks?")
 
     assert body["cache_hit"] is False
     assert trips.composition == {
@@ -209,7 +216,7 @@ def test_a_miss_introspects_once_and_runs_the_query(client, configured_database)
     assert trips.n == 4 * STATEMENTS_PER_EXECUTE_SQL
 
 
-def test_a_second_question_costs_the_same_as_the_first(client, configured_database):
+def test_a_second_question_costs_the_same_as_the_first(authed_client, configured_database):
     """**The convergence T4 produced, asserted rather than assumed.**
 
     Before T4 this was the cheap case: the schema cache was warm, so a second
@@ -221,10 +228,10 @@ def test_a_second_question_costs_the_same_as_the_first(client, configured_databa
     is ever added back, this is the test that will go green in a way somebody
     has to explain.
     """
-    _ask(client, "How many tracks?")  # warms the schema cache
+    _ask(authed_client, "How many tracks?")  # warms the schema cache
 
     with counting_round_trips() as trips:
-        body = _ask(client, "How many tracks are there in total?")
+        body = _ask(authed_client, "How many tracks are there in total?")
 
     assert body["cache_hit"] is False
     assert trips.composition == {
@@ -239,7 +246,7 @@ def test_a_second_question_costs_the_same_as_the_first(client, configured_databa
 
 
 def test_an_answer_cache_hit_still_introspects_to_build_its_key(
-    client, configured_database
+    authed_client, configured_database
 ):
     """**The path B-14 cost the most, and it is worth seeing plainly.**
 
@@ -251,10 +258,10 @@ def test_an_answer_cache_hit_still_introspects_to_build_its_key(
     What still does not happen is the generated query: the rows come from the
     answer cache, which is the saving that cache exists for.
     """
-    _ask(client, "How many tracks?")
+    _ask(authed_client, "How many tracks?")
 
     with counting_round_trips() as trips:
-        body = _ask(client, "How many tracks?")
+        body = _ask(authed_client, "How many tracks?")
 
     assert body["cache_hit"] is True
     assert trips.composition == {
@@ -272,7 +279,7 @@ def test_an_answer_cache_hit_still_introspects_to_build_its_key(
 
 
 def test_the_request_path_reads_the_schema_once_on_a_miss(
-    client, configured_database
+    authed_client, configured_database
 ):
     """**The property T3 delivered, stated on its own.**
 
@@ -287,10 +294,10 @@ def test_the_request_path_reads_the_schema_once_on_a_miss(
     a mutation swapping the cache for a direct introspection left this green and
     turned all three composition tests red. The pair covers both questions.
     """
-    _ask(client, "How many tracks?")  # warm, so a read is exactly one probe
+    _ask(authed_client, "How many tracks?")  # warm, so a read is exactly one probe
 
     with counting_round_trips() as trips:
-        _ask(client, "Something else entirely?")
+        _ask(authed_client, "Something else entirely?")
 
     reads = trips.count(_PROBE) + trips.count(_RELATIONS)
     assert reads == 1, (
@@ -299,16 +306,16 @@ def test_the_request_path_reads_the_schema_once_on_a_miss(
     )
 
 
-def test_a_hit_never_touches_the_answered_table(client, configured_database):
+def test_a_hit_never_touches_the_answered_table(authed_client, configured_database):
     """Gate 3's row cap and the generated query are skipped entirely on a hit.
 
     A separate assertion from the composition above because it is the property a
     reader cares about -- a cached answer costs no query -- rather than an
     arithmetic fact about a dict.
     """
-    _ask(client, "How many tracks?")
+    _ask(authed_client, "How many tracks?")
 
     with counting_round_trips() as trips:
-        _ask(client, "How many tracks?")
+        _ask(authed_client, "How many tracks?")
 
     assert trips.count("FROM track") == 0, trips

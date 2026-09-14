@@ -24,19 +24,12 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 
 from api.agent.orchestrator import AgentResult
 from api.db.execution import ExecutionResult
 from api.http import quota
 from api.llm.base import TokenUsage
 from api.llm.rate_limits import Bucket, RateLimitSnapshot
-from api.main import app
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
 
 
 #: The measured minute bucket (B-1, 2026-09-04).
@@ -75,7 +68,7 @@ class _FakeProvider:
         return "ACTION: execute_sql SELECT 1"
 
 
-def _ask(monkeypatch, snapshot=None, question="how many tracks?", client=None):
+def _ask(monkeypatch, snapshot=None, question="how many tracks?", authed_client=None):
     """Drive one question with a provider carrying `snapshot`."""
     monkeypatch.setattr("api.main.get_provider", lambda: _FakeProvider(snapshot))
     monkeypatch.setattr(
@@ -89,13 +82,13 @@ def _ask(monkeypatch, snapshot=None, question="how many tracks?", client=None):
             usage=TokenUsage(prompt_tokens=1000, completion_tokens=69, calls=1, measured=True),
         ),
     )
-    return client.post("/ask", json={"question": question})
+    return authed_client.post("/ask", json={"question": question})
 
 
 # --- absence is reported as absence -----------------------------------------
 
 
-def test_quota_is_unknown_before_any_question(client):
+def test_quota_is_unknown_before_any_question(authed_client):
     """**No numbers at all until a real call has produced some.**
 
     A default of "8,000 remaining" would be a fabrication, and one that reads
@@ -103,7 +96,7 @@ def test_quota_is_unknown_before_any_question(client):
     from a placeholder, which is the property `usage_measured` exists to protect
     everywhere else in this iteration.
     """
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
 
     assert body["known"] is False
     assert body["tokens"] is None
@@ -112,19 +105,19 @@ def test_quota_is_unknown_before_any_question(client):
     assert body["note"] == ""
 
 
-def test_the_endpoint_is_always_200_even_knowing_nothing(client):
+def test_the_endpoint_is_always_200_even_knowing_nothing(authed_client):
     """A low bucket is not a service failure and neither is an empty one.
 
     The answer still arrives, it arrives more slowly, and AC11 is about saying
     so rather than about starting to refuse.
     """
-    assert client.get("/quota").status_code == 200
+    assert authed_client.get("/quota").status_code == 200
 
     quota.observe(_snapshot(remaining=100))
-    assert client.get("/quota").status_code == 200
+    assert authed_client.get("/quota").status_code == 200
 
 
-def test_the_payload_invents_no_daily_token_bucket(client):
+def test_the_payload_invents_no_daily_token_bucket(authed_client):
     """**Two buckets, not three, and the third is the one that bites.**
 
     B-1 measured a per-minute token limit and a per-day request limit in the
@@ -138,7 +131,7 @@ def test_the_payload_invents_no_daily_token_bucket(client):
     this test and read the paragraph above.
     """
     quota.observe(_snapshot(remaining=4000))
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
 
     assert set(body) == {
         "known",
@@ -156,33 +149,33 @@ def test_the_payload_invents_no_daily_token_bucket(client):
 # --- what a question teaches it ---------------------------------------------
 
 
-def test_a_question_records_what_the_provider_said(client, monkeypatch):
+def test_a_question_records_what_the_provider_said(authed_client, monkeypatch):
     """The snapshot has to be kept somewhere that outlives the request.
 
     T4 made the endpoint build a provider per request, so `last_rate_limit` dies
     with the request that observed it. Before T5 there was nowhere for it to go.
     """
-    _ask(monkeypatch, _snapshot(remaining=5120), client=client)
+    _ask(monkeypatch, _snapshot(remaining=5120), authed_client=authed_client)
 
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
     assert body["known"] is True
     assert body["tokens"]["remaining"] == 5120
     assert body["tokens"]["limit"] == TOKENS_PER_MINUTE
     assert body["requests"]["remaining"] == 900
 
 
-def test_the_window_is_derived_rather_than_declared(client, monkeypatch):
+def test_the_window_is_derived_rather_than_declared(authed_client, monkeypatch):
     """B-1's property, surfaced. The window comes out of the arithmetic between
     limit, remaining and reset time, so it survives a provider changing tiers --
     a hardcoded "per minute" would not."""
-    _ask(monkeypatch, _snapshot(remaining=2000), client=client)
+    _ask(monkeypatch, _snapshot(remaining=2000), authed_client=authed_client)
 
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
     assert body["tokens"]["window"] == "per minute"
     assert body["requests"]["window"] == "per day"
 
 
-def test_a_cache_hit_does_not_erase_the_last_reading(client, monkeypatch):
+def test_a_cache_hit_does_not_erase_the_last_reading(authed_client, monkeypatch):
     """A cache hit builds no provider, so there is nothing to observe.
 
     **This test originally claimed to cover `observe(None)` and did not.** The
@@ -192,20 +185,20 @@ def test_a_cache_hit_does_not_erase_the_last_reading(client, monkeypatch):
     different guarantee, and the one it was named for now has its own test
     below.
     """
-    _ask(monkeypatch, _snapshot(remaining=1000), question="repeated?", client=client)
-    assert client.get("/quota").json()["low"] is True
+    _ask(monkeypatch, _snapshot(remaining=1000), question="repeated?", authed_client=authed_client)
+    assert authed_client.get("/quota").json()["low"] is True
 
-    second = _ask(monkeypatch, None, question="repeated?", client=client)
+    second = _ask(monkeypatch, None, question="repeated?", authed_client=authed_client)
     assert second.json()["cache_hit"] is True
 
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
     assert body["known"] is True, "the last real reading must survive a cache hit"
     assert body["tokens"]["remaining"] == 1000
     assert body["low"] is True
 
 
 def test_a_provider_that_reports_nothing_does_not_erase_the_last_reading(
-    client, monkeypatch
+    authed_client, monkeypatch
 ):
     """**`observe(None)` is ignored rather than stored**, tested on the path
     that actually reaches it.
@@ -217,13 +210,13 @@ def test_a_provider_that_reports_nothing_does_not_erase_the_last_reading(
     different claims, and the second one silently switches the warning off at
     the moment it is most likely to be needed.
     """
-    _ask(monkeypatch, _snapshot(remaining=900), question="first?", client=client)
-    assert client.get("/quota").json()["tokens"]["remaining"] == 900
+    _ask(monkeypatch, _snapshot(remaining=900), question="first?", authed_client=authed_client)
+    assert authed_client.get("/quota").json()["tokens"]["remaining"] == 900
 
     # A different question, so this is a miss and a provider really is built.
-    _ask(monkeypatch, None, question="a different question?", client=client)
+    _ask(monkeypatch, None, question="a different question?", authed_client=authed_client)
 
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
     assert body["known"] is True, "an uninformative call must not erase what we knew"
     assert body["tokens"]["remaining"] == 900
 
@@ -231,19 +224,19 @@ def test_a_provider_that_reports_nothing_does_not_erase_the_last_reading(
 # --- low, and the honesty around it -----------------------------------------
 
 
-def test_a_low_bucket_is_reported_low(client):
+def test_a_low_bucket_is_reported_low(authed_client):
     quota.observe(_snapshot(remaining=quota.LOW_TOKENS - 1))
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
 
     assert body["low"] is True
     assert body["note"]
 
 
-def test_a_healthy_bucket_says_nothing(client):
+def test_a_healthy_bucket_says_nothing(authed_client):
     """No banner when there is nothing to explain. A warning that is always on
     is one nobody reads by the time it matters."""
     quota.observe(_snapshot(remaining=quota.LOW_TOKENS + 1))
-    body = client.get("/quota").json()
+    body = authed_client.get("/quota").json()
 
     assert body["low"] is False
     assert body["note"] == ""
@@ -261,14 +254,14 @@ def test_the_threshold_is_derived_from_the_measured_cost_of_a_question():
     assert 1047 <= quota.TYPICAL_QUESTION_TOKENS <= 1256
 
 
-def test_the_note_reports_the_measurement_not_only_an_alarm(client):
+def test_the_note_reports_the_measurement_not_only_an_alarm(authed_client):
     """A user told "this may be slow" learns nothing they cannot already see.
 
     The sentence has to carry the numbers, so it explains *why* and implies the
     remedy -- the bucket refills on its own.
     """
     quota.observe(_snapshot(remaining=1200))
-    note = client.get("/quota").json()["note"]
+    note = authed_client.get("/quota").json()["note"]
 
     assert "1,200" in note, "the note must say what is actually left"
     assert "8,000" in note, "...and what it is out of"
@@ -311,7 +304,7 @@ def test_the_reading_stays_valid_inside_its_own_window():
 # --- the instrument does not change what it measures ------------------------
 
 
-def test_quota_never_calls_the_provider(client, monkeypatch):
+def test_quota_never_calls_the_provider(authed_client, monkeypatch):
     """Asking the provider how much quota is left would spend quota."""
     def no_calls(*_args, **_kwargs):
         raise AssertionError("/quota must not build or call a provider")
@@ -319,8 +312,8 @@ def test_quota_never_calls_the_provider(client, monkeypatch):
     monkeypatch.setattr("api.main.get_provider", no_calls)
     quota.observe(_snapshot(remaining=3000))
 
-    assert client.get("/quota").status_code == 200
-    assert client.get("/quota").json()["tokens"]["remaining"] == 3000
+    assert authed_client.get("/quota").status_code == 200
+    assert authed_client.get("/quota").json()["tokens"]["remaining"] == 3000
 
 
 def test_the_quota_module_does_not_pace():
@@ -358,31 +351,31 @@ def _javascript_code(source: str) -> str:
     )
 
 
-def test_the_quota_banner_starts_hidden_in_the_served_markup(client):
+def test_the_quota_banner_starts_hidden_in_the_served_markup(authed_client):
     """A declarative default, following the chart toggle.
 
     A default expressed only in a script is one no test can see without a
     browser, and it can drift from what the script later sets.
     """
-    page = client.get("/").text
+    page = authed_client.get("/").text
     banner = page[page.index('id="quota"') :][:60]
     assert "hidden" in banner
     assert 'aria-live="polite"' in banner, "it appears without warning; announce it"
 
 
-def test_the_cache_note_starts_hidden_in_the_served_markup(client):
-    page = client.get("/").text
+def test_the_cache_note_starts_hidden_in_the_served_markup(authed_client):
+    page = authed_client.get("/").text
     note = page[page.index('id="cache-note"') :][:60]
     assert "hidden" in note
 
 
-def test_the_page_asks_the_server_for_quota(client):
-    code = _javascript_code(client.get("/static/app.js").text)
+def test_the_page_asks_the_server_for_quota(authed_client):
+    code = _javascript_code(authed_client.get("/static/app.js").text)
     assert '"/quota"' in code
     assert "refreshQuota" in code
 
 
-def test_the_warning_text_comes_from_the_server(client):
+def test_the_warning_text_comes_from_the_server(authed_client):
     """One place decides the wording.
 
     The server measured the bucket and knows the numbers; a sentence assembled
@@ -395,15 +388,15 @@ def test_the_warning_text_comes_from_the_server(client):
     clause above the assignment still referenced `quota.note`. A name appearing
     in a file says nothing about whether it reaches the screen.
     """
-    code = _javascript_code(client.get("/static/app.js").text)
+    code = _javascript_code(authed_client.get("/static/app.js").text)
     assert "quotaBox.textContent = quota.note" in code
 
 
-def test_the_page_marks_a_cached_answer(client):
+def test_the_page_marks_a_cached_answer(authed_client):
     """AC8's other half, which the payload alone did not satisfy: `cache_hit`
     was in the response since T3 and nothing rendered it, so the page presented
     a reused answer exactly as it presented a fresh one."""
-    code = _javascript_code(client.get("/static/app.js").text)
+    code = _javascript_code(authed_client.get("/static/app.js").text)
     assert "cache_hit" in code
 
     # The *call*, not merely the definition. A test satisfied by a function
@@ -414,12 +407,12 @@ def test_the_page_marks_a_cached_answer(client):
     assert "renderCacheNote(body)" in render_body
 
 
-def test_the_page_still_loads_nothing_remote(client):
+def test_the_page_still_loads_nothing_remote(authed_client):
     """T5 added a fetch and two elements, and it must not have added a CDN.
 
     Re-asserted here rather than left to the Iteration 6 test, because this is
     the task that touched the page.
     """
-    page = client.get("/").text
+    page = authed_client.get("/").text
     assert "https://" not in page
     assert "cdn" not in page.lower()

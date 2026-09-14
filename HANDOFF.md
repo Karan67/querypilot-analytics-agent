@@ -15,8 +15,9 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
 | [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
 | [`specs/010-hardening.md`](specs/010-hardening.md) and its plan | Iteration 7, delivered 2026-09-10. Its §2 holds the latency, cost and quota measurements |
-| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 9 is closed**; the open board is B-4, B-6 (live leg), B-11, B-12, B-13 (budgeted) |
+| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 10 is closed**; the open board is B-4, B-6 (live leg), B-11, B-12, B-15 |
 | [`specs/012-board.md`](specs/012-board.md) and its plan | Iteration 9, delivered 2026-09-11. Read it for how a measurement retired working code |
+| [`specs/013-auth.md`](specs/013-auth.md) and its plan | Iteration 10, delivered 2026-09-14. **Read this before touching a route or a test client** — every endpoint but `/health` is behind a credential now, and the suite has two client fixtures where it used to have one |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -48,7 +49,20 @@ Added later, and equally binding:
 6. **`tools.py` is a registry, not an implementation.** Logic lives in its
    domain module. *"Apply this pattern to all future tools."*
 7. **The API key never appears in chat, a commit, a log, or an error message.**
-   `GroqProvider._safe_message` scrubs defensively.
+   `GroqProvider._safe_message` scrubs defensively. Iteration 10 put the
+   sign-in secret under the same rule: `load_identities` quotes `str(exc)` and
+   never `exc.doc`, which on a `JSONDecodeError` is the entire credential map.
+8. **No autouse credential fixture.** *"Use an explicit authenticated client
+   fixture for routes under test, and ensure an explicit negative test suite
+   exercises unauthenticated (401) and malformed credential paths against all
+   protected routes."* An autouse one would carry all ~100 endpoint calls
+   through the gate and leave *an unauthenticated request is refused* asserted
+   by nothing, while the suite stayed green.
+9. **No default credential in `docker-compose.yml`.** A default secret is worse
+   than none: it survives into a deployment and looks like a configured system.
+   The compose default is empty, which fails closed. `.env.example` carries a
+   local-development value on the same terms as the Postgres passwords beside
+   it, so `cp .env.example .env && docker compose up -d` still works.
 
 ---
 
@@ -86,12 +100,32 @@ because a measurement contradicted the premise.
 | **7 Hardening** | **Done 2026-09-10** — T1-T7; feedback deferred to 8 (T1) |
 | **8 Ship** | **Closed 2026-09-11** — T1-T7, all 14 ACs met, merged as PR #10. CI, B-9, B-10 and AC6's feedback all discharged. Deployment and the demo video deferred as B-11/B-12, by decision rather than omission |
 | **9 The board** | **Closed 2026-09-11** — T1-T7, merged as PR #11. **B-14 discharged** (the schema cache retired on its own measurement), **B-6 half discharged** (mid-run 429 reconciliation; the live leg stays open), **B-13 budgeted** (20 clean CI runs). Charter §6's map, which ended at 8, gained a row rather than being outgrown |
+| **10 Authentication** | **Closed 2026-09-14** — T1-T7. HTTP Basic over an env-configured credential map; everything but `/health` refused without one. Carved out of B-11 rather than added beside it: deployment is blocked on three things and only this one was engineering |
 
-**1,217 tests**, ~60s (live provider tests skip when rate-limited, which is
+**1,348 tests**, ~60s (live provider tests skip when rate-limited, which is
 a working guard rather than a red failure -- see the traps below). Iteration 9
-is the first iteration to end with **fewer** tests than it began: it added 19
-and deleted 22 with the schema cache, which is what retiring a module looks
-like when the tests went with it.
+is the only iteration so far to end with **fewer** tests than it began: it added
+19 and deleted 22 with the schema cache, which is what retiring a module looks
+like when the tests went with it. Iteration 10 added 100 — most of them one
+negative suite walking every route in four credential modes.
+
+### The gate, in one paragraph (Iteration 10)
+
+**Everything except `/health` needs HTTP Basic credentials**, checked by one
+middleware in `api/main.py` against `QUERYPILOT_USERS` — a JSON object of name
+to secret. Middleware and not `Depends`, because a route dependency provably
+cannot protect the `/static` mount: measured at 401 for `GET /` and **200** for
+`GET /static/x.js` behind an app-level deny-all. The exemption list lives in
+`api/http/auth.py` as `OPEN_PATHS`, a dict of path to *reason*, and a test walks
+`app.routes` and probes every one.
+
+Two things to know before writing a test. **There is no autouse credential
+fixture and there must not be one** -- `tests/conftest.py` has `authed_client`
+and `anonymous_client`, and each test names the one it wants, so whether a test
+authenticates is visible in its signature. And an unconfigured deployment
+**fails closed**: `QUERYPILOT_USERS` unset means 401 everywhere, with `/health`
+still answering and reporting `auth.configured: false` and a message naming the
+variable, so the container can say why rather than merely refuse.
 
 A plain `pytest` now writes `.pytest_cache/junit.xml` (Iteration 9 T5). The
 junit report carries a complete assertion message where `-q` truncates it to
@@ -182,8 +216,9 @@ and it was written *before* the change for that reason.
 | ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
 | ~~B-10~~ | `get_schema()` reached the database around Gate 2 | discharged 2026-09-11 at Iteration 8 T5 |
 | ~~B-14~~ | did the schema cache still earn its weight after B-10? | **discharged 2026-09-11** at Iteration 9 T4 -- it did not; the cache is retired |
-| **B-11** | production deployment | deferred at Iteration 8 T1 — a decision, not a task |
+| **B-11** | production deployment | still deferred — **one of its three blockers discharged** 2026-09-14 by Iteration 10. Who may spend the quota is now answered in code; *whose key* and *where the secret lives* are unchanged, and both are decisions rather than tasks. TLS belongs here too |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
+| **B-15** | the auth suite cannot run without a database | opened 2026-09-14 at Iteration 10 T4 — the gate needs no database and `tests/test_auth.py` is skipped anyway, because `configured_database` is session-scoped and autouse. CI is unaffected (`QUERYPILOT_TESTS_REQUIRE_DATABASE=1` turns the skip into a failure); a developer with the stack down silently does not run it |
 | ~~B-13~~ | the gold-query pair flaked — `hard-001` exceeded the 10s ceiling under load | **discharged 2026-09-11** — the reference query now pre-aggregates: 48x faster, identical result, fingerprints unmoved |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
@@ -274,7 +309,7 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,217 tests, ~60s
+.venv/Scripts/python.exe -m pytest -q                 # 1,348 tests, ~60s
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 
@@ -418,6 +453,38 @@ accuracy figure" — and a page asserted not to contain the word cannot carry a
 disclaimer built from it. Stripping comments was no help; the copy had to
 change. Then the test failed again on its own strictness, matching a phrase
 across a line break. Collapse whitespace before asserting on rendered text.
+
+**The sixth was an absence assertion that never checked it was reading the
+right response** (Iteration 10 T4). `test_the_refusal_says_nothing_about_what_
+went_wrong` searched a 401 body for words that would leak which half of a
+credential was wrong. Under the mandatory mutation -- middleware removed -- it
+**passed**, because `/quota` answered **200** with a quota payload that happens
+to contain none of those words. The list of banned strings was fine; the test
+had simply never established that it was looking at a refusal. **Assert the
+status, the shape, or the identity of the thing first, then assert what is
+absent from it.** The five earlier instances were all about *where* the test
+read; this one was about *what*.
+
+**A patched factory does not reach a name that was imported at module load.**
+`api/main.py` does `from api.llm.factory import get_provider`, so
+`monkeypatch.setattr("api.llm.factory.get_provider", ...)` leaves the endpoint
+holding its original reference and calling the real provider. `tests/conftest.py`
+`::provider_that_must_not_be_called` patches the factory's home, which is right
+for the eval runner and **not sufficient for anything driving `POST /ask`** --
+`013-auth-plan.md` §3 assumed it was, and AC2's "a refused request spends
+nothing" would have been asserted against a stub nothing consulted. Patch
+`api.main.get_provider` as well. The same note is already on `_answer` in
+`tests/test_ask_endpoint.py`; it is here because a *plan* got it wrong, not just
+a test.
+
+**A gate exemption is decided before routing, so framework path handling does
+not apply.** Middleware sees the raw path: FastAPI's trailing-slash redirect has
+not run, so `/health/` and `/health` are different strings to a bare `==`, and
+the healthcheck would be refused the day somebody added a slash to the compose
+file. `api/http/auth.py::normalise_path` strips a trailing slash and nothing
+else -- `//health//` stays refused on purpose, because it matches no route
+anyway and widening the one exemption to cover shapes nothing sends is how an
+exemption list grows.
 
 **SQLite: applying the schema on every connection is a write lock.**
 `executescript()` takes one even for a reader, which produced `database is

@@ -27,7 +27,7 @@ curl http://localhost:8000/health          # user must read querypilot_ro
 ```
 
 ```bash
-.venv/Scripts/python.exe -m pytest              # 1,217 tests, ~60s
+.venv/Scripts/python.exe -m pytest              # 1,348 tests, ~60s
 .venv/Scripts/python.exe -m pytest tests/test_orchestrator.py -q
 .venv/Scripts/python.exe -m pytest tests/test_expert_tier.py -q -k "ac12"
 ```
