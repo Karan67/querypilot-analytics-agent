@@ -115,6 +115,11 @@ services:
       # allocates bridge networks from, which is what lets the `tls` profile
       # work with no configuration.
       QUERYPILOT_TRUSTED_PROXIES: ${QUERYPILOT_TRUSTED_PROXIES:-}
+      # Iteration 12 T9. The daily spend ceiling. 50 questions per
+      # identity per day, 150 across the deployment -- both reset at
+      # UTC midnight, and both are configuration rather than code.
+      QUERYPILOT_DAILY_IDENTITY_LIMIT: ${QUERYPILOT_DAILY_IDENTITY_LIMIT:-50}
+      QUERYPILOT_DAILY_GLOBAL_LIMIT: ${QUERYPILOT_DAILY_GLOBAL_LIMIT:-150}
       # Who may spend that quota (Iteration 10, specs/013-auth.md). A JSON
       # object of name to secret, read at request time so rotating a credential
       # is an environment change and not a rebuild (AC9).

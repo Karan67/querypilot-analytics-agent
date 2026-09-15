@@ -42,7 +42,7 @@ from api import config
 from api.http import auth, cache, forwarded, headers, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
-from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
+from api.http.shapes import SHAPE_CHARTABLE, SHAPE_EMPTY, chart_series, classify
 
 #: The liveness probe, as a query rather than as engine calls.
 #:
@@ -199,8 +199,15 @@ async def require_credentials(request: Request, call_next):
     if presented is None:
         return _unauthorized()
 
-    if auth.verify(identities, *presented) is None:
+    identity = auth.verify(identities, *presented)
+    if identity is None:
         return _unauthorized()
+
+    # Iteration 12 T9. The one place the name that authenticated is available
+    # at all -- `verify()` returns it and nothing downstream re-derives it.
+    # `/ask` reads this to weigh the request against its own daily ceiling; no
+    # other route looks at it, so leaving it unset costs nothing anywhere else.
+    request.state.identity = identity
 
     return await call_next(request)
 
@@ -390,6 +397,10 @@ def health() -> JSONResponse:
                 auth.USERS_ENV: config.secret_status(auth.USERS_ENV),
                 "GROQ_API_KEY": config.secret_status("GROQ_API_KEY"),
             },
+            # Iteration 12 T9. Today's global count and both configured
+            # limits, read without writing -- a health check that itself
+            # counted as a question would inflate the number it reports.
+            "spend": history.spend_status(),
         },
     )
 
@@ -408,7 +419,7 @@ class AskRequest(BaseModel):
 
 
 @app.post("/ask", tags=["agent"])
-def ask(request: AskRequest) -> JSONResponse:
+def ask(request: AskRequest, http_request: Request) -> JSONResponse:
     """Answer one question, and show the working.
 
     Synchronous, per resolved Q-D: measured at 1.20-2.51s over a single provider
@@ -425,7 +436,40 @@ def ask(request: AskRequest) -> JSONResponse:
     The response always carries `sql` when one was produced, including on
     failure: AC12 says a demo audience learns more from a legible failure than
     from a spinner that stops.
+
+    **The daily spend ceiling is weighed first** (Iteration 12 T9, resolved
+    D-3), before the cache and before any provider is built. Authentication
+    narrows who can spend the project's quota; it does not bound how much one
+    identity spends, or what a browser tab left reloading costs before anyone
+    notices, and that is the gap this closes. A refusal here never reaches
+    `_answer_or_replay` and is never written to history: like the 401 above it,
+    the caller has not asked a question that was processed, so there is
+    nothing for `record_ask` to have a row about.
     """
+    identity = getattr(http_request.state, "identity", "") or ""
+    decision = history.reserve_question(identity)
+    if not decision.allowed:
+        failure = failure_for(decision.category)
+        return JSONResponse(
+            status_code=failure.status,
+            content={
+                "ok": False,
+                "sql": "",
+                "columns": [],
+                "rows": [],
+                # `classify([], [])` -- an unreached agent has no result set at
+                # all, and this is the shape the classifier itself gives an
+                # empty one, so the ceiling's refusal reuses the same value
+                # rather than inventing a fourth meaning of "nothing here".
+                "shape": SHAPE_EMPTY,
+                "series": None,
+                "trace": [],
+                "category": decision.category,
+                "error": failure.message,
+                "retryable": failure.retryable,
+            },
+        )
+
     started = time.perf_counter()
     answered = _answer_or_replay(request.question)
     total_ms = int((time.perf_counter() - started) * 1000)

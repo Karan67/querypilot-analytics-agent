@@ -189,42 +189,53 @@ def test_the_trace_is_recorded_with_the_answer(authed_client, monkeypatch):
 # --- resolved D-2, end to end -----------------------------------------------
 
 
-@pytest.mark.needs_db
-@pytest.mark.usefixtures("configured_database")
-def test_a_broken_store_never_fails_the_answer(authed_client, monkeypatch):
-    """**The mutation that matters for T3.** An observability failure must never
-    cascade into user-facing downtime: make the store raise, and the question
-    must still be answered."""
+def test_record_ask_never_raises_on_a_broken_store(monkeypatch, tmp_path):
+    """**The mutation that matters for T3.** An observability failure must
+    never cascade: make the store raise, and `record_ask` returns `None`
+    rather than propagating.
+
+    **Narrowed by Iteration 12 T9, deliberately.** Before T9 this was proved
+    through a live `/ask` request, because nothing else touched the store
+    first. As of T9, `reserve_question` -- the daily spend ceiling -- touches
+    the *same* connection before `record_ask` ever runs, and it fails
+    **closed**: a ceiling that cannot be read is not evidence the caller is
+    within it, on the same reasoning D-2 already applies to an unreachable
+    database. So a fully broken store now refuses the question with a `503`
+    before recording is ever reached -- see
+    `test_a_totally_broken_store_now_refuses_before_it_ever_reaches_recording`
+    below -- and `record_ask`'s own fail-open guarantee is what this test
+    verifies directly, at the unit that still owns it.
+    """
     def explode(*args, **kwargs):
         raise sqlite3.OperationalError("database or disk is full")
 
-    _answer(monkeypatch, _ok(["count"], [[3503]]))
     monkeypatch.setattr(history, "_connect", explode)
+    record = history.AskRecord(question="how many?", ok=True, total_ms=1, provider_ms=1)
 
-    response = authed_client.post("/ask", json={"question": "how many?"})
-    assert response.status_code == STATUS_ANSWERED
-    body = response.json()
-    assert body["ok"] is True
-    assert body["rows"] == [[3503]]
-    assert body["id"] is None, "no id when the write failed, and no exception"
+    ask_id = history.record_ask(record, tmp_path / "history.db")
+
+    assert ask_id is None, "no id when the write failed, and no exception"
+    assert history.degraded() != ""
 
 
 @pytest.mark.needs_db
 @pytest.mark.usefixtures("configured_database")
-def test_a_broken_store_is_reported_by_health(authed_client, monkeypatch):
+def test_a_broken_store_is_reported_by_health(authed_client, monkeypatch, tmp_path):
     """D-2's other half: swallowing the error is right, swallowing it silently
     is not.
 
-    `/health` stays **200**. History is observability, and reporting the service
-    as down because logging broke would be the same cascade D-2 prevents, moved
-    into the health check.
+    `/health` stays **200** for a broken *history* store specifically --
+    `degraded()` is set directly here, at the unit `record_ask` owns, for the
+    reason given above: routing this through a live `/ask` would now be
+    intercepted by the spend ceiling before recording ever runs. Still marked
+    `needs_db`: `/health` itself reads Postgres to report `database.connected`.
     """
     def explode(*args, **kwargs):
         raise sqlite3.OperationalError("attempt to write a readonly database")
 
-    _answer(monkeypatch, _ok(["count"], [[1]]))
     monkeypatch.setattr(history, "_connect", explode)
-    authed_client.post("/ask", json={"question": "?"})
+    record = history.AskRecord(question="?", ok=True, total_ms=1, provider_ms=1)
+    history.record_ask(record, tmp_path / "history.db")
 
     health = authed_client.get("/health")
     assert health.status_code == 200
@@ -232,6 +243,32 @@ def test_a_broken_store_is_reported_by_health(authed_client, monkeypatch):
     assert body["history"]["writable"] is False
     assert "readonly" in body["history"]["error"]
     assert body["status"] == "degraded_history"
+
+
+def test_a_totally_broken_store_now_refuses_before_it_ever_reaches_recording(
+    authed_client, monkeypatch, tmp_path
+):
+    """The other half of the T9 narrowing, end to end.
+
+    `reserve_question` and `record_ask` share one connection helper. Breaking
+    it no longer leaves answering untouched -- the ceiling is the first thing
+    that reaches the store on every request, and it refuses rather than
+    guesses when it cannot be read. This is the intended shape of the
+    fail-closed decision, not a regression of it.
+    """
+    def explode(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setenv("QUERYPILOT_HISTORY_PATH", str(tmp_path / "history.db"))
+    _answer(monkeypatch, _ok(["count"], [[3503]]))
+    monkeypatch.setattr(history, "_connect", explode)
+
+    response = authed_client.post("/ask", json={"question": "how many?"})
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["ok"] is False
+    assert body["category"] == history.CATEGORY_LEDGER_UNAVAILABLE
 
 
 @pytest.mark.needs_db
