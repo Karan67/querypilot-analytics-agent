@@ -778,6 +778,7 @@ def format_report(
     glossary: bool = False,
     split: str | None = None,
     revealed: bool = False,
+    provider_name: str | None = None,
 ) -> str:
     """The `EVALS.md` block for one run (AC23).
 
@@ -809,6 +810,14 @@ def format_report(
         "|---|---|",
         f"| Strategy | `{strategy}` |",
         f"| Schema | `{schema_mode}` |",
+        # Iteration 13 (specs/016-second-llm-provider.md, decision D-C). Added
+        # because a model id alone stopped disambiguating the moment a second
+        # provider could serve one with the same name -- Cerebras's
+        # `gpt-oss-120b` and Groq's `openai/gpt-oss-120b` are the same
+        # underlying open model on two different vendors' infrastructure.
+        # `None` renders as `unknown` rather than guessing, for every entry
+        # recorded before this field existed.
+        f"| Provider | `{provider_name or 'unknown'}` |",
         f"| Model | `{first.model}` |",
         f"| Temperature | {first.temperature} |",
         f"| Prompt fingerprint | `{first.prompt_fingerprint}` |",
@@ -1255,7 +1264,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     from api.llm.base import LLMError
-    from api.llm.factory import get_provider
+    from api.llm.factory import DEFAULT_PROVIDER, PROVIDER_ENV, get_provider
+
+    # Same resolution `get_provider()` does internally -- read here too so
+    # the recorded entry says which vendor actually ran, not just which
+    # model (decision D-C).
+    provider_name = (os.environ.get(PROVIDER_ENV) or DEFAULT_PROVIDER).strip().lower()
 
     try:
         provider = get_provider()
@@ -1545,6 +1559,7 @@ def main(argv: list[str] | None = None) -> int:
                 # Only meaningful on a test run, and only recorded as YES when
                 # it actually revealed something.
                 revealed=args.reveal_test_failures and split == SPLIT_TEST,
+                provider_name=provider_name,
             )
         )
         print(f"Recorded in {EVALS_PATH}", file=sys.stderr)

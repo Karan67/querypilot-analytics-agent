@@ -10,6 +10,14 @@ Each entry states the model, the prompt fingerprint, the temperature and the
 dataset version, because a number is only comparable to another number taken
 under the same conditions.
 
+**2026-09-16, Iteration 13** (specs/016-second-llm-provider.md, decision D-C):
+entries from here on also state a `Provider`. A model id alone stopped
+disambiguating the moment a second vendor could serve one with the same
+name -- Cerebras's `gpt-oss-120b` and Groq's `openai/gpt-oss-120b` are the
+same underlying open model on two different vendors' infrastructure. Every
+entry recorded before this date is unambiguously Groq and is left as it was
+(append-only); it is not backfilled.
+
 ---
 
 ## 2026-09-03 01:55 — single-shot baseline

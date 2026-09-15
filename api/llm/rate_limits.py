@@ -245,6 +245,66 @@ class RateLimitSnapshot:
         return "rate limits: " + ", ".join(parts) if parts else "rate limits: unparsed"
 
 
+#: Cerebras-specific header names (Iteration 13,
+#: specs/016-second-llm-provider.md §2.4). **Doc-sourced from a third-party
+#: page, not yet corroborated by a live 429** -- the account probed for that
+#: spec returned 402 (no billing configured) before reaching the rate-limit
+#: layer. Kept as their own constants and function (decision D-D in
+#: specs/016-second-llm-provider-plan.md) rather than folded into the Groq
+#: constants above, because the window is encoded directly in the header name
+#: here (`-minute`, `-day`) instead of derived from a separate reset-time
+#: header the way Groq's `LIMIT_TOKENS` etc. are.
+CEREBRAS_LIMIT_TOKENS_MINUTE = "x-ratelimit-limit-tokens-minute"
+CEREBRAS_REMAINING_TOKENS_MINUTE = "x-ratelimit-remaining-tokens-minute"
+CEREBRAS_RESET_TOKENS_MINUTE = "x-ratelimit-reset-tokens-minute"
+CEREBRAS_LIMIT_REQUESTS_DAY = "x-ratelimit-limit-requests-day"
+CEREBRAS_REMAINING_REQUESTS_DAY = "x-ratelimit-remaining-requests-day"
+CEREBRAS_RESET_REQUESTS_DAY = "x-ratelimit-reset-requests-day"
+
+
+def snapshot_from_cerebras_headers(headers) -> RateLimitSnapshot | None:
+    """Cerebras counterpart to `snapshot_from_headers`.
+
+    Deliberately not merged with `snapshot_from_headers` (D-D): the two
+    vendors name their headers differently, and papering over that with a
+    shared header-name table would hide the fact that this side of it is
+    still doc-sourced rather than measured. `None` and an empty snapshot
+    are different claims here for the same reason they are in
+    `snapshot_from_headers` -- only the first (no matching header present)
+    is ever true.
+    """
+    if headers is None:
+        return None
+
+    try:
+        items = {str(k).lower(): str(v) for k, v in dict(headers).items()}
+    except (TypeError, ValueError):
+        return None
+
+    raw = {k: v for k, v in items.items() if k.startswith("x-ratelimit-")}
+    if RETRY_AFTER in items:
+        raw[RETRY_AFTER] = items[RETRY_AFTER]
+    if not raw:
+        return None
+
+    return RateLimitSnapshot(
+        tokens=Bucket(
+            name="tokens",
+            limit=_as_int(items.get(CEREBRAS_LIMIT_TOKENS_MINUTE)),
+            remaining=_as_int(items.get(CEREBRAS_REMAINING_TOKENS_MINUTE)),
+            reset_seconds=parse_duration(items.get(CEREBRAS_RESET_TOKENS_MINUTE)),
+        ),
+        requests=Bucket(
+            name="requests",
+            limit=_as_int(items.get(CEREBRAS_LIMIT_REQUESTS_DAY)),
+            remaining=_as_int(items.get(CEREBRAS_REMAINING_REQUESTS_DAY)),
+            reset_seconds=parse_duration(items.get(CEREBRAS_RESET_REQUESTS_DAY)),
+        ),
+        retry_after_seconds=parse_duration(items.get(RETRY_AFTER)),
+        raw=raw,
+    )
+
+
 def snapshot_from_headers(headers) -> RateLimitSnapshot | None:
     """Build a snapshot, or `None` when the response carried no limit headers.
 

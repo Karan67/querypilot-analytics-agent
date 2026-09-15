@@ -45,6 +45,15 @@ def get_provider(name: str | None = None, model: str | None = None) -> LLMProvid
             model=(model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL).strip(),
         )
 
+    if provider == "cerebras":
+        from api.llm.cerebras_provider import CerebrasProvider, DEFAULT_MODEL
+
+        return CerebrasProvider(
+            api_key=(config.get_secret("CEREBRAS_API_KEY") or "").strip(),
+            model=(model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL).strip(),
+        )
+
     raise LLMError(
-        f"Unknown LLM provider {provider!r}. Set {PROVIDER_ENV} to one of: groq."
+        f"Unknown LLM provider {provider!r}. Set {PROVIDER_ENV} to one of: "
+        "groq, cerebras."
     )
