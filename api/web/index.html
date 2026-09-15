@@ -19,8 +19,18 @@
     <header>
       <h1>QueryPilot</h1>
       <p class="tagline">
-        Ask a question about the Chinook music store. You get the answer, the
+        Ask a business question in plain English. You get the answer, the
         SQL that produced it, and the steps taken to get there.
+      </p>
+      <!--
+        Iteration 14 (specs/017-schema-generality.md AC4): the schema QueryPilot
+        answers against is a deployment choice (QUERYPILOT_DATABASE_URL), not a
+        fixed property of the product -- this line says which one this running
+        instance happens to be seeded with, rather than the tagline above
+        asserting it as the only one there is.
+      -->
+      <p class="demo-note">
+        This instance is seeded with the Chinook sample music store.
       </p>
     </header>
 

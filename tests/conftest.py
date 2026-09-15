@@ -38,6 +38,22 @@ DEFAULT_TEST_DATABASE_URL = (
     "postgresql+psycopg://querypilot_ro:readonlylocaldev@localhost:5432/chinook"
 )
 
+# Iteration 14 (specs/017-schema-generality.md). `current_glossary_terms()`
+# now reads `QUERYPILOT_GLOSSARY_FILE` and defaults to *no* glossary when
+# unset (resolved Q-B) -- correct for a fresh deployment, wrong for this
+# suite, which tests against the Chinook fixture and has dozens of
+# pre-existing assertions (`tests/test_glossary.py`, `test_loop_prompts.py`'s
+# exact token counts, `test_cache.py`'s fingerprints) that expect Chinook's
+# glossary to be present whenever a test passes `glossary=True`, the same way
+# `DEFAULT_TEST_DATABASE_URL` above exists so the suite runs against Chinook
+# without every test wiring the DSN itself. `setdefault`, not an assignment:
+# a test exercising the unset/malformed-file paths overrides it with
+# `monkeypatch`, same as `TEST_DATABASE_URL` can override the line above.
+os.environ.setdefault(
+    "QUERYPILOT_GLOSSARY_FILE",
+    str(pathlib.Path(__file__).resolve().parent.parent / "api" / "glossary" / "chinook.json"),
+)
+
 #: Seconds the reachability probe waits before giving up and skipping.
 #:
 #: Not optional. A refused connection fails immediately, but a host that accepts

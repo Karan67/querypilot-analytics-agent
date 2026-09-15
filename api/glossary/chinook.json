@@ -1,0 +1,10 @@
+{
+  "active customer": "a customer with at least one invoice dated within 12 months of the most recent invoice_date in the database",
+  "support representative": "an employee who appears as customer.support_rep_id for at least one customer; other employees are not",
+  "sold track": "a track appearing in at least one invoice_line; a track never purchased is not one",
+  "charting artist": "an artist with at least one track that appears in an invoice_line, joined through album",
+  "active genre": "a genre with at least one track that appears in an invoice_line",
+  "curated playlist": "a playlist containing at least one track; an empty playlist is not one",
+  "average order value": "the mean of invoice.total across invoices; one order is one invoice, never one invoice_line",
+  "credited track": "a track whose composer is not null"
+}

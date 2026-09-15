@@ -58,6 +58,62 @@ services:
       retries: 30
       start_period: 60s
 
+  # Iteration 14 (specs/017-schema-generality.md). A second, independent
+  # Postgres instance seeded with Pagila instead of Chinook -- proof that the
+  # engine reads a live catalog rather than Chinook's own, not just an
+  # assertion that it should. Opt-in via `--profile pagila`, mirroring the
+  # `tls` profile's precedent: exercised, not assumed, and nobody running the
+  # default stack pays for a container they didn't ask for.
+  #
+  # Superuser is deliberately "postgres", not "querypilot" as db's is -- see
+  # db/init-pagila/01_load_pagila.sh for why (Pagila's dump owns ~106
+  # statements to that name).
+  #
+  # postgres:18-alpine, not 16 as db's is: every one of Pagila's ~56 uuid
+  # columns defaults to uuidv7(), a built-in function that does not exist
+  # before Postgres 18 -- measured directly (2026-09-16), the load failed
+  # against 16-alpine with "function uuidv7() does not exist". Bumping only
+  # this container's version proves the engine against a newer catalog shape
+  # too, and does not touch Chinook's tested-and-eval'd 16-alpine service.
+  pagila-db:
+    image: postgres:18-alpine
+    container_name: querypilot-pagila-db
+    restart: unless-stopped
+    profiles: ["pagila"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: pagila
+      # Reused from db's own read-only role config -- a different container,
+      # so no collision with Chinook's role of the same name.
+      QUERYPILOT_RO_USER: ${QUERYPILOT_RO_USER}
+      QUERYPILOT_RO_PASSWORD: ${QUERYPILOT_RO_PASSWORD}
+      QUERYPILOT_STATEMENT_TIMEOUT: ${QUERYPILOT_STATEMENT_TIMEOUT:-10s}
+    ports:
+      - "${PAGILA_BIND_HOST:-127.0.0.1}:${PAGILA_PORT:-5433}:5432"
+    volumes:
+      # Postgres 18's image expects the mount at the parent directory, not
+      # .../data as 16's does -- it now stores data under a major-version
+      # subdirectory (pg_ctlcluster-compatible layout). Measured directly:
+      # mounting .../data as db's block does refused to start.
+      - pagila_data:/var/lib/postgresql
+      # 01 loads Pagila; 02_readonly_role.sh (db/init-pagila) is a one-line
+      # wrapper that execs db/init/03_readonly_role.sh from this sibling
+      # mount, rather than a second copy of that security-relevant script.
+      # Nesting the file mount directly inside the already-:ro
+      # /docker-entrypoint-initdb.d mount was tried first and fails on Docker
+      # Desktop for Windows ("read-only file system" creating the
+      # mountpoint) -- a sibling mount avoids that entirely.
+      - ./db/init-pagila:/docker-entrypoint-initdb.d:ro
+      - ./db/init:/opt/chinook-init:ro
+      - ./db/pagila-seed:/seed:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d pagila"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
   # Iteration 12 T4. The one-shot that makes the volume belong to the account
   # the API now runs as.
   #
@@ -98,6 +154,13 @@ services:
     environment:
       # The only database credential the API ever holds is the read-only role.
       QUERYPILOT_DATABASE_URL: postgresql+psycopg://${QUERYPILOT_RO_USER}:${QUERYPILOT_RO_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Iteration 14 (specs/017-schema-generality.md, resolved Q-B). Unset
+      # means no glossary at all -- this demo sets it so its own prompt shape
+      # is unchanged from before the glossary became configurable. Pointed at
+      # a file baked into the image (api/glossary/chinook.json -> COPY . ./api/
+      # -> /app/api/glossary/chinook.json), not a bind mount, because it ships
+      # with the code, not with the deployment's secrets.
+      QUERYPILOT_GLOSSARY_FILE: ${QUERYPILOT_GLOSSARY_FILE:-/app/api/glossary/chinook.json}
       # LLM provider (specs/005-single-shot-generation.md). Provider and model
       # are configuration, not code -- switching either is an environment
       # change (AC3). The key is read from .env, which is gitignored.
@@ -265,6 +328,7 @@ services:
 
 volumes:
   pgdata:
+  pagila_data:
   querypilot_data:
   caddy_data:
   caddy_config:

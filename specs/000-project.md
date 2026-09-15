@@ -355,6 +355,7 @@ VERIFY. One iteration at a time; one task at a time within an iteration.
 | 8 | Ship | ~~Deployed~~, evals running in CI, README with honest numbers, ~~demo video~~, **and feedback** — see the amendment below |
 | 9 | The board | B-6, B-13 and B-14 each leave §8's board or carry a dated reason for staying — see [`012-board.md`](012-board.md). **Closed 2026-09-11**, merged as PR #11 |
 | 10 | Authentication | An unauthenticated request is refused and **spends nothing**; `/health` still answers — see [`013-auth.md`](013-auth.md). **Added 2026-09-12; see the note below** |
+| 14 | Schema generality | The engine answers correctly against a second, non-Chinook Postgres schema (Pagila), proven rather than assumed, and the business-term glossary is a deployment's own configuration rather than hardcoded to one domain — see [`017-schema-generality.md`](017-schema-generality.md). **Added 2026-09-16** |
 
 > **EXTENDED 2026-09-11, at Iteration 9 T1.** This map ended at 8, because it
 > was written as a route to a shipped system and the system shipped. What it did
@@ -1771,6 +1772,44 @@ declines to conclude.**
 > documented at length in the retired module, since a hash of the first thousand
 > rows of a stable catalog is perfectly stable and completely blind — is a real
 > hazard that the retirement sidesteps rather than solves.
+
+---
+
+### B-16 — Introspect partitioned parent tables (`relkind = 'p'`) instead of leaf partitions only
+
+Opened 2026-09-16 at Iteration 14 T3, by the smoke set that was proving
+`api/db/introspection.py` against a schema this repo did not shape.
+
+`get_schema()`'s catalog queries were written and measured entirely against
+Chinook, which has no partitioned table. Pointed at Pagila — a DVD-rental
+schema whose `payment` table is declared with monthly range partitioning, 55
+children by the time this was measured — the parent relation (Postgres
+`relkind = 'p'`, a partitioned table with no storage of its own) does not
+appear in the introspected `Schema` at all. Only the 55 `payment_p*` children
+do; confirmed directly with `api.db.introspection.get_schema()` against the
+live database, not inferred from the catalog SQL by reading.
+
+**Not a crash and not silently wrong** — every leaf partition is a real,
+correctly-typed, correctly-permissioned relation, so a question the model can
+answer by reasoning about all of them is answerable. `evals/PAGILA_SMOKE.md`
+records exactly that: asked for the total across all payments, the model
+noticed 55 `payment_p*` relations in its schema, wrote a 55-way `UNION ALL`
+across every one unprompted, and the sum matched a hand-verified ground truth
+exactly, on the first attempt. That this worked once, for 55 tables that
+happened to fit the rendered schema, is a capability, not a guarantee — a
+schema partitioned into hundreds of children, or one where the model omits or
+duplicates a partition, would fail silently in the opposite direction: a
+plausible, executable, wrong answer with no error to notice.
+
+**Deferred rather than fixed in Iteration 14**, on the user's ruling: this
+iteration's job was proving the engine survives a schema Chinook cannot
+express, not extending the catalog queries to a construct that survey turned
+up. Closing it properly means teaching `get_schema()` to recognise
+`relkind = 'p'` and either represent the parent as one relation (hiding the
+partitions, the shape most questions actually want) or represent both with the
+relationship stated — a design decision, not a one-line filter change, and one
+that needs its own measurement against a partitioned schema before being
+specified.
 
 ---
 
