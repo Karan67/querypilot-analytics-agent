@@ -1,0 +1,162 @@
+{
+  "generated_at": "2026-09-15T09:45:38Z",
+  "commit": "cc7e108",
+  "generated_by": "tools/deploy_census.py",
+  "argv": [],
+  "targets": {
+    "image": "querypiolt-api:latest",
+    "api_container": "querypilot-api",
+    "db_container": "querypilot-db",
+    "base_url": "http://localhost:8000"
+  },
+  "image": {
+    "reference": "querypiolt-api:latest",
+    "python_version": "3.12.13",
+    "size_bytes": 70271069,
+    "size_reported": "297MB",
+    "rootfs_layers": 8,
+    "history_entries": 17,
+    "config_user": "",
+    "config_user_declared": false,
+    "config_cmd": [
+      "uvicorn",
+      "api.main:app",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8000"
+    ],
+    "healthcheck_declared": false,
+    "history": [
+      {
+        "size": "0B",
+        "instruction": "CMD [\"uvicorn\" \"api.main:app\" \"--host\" \"0.0.0.0\" \"--port\" \"8000\"]"
+      },
+      {
+        "size": "0B",
+        "instruction": "EXPOSE [8000/tcp]"
+      },
+      {
+        "size": "1.1MB",
+        "instruction": "COPY . ./api/ # buildkit"
+      },
+      {
+        "size": "92.2MB",
+        "instruction": "RUN /bin/sh -c pip install --no-cache-dir -r requirements.lock # buildkit"
+      },
+      {
+        "size": "16.4kB",
+        "instruction": "COPY requirements.txt requirements.lock ./ # buildkit"
+      },
+      {
+        "size": "8.19kB",
+        "instruction": "WORKDIR /app"
+      },
+      {
+        "size": "0B",
+        "instruction": "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1"
+      },
+      {
+        "size": "0B",
+        "instruction": "CMD [\"python3\"]"
+      },
+      {
+        "size": "16.4kB",
+        "instruction": "RUN /bin/sh -c set -eux; for src in idle3 pip3 pydoc3 python3 python3-config; do dst=\"$(echo \"$src\" | tr -d 3)\"; [ -s \"/..."
+      },
+      {
+        "size": "41.4MB",
+        "instruction": "RUN /bin/sh -c set -eux; savedAptMark=\"$(apt-mark showmanual)\"; apt-get update; apt-get install -y --no-install-recommen..."
+      },
+      {
+        "size": "0B",
+        "instruction": "ENV PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684"
+      },
+      {
+        "size": "0B",
+        "instruction": "ENV PYTHON_VERSION=3.12.13"
+      },
+      {
+        "size": "0B",
+        "instruction": "ENV GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305"
+      },
+      {
+        "size": "4.95MB",
+        "instruction": "RUN /bin/sh -c set -eux; apt-get update; apt-get install -y --no-install-recommends ca-certificates netbase tzdata ; apt..."
+      },
+      {
+        "size": "0B",
+        "instruction": "ENV LANG=C.UTF-8"
+      },
+      {
+        "size": "0B",
+        "instruction": "ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      {
+        "size": "87.4MB",
+        "instruction": "# debian.sh --arch 'amd64' out/ 'trixie' '@1785715200'"
+      }
+    ],
+    "pycache_dirs": 208
+  },
+  "containers": {
+    "api": {
+      "name": "querypilot-api",
+      "running": true,
+      "process_users": [
+        "root"
+      ],
+      "process_user_method": "docker top (UID column)",
+      "ports": "0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp",
+      "image": "querypiolt-api",
+      "status": "Up 2 hours (healthy)"
+    },
+    "db": {
+      "name": "querypilot-db",
+      "running": true,
+      "process_users": [
+        "70"
+      ],
+      "process_user_method": "docker top (UID column)",
+      "ports": "0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp",
+      "image": "postgres:16-alpine",
+      "status": "Up 2 hours (healthy)"
+    }
+  },
+  "http": {
+    "base_url": "http://localhost:8000",
+    "health_header_names": [
+      "connection",
+      "content-length",
+      "content-type",
+      "date",
+      "server"
+    ],
+    "health_server": "uvicorn",
+    "health_body_keys": [
+      "auth",
+      "auth.configured",
+      "auth.error",
+      "database",
+      "database.connected",
+      "database.database",
+      "database.public_tables",
+      "database.user",
+      "history",
+      "history.error",
+      "history.writable",
+      "status"
+    ],
+    "status": {
+      "GET /health": 200,
+      "GET /": 401,
+      "POST /ask anonymous": 401,
+      "GET /nope": 401
+    }
+  },
+  "notes": [
+    "container.querypilot-api.top: fell back to the UID column (container.querypilot-api.top: `docker top querypilot-api -o user` failed: Error response from daemon: Couldn't find PID field in ps output)",
+    "container.querypilot-db.top: fell back to the UID column (container.querypilot-db.top: `docker top querypilot-db -o user` failed: Error response from daemon: Couldn't find PID field in ps output)"
+  ],
+  "errors": []
+}

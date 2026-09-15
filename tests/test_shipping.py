@@ -62,6 +62,45 @@ def test_ac12_the_api_service_has_a_healthcheck():
     assert test, "the healthcheck has no command"
 
 
+def _probe_source() -> str:
+    """The probe's code, with its docstring removed.
+
+    Iteration 12 T3 moved the probe out of `docker-compose.yml` and into
+    `api/healthcheck.py`, so the AC12 assertions below follow it. They have to
+    read code rather than text: that module's docstring explains at length why
+    it does not parse the body, names `localhost` in order to rule it out, and
+    quotes `urlopen` -- so a text search would match the explanation and pass
+    while the code did the opposite. This repository has made that mistake four
+    times.
+    """
+    import ast
+
+    source = (REPO_ROOT / "api" / "healthcheck.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Every docstring, not just the module's. The first version of this stripped
+    # only the module docstring and left `probe_url`'s, which names `localhost`
+    # in order to explain why it is not used -- so the assertion that the code
+    # never says `localhost` failed against the prose saying exactly that.
+    holders = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    for node in ast.walk(tree):
+        if isinstance(node, holders) and ast.get_docstring(node) is not None:
+            node.body = node.body[1:]
+    return ast.unparse(tree)
+
+
+def test_the_probe_source_reader_did_not_gut_the_module():
+    """Vacuity guard: if `_probe_source()` returned nothing, every assertion
+    that follows would pass for free."""
+    probe = _probe_source()
+    assert "def check" in probe
+    assert "def probe_url" in probe
+    assert "urlopen" in probe
+    assert "the text-matching antipattern" not in probe, (
+        "the docstring survived; absence assertions would match commentary"
+    )
+
+
 def test_ac12_the_healthcheck_asks_the_endpoint_that_proves_the_chain():
     """A port probe is not a health check.
 
@@ -69,13 +108,21 @@ def test_ac12_the_healthcheck_asks_the_endpoint_that_proves_the_chain():
     authenticate, and that Chinook is loaded. A TCP check on 8000 reports
     healthy for a process that accepts connections and cannot answer — which is
     the exact failure §2.7 describes, one layer down.
+
+    As of Iteration 12 T3 the probe is `api/healthcheck.py` rather than an
+    inline snippet, so the assertion follows it there. The port moved with it:
+    the command may no longer name 8000, because AC6 made the server bind
+    `$PORT` and a probe naming a literal port would be the second source of
+    truth that T3 removed.
     """
     command = " ".join(str(part) for part in service("api")["healthcheck"]["test"])
-
-    assert "/health" in command, (
-        f"the healthcheck must probe /health, not just the port: {command!r}"
+    assert "healthcheck.py" in command, (
+        f"the compose probe no longer delegates to the script: {command!r}"
     )
-    assert "8000" in command
+
+    probe = _probe_source()
+    assert "/health" in probe, "the probe must ask /health, not just the port"
+    assert "PORT" in probe, "the probe must resolve the port the server binds"
 
 
 def test_ac12_the_healthcheck_needs_nothing_the_image_does_not_have():
@@ -103,10 +150,9 @@ def test_ac12_the_probe_does_not_resolve_localhost():
     Pinning the literal address removes a failure mode that depends on the
     host's resolver.
     """
-    command = " ".join(str(part) for part in service("api")["healthcheck"]["test"])
-
-    assert "127.0.0.1" in command
-    assert "localhost" not in command
+    probe = _probe_source()
+    assert "127.0.0.1" in probe
+    assert "localhost" not in probe
 
 
 def test_ac12_a_failing_health_endpoint_makes_the_container_unhealthy():
@@ -121,14 +167,14 @@ def test_ac12_a_failing_health_endpoint_makes_the_container_unhealthy():
     antipattern `003` argued against, in the one place where a typed alternative
     is already available.
     """
-    command = " ".join(str(part) for part in service("api")["healthcheck"]["test"])
+    probe = _probe_source()
 
-    assert "urlopen" in command, (
+    assert "urlopen" in probe, (
         "the probe must let a non-2xx raise; a check that ignores the status "
         "code would report healthy on /health's own 503"
     )
-    for banned in ("status", '"ok"', "read()", "json"):
-        assert banned not in command, (
+    for banned in ("status", "'ok'", '"ok"', "read()", "json"):
+        assert banned not in probe, (
             f"the probe inspects the body with {banned!r}; the 503 is the "
             f"signal and re-deriving it here is a second copy of /health"
         )

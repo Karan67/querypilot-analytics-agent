@@ -112,20 +112,27 @@ services:
       #
       # **Python rather than curl**, because `python:3.12.13-slim` has no curl
       # and adding one would put a package in the runtime image to run a
-      # liveness probe. `urlopen` raises `HTTPError` on a non-2xx, so /health's
-      # 503-on-unreachable-database becomes `unhealthy` with no extra logic --
-      # the status code is doing the work, not a grep of the body.
+      # liveness probe.
       #
-      # 127.0.0.1 and not `localhost`: the probe runs inside this container, and
-      # on a dual-stack resolver `localhost` can pick ::1 while uvicorn is bound
-      # to 0.0.0.0 (IPv4 only), which fails while everything is in fact fine.
+      # As of Iteration 12 T3 this delegates to `api/healthcheck.py` instead of
+      # inlining the probe, for one reason: the inlined version hardcoded
+      # `http://127.0.0.1:8000/health`, which was the *second* place the port
+      # 8000 was written down and had no way of disagreeing out loud with the
+      # first. AC6 makes the server bind `$PORT`, so a hardcoded probe would
+      # have started checking the wrong port the moment a platform moved it.
+      # The script resolves `$PORT` itself and the image declares the same
+      # script in its own HEALTHCHECK, so there is exactly one answer to "which
+      # port is this service on".
+      #
+      # The script keeps the two properties the inline version was chosen for:
+      # it reads `/health` rather than the TCP port, so a process that accepts
+      # connections and cannot answer is reported unhealthy; and it builds its
+      # URL from 127.0.0.1 rather than `localhost`, because on a dual-stack
+      # resolver `localhost` can pick ::1 while uvicorn is bound to 0.0.0.0.
       test:
         - CMD
         - python
-        - -c
-        - |
-          import urllib.request
-          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)
+        - /app/api/healthcheck.py
       interval: 15s
       timeout: 10s
       retries: 3
