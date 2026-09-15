@@ -209,28 +209,37 @@ suite grew by the tests this iteration added; nothing was deleted or retired.
 
 | | before (T1) | after (T4) |
 |---|---:|---:|
-| collected items | 1,348 | 1,377 |
+| collected items | 1,348 | 1,383 |
 | `marked` | 0 | **460** |
 | `closure` | 395 | **460** |
 | `marked − closure` / `closure − marked` | — | **0 / 0** |
 | `traffic_without_closure` | 65 | **0** |
-| `hermetic` | 888 | 917 |
+| `hermetic` | 888 | 923 |
 | `closure_walk_agrees_with_fixturenames` | `false` | **`true`** |
 
 459 tests were marked from the census; the 460th is
 `test_the_census_counts_statements_a_test_really_issued`, marked by hand — see
 below.
 
-Three lanes, all measured rather than asserted:
+Three lanes:
 
 | lane | command | result |
 |---|---|---|
-| everything, stack up | `pytest` | 1,377 passed |
-| hermetic, stack **down** | `pytest -m "not needs_db"` | **917 passed, 460 deselected, 0 skipped** |
+| everything, stack up | `pytest` | 1,380 passed — see the caveat below |
+| hermetic, stack **down** | `pytest -m "not needs_db"` | **923 passed, 460 deselected, 0 skipped** |
 | database, stack **down**, `REQUIRE=1` | `pytest -m needs_db` | 460 errors — still a red build |
 
-The middle row is B-15 discharged. `tests/test_auth.py` alone gives **61 passed,
-6 deselected, 0 skipped** against a dead DSN.
+The middle row is B-15 discharged, and it was measured against a **genuinely
+absent** database rather than a dead DSN: Docker Desktop stopped during T6, and
+923 tests passed anyway. `tests/test_auth.py` alone gives **61 passed, 6
+deselected, 0 skipped**.
+
+**The stack-up figure is a floor, not a fresh measurement.** The last full run
+with Postgres reachable was 1,380 passed. Three hermetic tests were added after
+it — the autouse check and two lane-guard cases — and all three are covered by
+the hermetic run above, which is why the collected total now reads 1,383
+(923 + 460). Nobody has run all 1,383 against a live database yet; CI is the
+next thing that will.
 
 **A limit of the instrument, found by the hermetic lane rather than by the
 census.** `test_the_census_counts_statements_a_test_really_issued` runs pytest in

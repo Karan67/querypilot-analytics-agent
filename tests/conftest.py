@@ -21,6 +21,17 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+# Re-exported, not re-implemented. `prohibit_database_access` is autouse, and an
+# autouse fixture only applies where pytest can see it -- which for the whole
+# suite means this file. Imported as `tests.isolation` rather than bare
+# `isolation`: `tests/` has no `__init__.py` and pytest's `prepend` import mode
+# makes both spellings resolve, to two module objects with two distinct
+# `DatabaseAccessProhibitedError` classes.
+from tests.isolation import (  # noqa: F401 - re-exported for pytest to collect
+    DatabaseAccessProhibitedError,
+    prohibit_database_access,
+)
+
 #: Local-development fallback only. Matches the committed `.env.example`, which
 #: holds no real secret. CI overrides it via TEST_DATABASE_URL.
 DEFAULT_TEST_DATABASE_URL = (

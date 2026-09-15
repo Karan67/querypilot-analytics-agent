@@ -97,6 +97,7 @@ def test_ac14_wrapper_takes_no_parameters():
     assert not pyinspect.signature(tools.get_schema).parameters
 
 
+@pytest.mark.constructs_engine
 def test_wrapper_propagates_introspection_errors(monkeypatch):
     """Errors must not be flattened on the way through. From Iteration 4 the
     agent reacts to this exception, and a wrapper that swallowed it into a

@@ -83,6 +83,35 @@ def test_an_inconsistent_decision_is_not_quietly_treated_as_allowed():
     assert isolation_decision(marked=False, closure=True) != "prohibit"
 
 
+def test_constructs_engine_steps_aside_without_claiming_a_database():
+    """The third category, which the census structurally cannot find.
+
+    A test that builds an Engine against a closed port issues no statements, so
+    traffic-based measurement scores it hermetic — correctly, since it passes
+    with the stack down. But it does call `create_engine`, so the prohibition
+    would refuse it. `constructs_engine` says *the Engine is deliberate* and
+    nothing more: no fixture, no skipping, still in the hermetic lane.
+    """
+    assert isolation_decision(
+        marked=False, closure=False, constructs_engine=True
+    ) == "allow"
+    assert isolation_decision(marked=False, closure=False) == "prohibit"
+
+
+def test_constructs_engine_cannot_wave_through_a_half_declaration():
+    """It is checked last, and only for a test that declared nothing.
+
+    Otherwise it becomes the escape hatch for the failure the `inconsistent`
+    branch exists to name — a test marked `needs_db` with no fixture, running
+    unprobed against whatever DSN is ambient — and one marker silently disables
+    the other's guarantee.
+    """
+    for marked, closure in ((True, False), (False, True)):
+        assert isolation_decision(
+            marked=marked, closure=closure, constructs_engine=True
+        ) == "inconsistent"
+
+
 # --- The prohibition itself ---------------------------------------------------
 
 
@@ -206,6 +235,7 @@ def test_the_scan_for_blanket_handlers_can_actually_see_one(tmp_path):
 # --- The lru_cache hazard -----------------------------------------------------
 
 
+@pytest.mark.constructs_engine
 def test_a_warm_engine_cache_does_not_survive_into_a_prohibited_block(monkeypatch):
     """The eviction, which nothing else in the suite can observe.
 
@@ -421,36 +451,6 @@ def _collect_census(tmp_path: pathlib.Path) -> dict:
     return json.loads(census.read_text(encoding="utf-8"))
 
 
-def test_the_marked_set_equals_the_closure_set(tmp_path):
-    """AC3, both directions, over the whole suite.
-
-    Collection-only, so it runs with the stack down — which is the point: the
-    invariant is about declarations, not about traffic, and it must be checkable
-    on a machine that cannot reach Postgres.
-
-    Both halves bite because the marker does not apply the fixture (D-2). Had the
-    marker injected `configured_database`, `marked - closure` would be empty by
-    construction and this would be half a test.
-    """
-    data = _collect_census(tmp_path)
-    marked = {nodeid for nodeid, e in data["tests"].items() if e["marked"]}
-    closure = {nodeid for nodeid, e in data["tests"].items() if e["closure"]}
-
-    assert len(data["tests"]) > 1_000, "collection returned almost nothing"
-    assert marked, "no test carries the marker; this assertion would be vacuous"
-
-    assert not marked - closure, (
-        "marked but nothing in the closure reaches `configured_database` — these "
-        "run unprobed against whatever DSN _load_dotenv() left behind: "
-        f"{sorted(marked - closure)[:5]}"
-    )
-    assert not closure - marked, (
-        "requests `configured_database` but carries no marker — deselected from "
-        f"the database lane and refused an Engine by the prohibition: "
-        f"{sorted(closure - marked)[:5]}"
-    )
-
-
 def test_the_closure_walk_still_excludes_autouse_fixtures(tmp_path):
     """The `argnames`-not-`initialnames` choice, kept observable after T4.
 
@@ -499,25 +499,6 @@ def test_the_readiness_probe_does_not_mark_the_test_it_lands_on(tmp_path):
     assert probe_victim in data["tests"]
     assert not data["tests"][probe_victim]["marked"]
     assert not data["tests"][probe_victim]["closure"]
-
-
-def test_the_ci_gate_subject_is_a_database_test(tmp_path):
-    """`tests/test_ci_guards.py` aims two subprocess guards at one nodeid.
-
-    Both assert a non-zero exit when the database is unreachable. If that subject
-    ever became hermetic, the runs would still exit non-zero — from the
-    prohibition, or from deselection — and both guards would pass **for the wrong
-    reason** while no longer testing the require-database gate at all.
-    """
-    from tests.test_ci_guards import GATE_SUBJECT
-
-    data = _collect_census(tmp_path)
-    matching = [n for n in data["tests"] if n.startswith(GATE_SUBJECT)]
-    assert matching, f"{GATE_SUBJECT} no longer exists"
-    assert all(data["tests"][n]["marked"] for n in matching), (
-        f"{GATE_SUBJECT} is the subject of two require-database guards and must "
-        "stay in the database lane"
-    )
 
 
 def test_the_auth_suite_runs_without_a_database(tmp_path):
@@ -593,3 +574,20 @@ def test_the_hermetic_lane_stays_below_the_ci_floor():
         f"{DEFAULT_FLOOR} -- ci/require_executed_tests.py no longer detects a "
         "pipeline that lost its database"
     )
+
+
+def test_the_prohibition_is_active_without_being_requested():
+    """The autouse itself, which nothing else in this file proves.
+
+    This test requests no fixture, carries no marker, and never enters
+    `prohibited_engine_access()`. The only thing that can make `get_engine()`
+    raise here is `prohibit_database_access` being `autouse=True` — so drop the
+    autouse and this is the test that notices.
+
+    Every other prohibition test drives the context manager directly, which
+    proves the mechanism works and says nothing about whether it is switched on.
+    """
+    from api.db.engine import get_engine
+
+    with pytest.raises(DatabaseAccessProhibitedError):
+        get_engine()

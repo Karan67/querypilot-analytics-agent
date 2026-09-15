@@ -477,7 +477,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
 | **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task. **One of three blockers discharged 2026-09-14** by Iteration 10; see the entry below |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
-| **B-15** | `tests/test_auth.py` cannot run without a database it does not need | Iteration 10 T4 | open — small, and recorded so it is not rediscovered |
+| **B-15** | `tests/test_auth.py` cannot run without a database it does not need | Iteration 10 T4 | **discharged 2026-09-15** at Iteration 11 — 923 of 1,383 tests now run with the stack down; see the entry below |
 | ~~B-13~~ | ~~The gold-query test pair fails intermittently~~ — `hard-001` exceeded the 10s ceiling under load | Iteration 8 T2 | **discharged 2026-09-11** — diagnosed, then fixed by pre-aggregating the reference query |
 | ~~B-14~~ | ~~Does the schema cache still earn its weight after B-10?~~ | Iteration 8 T5 | **discharged 2026-09-11** at Iteration 9 T4 — it did not; the cache is retired |
 | ~~AC6 of `010`~~ | ~~Feedback collection, deferred from Iteration 7~~ | Iteration 7 T1 | **discharged 2026-09-11** at Iteration 8 T6 |
@@ -1432,6 +1432,29 @@ that database-independent tests survive its skip means deciding, per test, which
 kind it is, and getting that wrong in the *other* direction gives a test that
 runs without the database it silently needed. Recorded so the next person meets
 it as a known limitation rather than as a surprise.
+
+**Discharged 2026-09-15 by Iteration 11** (`specs/014-test-isolation.md`). The
+worry above was right about the risk and the answer was to stop deciding per test
+by hand: `tools/measure_db_access.py` measured which tests actually reach
+Postgres, and `tools/apply_partition.py` derived the marks from that measurement.
+`configured_database` is opt-in, `@pytest.mark.needs_db` declares the lane, and
+`tests/isolation.py` refuses an `Engine` to any test that declared nothing — so
+the failure this entry feared, *a test running without the database it silently
+needed*, is now an error at the exact test rather than a silent pass.
+
+Three things this entry got wrong, all found by measuring:
+
+- **The file holds 67 tests, not 64, and six of them do need Postgres.** They
+  call `GET /health`, which goes through `execute_sql()` by design (`013-auth.md`
+  §2.7). The iteration frees **61 of 67**, not 64 of 64.
+- **The suite-wide number was far larger than the file.** 888 of 1,348 tests
+  never issued a statement — 66%, not the 8% recorded in `.github/workflows/ci.yml`
+  when `011-ship.md` looked at this.
+- **"CI is unaffected" stopped being true.** With the hermetic lane now running,
+  a dead database no longer empties the suite, so
+  `ci/require_executed_tests.py`'s floor of 1,000 is measured against 923 and
+  survives by 77. `ci/require_database_lane.py` is the belt for the day the
+  hermetic lane outgrows it: a total cannot detect an empty lane.
 
 ### B-12 — Demo video
 

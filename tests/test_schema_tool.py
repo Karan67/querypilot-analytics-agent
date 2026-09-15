@@ -408,6 +408,7 @@ def missing_database_url(monkeypatch):
     engine_module.get_engine.cache_clear()
 
 
+@pytest.mark.constructs_engine
 def test_ac17_unreachable_database_raises_schema_error(unreachable_database):
     """Not a bare SQLAlchemyError: callers distinguish "catalog unavailable"
     from "a query failed", and from Iteration 4 the agent reads this message."""
@@ -423,6 +424,7 @@ def test_ac17_missing_dsn_raises_schema_error(missing_database_url):
         get_schema()
 
 
+@pytest.mark.constructs_engine
 def test_ac17_an_unreachable_database_is_reported_as_unreachable(unreachable_database):
     """**B-10 narrowed what this can promise, and the narrowing is the point.**
 

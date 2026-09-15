@@ -44,6 +44,26 @@ NEEDS_DB_MARKER = "needs_db"
 #: separately and kept in sync by a test.
 DATABASE_FIXTURE = "configured_database"
 
+#: A third category the census cannot see, found when the prohibition was wired.
+#:
+#: Some tests build an `Engine` **in order to watch it fail** -- pointed at a
+#: closed port, to prove `execute_sql()` reports a connection error rather than
+#: leaking a DSN, or that `get_schema()` raises `SchemaIntrospectionError`. They
+#: call `create_engine` and issue **no statements at all**, because the
+#: connection never opens. The census measures traffic, so it scores them
+#: `hermetic`, and it is right: they pass with the stack down and belong in the
+#: hermetic lane.
+#:
+#: That is the same lazy-pool fact that makes counting `create_engine` calls a
+#: bad instrument, read from the other side: traffic cannot find a test whose
+#: whole point is that no traffic happens.
+#:
+#: They are **not** `needs_db`. Marking them so would skip them exactly when the
+#: database is unreachable, which is the one condition they exist to test. This
+#: marker says only *step aside, the Engine is deliberate* and carries no
+#: skipping behaviour and no fixture.
+CONSTRUCTS_ENGINE_MARKER = "constructs_engine"
+
 #: Attributes replaced while an undeclared test runs, as (module, attribute).
 #:
 #: **`api.db.engine.create_engine` is the seam.** It is resolved from
@@ -98,7 +118,9 @@ class DatabaseAccessProhibitedError(BaseException):
     """
 
 
-def isolation_decision(*, marked: bool, closure: bool) -> str:
+def isolation_decision(
+    *, marked: bool, closure: bool, constructs_engine: bool = False
+) -> str:
     """What to do about a test that is `marked` and/or reaches the fixture.
 
     A pure function because the two `inconsistent` combinations will not exist in
@@ -125,6 +147,11 @@ def isolation_decision(*, marked: bool, closure: bool) -> str:
         return "allow"
     if marked or closure:
         return "inconsistent"
+    # Checked last, and only against a test that declared nothing: a half
+    # declaration is still an error worth naming, and `constructs_engine` must
+    # not be usable to wave one through.
+    if constructs_engine:
+        return "allow"
     return "prohibit"
 
 
@@ -193,25 +220,31 @@ def prohibited_engine_access():
         _evict_cached_engine()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def prohibit_database_access(request):
     """Refuse an Engine to any test that did not declare a database.
 
-    **Not `autouse` yet.** Every test currently reaches `configured_database`
-    through `tests/conftest.py`'s `autouse=True`, and none carries the marker, so
-    switching this on before the partition exists would make the whole suite
-    `inconsistent` at once. T5 removes the autouse and turns this on in the same
-    step.
+    **Autouse since T5**, which is the point: a guard a test has to opt into
+    protects only the tests that remembered it. It shipped unwired at T3 because
+    every test then reached `configured_database` through `autouse=True` and none
+    carried the marker, so switching it on before T4's partition existed would
+    have put the whole suite in the red at once.
 
-    `request.fixturenames` is the public closure and becomes trustworthy at that
-    moment: with no autouse fixture reaching the database, a name appears in it
-    only because the test or its module asked. The census plugin reports
-    `closure_walk_agrees_with_fixturenames` so that equivalence is a checked fact
-    rather than an assumption — it is `false` today and must be `true` after T4.
+    `request.fixturenames` is the public closure and is trustworthy now that no
+    autouse fixture reaches the database: a name appears in it only because the
+    test or its module asked. That equivalence is not assumed — the census plugin
+    reports `closure_walk_agrees_with_fixturenames`, which was `false` before T4
+    and `true` after, and `tests/test_isolation.py` asserts it.
+
+    This fixture requests only `request`, so being autouse adds nothing to any
+    other test's closure and cannot itself widen what the guard measures.
     """
     decision = isolation_decision(
         marked=request.node.get_closest_marker(NEEDS_DB_MARKER) is not None,
         closure=DATABASE_FIXTURE in request.fixturenames,
+        constructs_engine=(
+            request.node.get_closest_marker(CONSTRUCTS_ENGINE_MARKER) is not None
+        ),
     )
 
     if decision == "inconsistent":

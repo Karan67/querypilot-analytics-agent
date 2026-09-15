@@ -555,6 +555,7 @@ def test_ac10_timeout_is_its_own_category(configured_database, monkeypatch):
     assert "narrow" in result.error.lower()
 
 
+@pytest.mark.constructs_engine
 def test_ac19_unreachable_database_is_a_connection_error(monkeypatch):
     """Distinct from `database_error` so the loop stops rewriting a query that
     was never the problem."""
@@ -575,6 +576,7 @@ def test_ac19_unreachable_database_is_a_connection_error(monkeypatch):
         engine_module.get_engine.cache_clear()
 
 
+@pytest.mark.constructs_engine
 def test_ac22_no_result_leaks_connection_details(monkeypatch):
     """The agent's context is model input, and from Iteration 6 it is streamed
     to a browser. psycopg's own connection errors embed host, port and resolved
