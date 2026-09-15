@@ -420,6 +420,12 @@ def health(request: Request) -> JSONResponse:
             "secrets": {
                 auth.USERS_ENV: config.secret_status(auth.USERS_ENV),
                 "GROQ_API_KEY": config.secret_status("GROQ_API_KEY"),
+                # Iteration 13 (specs/016-second-llm-provider.md). Reported
+                # unconditionally like GROQ_API_KEY, even though Groq stays
+                # the runtime default (D-E) -- an operator switching
+                # QUERYPILOT_LLM_PROVIDER=cerebras needs to see this is
+                # configured *before* flipping that switch, not after.
+                "CEREBRAS_API_KEY": config.secret_status("CEREBRAS_API_KEY"),
             },
             # Iteration 12 T9. Today's global count and both configured
             # limits, read without writing -- a health check that itself

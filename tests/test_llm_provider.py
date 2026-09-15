@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from api.llm.base import LLM_TIMEOUT_SECONDS, LLMError, LLMProvider
+from api.llm.base import LLM_TIMEOUT_SECONDS, LLMError, LLMProvider, RateLimitError
 from api.llm.factory import MODEL_ENV, PROVIDER_ENV, get_provider
 from api.llm.groq_provider import DEFAULT_MODEL, TEMPERATURE, GroqProvider
+from api.llm.cerebras_provider import DEFAULT_MODEL as CEREBRAS_DEFAULT_MODEL
+from api.llm.cerebras_provider import CerebrasProvider
 
 FAKE_KEY = "gsk_thisisafakekeyforteststhatmustneverleak"
+CEREBRAS_FAKE_KEY = "csk-thisisafakekeyforteststhatmustneverleak"
 
 
 @pytest.fixture
@@ -243,3 +246,183 @@ def test_none_content_becomes_empty_string(monkeypatch):
 def test_timeout_matches_the_measured_decision():
     """Resolved D-2: 20s, roughly 24x the measured 0.84s maximum."""
     assert LLM_TIMEOUT_SECONDS == 20
+
+
+# --- Cerebras (Iteration 13, specs/016-second-llm-provider.md) -------------
+#
+# Mirrors the Groq tests above for every property the two providers share by
+# contract. Genuinely Cerebras-specific behaviour -- its own rate-limit
+# header names -- is covered in test_rate_limit_telemetry.py instead
+# (decision D-D keeps that parsing isolated from Groq's).
+
+
+@pytest.fixture
+def cerebras_provider(monkeypatch):
+    """A CerebrasProvider whose SDK client is inert."""
+    p = CerebrasProvider(api_key=CEREBRAS_FAKE_KEY, model="test-model")
+    monkeypatch.setattr(p, "_client", object())
+    return p
+
+
+def test_ac1_cerebras_provider_satisfies_the_protocol():
+    assert isinstance(CerebrasProvider(api_key=CEREBRAS_FAKE_KEY), LLMProvider)
+
+
+def test_ac3_provider_env_selects_cerebras(monkeypatch):
+    monkeypatch.setenv(PROVIDER_ENV, "cerebras")
+    monkeypatch.setenv("CEREBRAS_API_KEY", CEREBRAS_FAKE_KEY)
+    assert isinstance(get_provider(), CerebrasProvider)
+
+
+def test_ac3_cerebras_model_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv(PROVIDER_ENV, "cerebras")
+    monkeypatch.setenv("CEREBRAS_API_KEY", CEREBRAS_FAKE_KEY)
+    monkeypatch.setenv(MODEL_ENV, "qwen-3.8-27b")
+    assert get_provider()._model == "qwen-3.8-27b"
+
+
+def test_ac3_cerebras_default_model_matches_the_groq_eval_baseline():
+    """Decision D-H: `gpt-oss-120b` is chosen because `EVALS.md`'s existing
+    Groq entries already run `openai/gpt-oss-120b` -- the same underlying
+    open model -- so a Cerebras run isolates the comparison to
+    infrastructure rather than a model-quality difference."""
+    assert CEREBRAS_DEFAULT_MODEL == "gpt-oss-120b"
+
+
+def test_ac3_unknown_provider_message_names_both_providers(monkeypatch):
+    """The refusal must not silently narrow to one vendor as a second one is
+    added -- the exact failure shape this iteration's structural-test fix
+    (D-B) also guards against, here for the factory's own error message."""
+    monkeypatch.setenv(PROVIDER_ENV, "not-a-provider")
+    with pytest.raises(LLMError, match="groq, cerebras"):
+        get_provider()
+
+
+@pytest.mark.parametrize("key", ["", "   ", None])
+def test_ac4_cerebras_missing_key_fails_at_construction(monkeypatch, key):
+    monkeypatch.setenv(PROVIDER_ENV, "cerebras")
+    if key is None:
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("CEREBRAS_API_KEY", key)
+
+    with pytest.raises(LLMError) as caught:
+        get_provider()
+
+    assert "CEREBRAS_API_KEY" in str(caught.value)
+
+
+def test_ac5_cerebras_key_is_redacted_from_error_messages(cerebras_provider):
+    leaky = RuntimeError(f"auth failed for key {CEREBRAS_FAKE_KEY} on /v1/chat")
+    message = cerebras_provider._safe_message(leaky)
+
+    assert CEREBRAS_FAKE_KEY not in message
+    assert "<redacted>" in message
+    assert "RuntimeError" in message
+
+
+def test_ac5_cerebras_key_absent_from_the_raised_llm_error(monkeypatch):
+    class _LeakyClient:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs):
+                    raise RuntimeError(f"boom with {CEREBRAS_FAKE_KEY}")
+
+    p = CerebrasProvider(api_key=CEREBRAS_FAKE_KEY)
+    monkeypatch.setattr(p, "_client", _LeakyClient)
+
+    with pytest.raises(LLMError) as caught:
+        p.complete("system", "user")
+
+    assert CEREBRAS_FAKE_KEY not in str(caught.value)
+
+
+def test_cerebras_temperature_is_actually_sent(monkeypatch):
+    captured = {}
+
+    class _Client:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs):
+                    captured.update(kwargs)
+
+                    class _R:
+                        choices = [
+                            type("C", (), {"message": type("M", (), {"content": "SELECT 1"})()})()
+                        ]
+
+                    return _R()
+
+    p = CerebrasProvider(api_key=CEREBRAS_FAKE_KEY, model="m")
+    monkeypatch.setattr(p, "_client", _Client)
+    p.complete("sys", "usr")
+
+    assert captured["temperature"] == 0.0
+    assert captured["model"] == "m"
+
+
+def test_cerebras_reasoning_field_is_discarded(monkeypatch):
+    """The same gpt-oss family Cerebras serves also returns a separate
+    `reasoning` field (confirmed in cerebras-cloud-sdk's generated response
+    types) -- discarded here for the same reason as GroqProvider's."""
+
+    class _Client:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs):
+                    message = type(
+                        "M", (), {"content": "SELECT 1", "reasoning": "long trace"}
+                    )()
+                    return type("R", (), {"choices": [type("C", (), {"message": message})()]})()
+
+    p = CerebrasProvider(api_key=CEREBRAS_FAKE_KEY)
+    monkeypatch.setattr(p, "_client", _Client)
+    assert p.complete("s", "u") == "SELECT 1"
+
+
+def test_cerebras_none_content_becomes_empty_string(monkeypatch):
+    class _Client:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs):
+                    message = type("M", (), {"content": None})()
+                    return type("R", (), {"choices": [type("C", (), {"message": message})()]})()
+
+    p = CerebrasProvider(api_key=CEREBRAS_FAKE_KEY)
+    monkeypatch.setattr(p, "_client", _Client)
+    assert p.complete("s", "u") == ""
+
+
+def test_cerebras_rate_limit_error_uses_the_cerebras_specific_header_parser(monkeypatch):
+    """End-to-end proof that `complete()` is wired to
+    `snapshot_from_cerebras_headers`, not Groq's -- the parser functions are
+    unit-tested separately in test_rate_limit_telemetry.py, but a wiring
+    mistake (calling the wrong one) would not be caught there."""
+    import cerebras.cloud.sdk as cerebras_sdk
+
+    class _Response:
+        headers = {"x-ratelimit-limit-tokens-minute": "90000"}
+        request = None
+        status_code = 429
+
+    class _Client:
+        class chat:  # noqa: N801
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs):
+                    raise cerebras_sdk.RateLimitError(
+                        "rate limited", response=_Response(), body=None
+                    )
+
+    p = CerebrasProvider(api_key=CEREBRAS_FAKE_KEY)
+    monkeypatch.setattr(p, "_client", _Client)
+
+    with pytest.raises(RateLimitError):
+        p.complete("s", "u")
+
+    assert p.last_rate_limit is not None
+    assert p.last_rate_limit.tokens.limit == 90000

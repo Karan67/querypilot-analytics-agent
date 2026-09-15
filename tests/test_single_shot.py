@@ -263,9 +263,23 @@ def test_ac2_no_vendor_sdk_outside_the_llm_package():
     """**The test that keeps the swappability commitment honest.**
 
     `specs/000-project.md` §5 says provider code is reachable only through one
-    abstraction. Three lines, and without them the promise is aspirational.
+    abstraction.
+
+    AST-based, not a text scan (Iteration 13, specs/016-second-llm-provider.md
+    decision D-B). The original version of this test matched the line prefix
+    `"import groq"` / `"from groq"`, which is the same "string must not
+    appear" trap CLAUDE.md warns about elsewhere in this repo -- it happens
+    to survive being *mentioned* in a docstring or comment rather than
+    actually imported, purely because no offending file had done that yet.
+    Parsed against an explicit allow-list instead, matching the AST approach
+    `test_ac20_generated_sql_goes_through_execute_sql` above already uses: a
+    third provider is one more entry in `VENDOR_SDKS`, not a new hardcoded
+    string.
     """
+    import ast
     import pathlib
+
+    VENDOR_SDKS = {"groq", "cerebras"}
 
     root = pathlib.Path(__file__).resolve().parent.parent / "api"
     offenders = []
@@ -273,10 +287,16 @@ def test_ac2_no_vendor_sdk_outside_the_llm_package():
         if "llm" in path.parts:
             continue
         source = path.read_text(encoding="utf-8")
-        for line in source.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(("import groq", "from groq")):
-                offenders.append(f"{path.relative_to(root)}: {stripped}")
+        tree = ast.parse(source, filename=str(path))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        hit = imported & VENDOR_SDKS
+        if hit:
+            offenders.append(f"{path.relative_to(root)}: {sorted(hit)}")
     assert not offenders, f"vendor SDK imported outside api/llm/: {offenders}"
 
 

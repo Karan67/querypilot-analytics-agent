@@ -11,7 +11,9 @@ psycopg[binary]>=3.2,<3.3
 # types the validator has never classified.
 sqlglot>=27,<28
 
-# LLM provider (specs/005-single-shot-generation.md). The only vendor SDK in the
-# project, imported by exactly one module -- api/llm/groq_provider.py -- which a
-# structural test enforces.
+# LLM providers (specs/005-single-shot-generation.md, specs/016-second-llm-provider.md).
+# Each vendor SDK is imported by exactly one module -- api/llm/groq_provider.py
+# and api/llm/cerebras_provider.py -- which a structural test enforces against
+# an explicit allow-list, so a third provider is one more entry, not a new rule.
 groq>=0.37,<1.0
+cerebras-cloud-sdk>=1.91,<2.0

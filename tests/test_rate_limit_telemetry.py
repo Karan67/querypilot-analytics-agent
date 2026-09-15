@@ -26,6 +26,7 @@ from api.llm.rate_limits import (
     Bucket,
     RateLimitSnapshot,
     parse_duration,
+    snapshot_from_cerebras_headers,
     snapshot_from_headers,
 )
 
@@ -165,6 +166,63 @@ def test_the_summary_names_the_window_for_each_limit():
     summary = snapshot_from_headers(LIVE_HEADERS).summary()
     assert "tokens 7,381/8,000 (per minute)" in summary
     assert "requests 931/1,000 (per day)" in summary
+
+
+# --- Cerebras: its own header names, kept apart from Groq's (D-D) ----------
+#
+# Iteration 13 (specs/016-second-llm-provider.md). Unlike `LIVE_HEADERS`
+# above, this fixture is **not** a live capture -- the probed account
+# returned 402 (no billing configured) before reaching the rate-limit layer,
+# so these values only exercise `snapshot_from_cerebras_headers`'s field
+# mapping against the header *names* a third-party page documents. They are
+# not an assertion about Cerebras's real current limits; §2.3/§2.4 of the
+# spec record what is doc-sourced versus measured, and this data is
+# re-verified against a live response once that account has billing enabled.
+CEREBRAS_DOC_HEADERS = {
+    "x-ratelimit-limit-tokens-minute": "90000",
+    "x-ratelimit-remaining-tokens-minute": "60000",
+    "x-ratelimit-reset-tokens-minute": "30s",
+    "x-ratelimit-limit-requests-day": "14400",
+    "x-ratelimit-remaining-requests-day": "14000",
+    "x-ratelimit-reset-requests-day": "3600s",
+}
+
+
+def test_cerebras_headers_map_into_the_same_snapshot_shape():
+    """The parser is vendor-specific; the shape it produces is not. Proving
+    this reuses `Bucket`/`RateLimitSnapshot` rather than needing a parallel
+    telemetry model for a second provider."""
+    snapshot = snapshot_from_cerebras_headers(CEREBRAS_DOC_HEADERS)
+
+    assert snapshot.tokens.limit == 90000
+    assert snapshot.tokens.remaining == 60000
+    assert snapshot.requests.limit == 14400
+    assert snapshot.requests.remaining == 14000
+
+
+def test_cerebras_and_groq_header_names_do_not_cross_contaminate():
+    """The two vendors name their headers differently (D-D). Both parsers
+    keep every `x-ratelimit-*` header verbatim in `raw` regardless of vendor
+    -- that part is deliberately generic, per `snapshot_from_headers`'s own
+    "kept verbatim... because the project had assumed which limits applied"
+    reasoning. What must not cross over is the **typed** fields: Groq's
+    parser must not populate `limit`/`remaining` from Cerebras's
+    `-minute`/`-day`-suffixed names, and Cerebras's parser must not populate
+    them from Groq's unsuffixed ones."""
+    groq_reading_of_cerebras = snapshot_from_headers(CEREBRAS_DOC_HEADERS)
+    assert groq_reading_of_cerebras.tokens.limit is None
+    assert groq_reading_of_cerebras.requests.limit is None
+
+    cerebras_reading_of_groq = snapshot_from_cerebras_headers(LIVE_HEADERS)
+    assert cerebras_reading_of_groq.tokens.limit is None
+    assert cerebras_reading_of_groq.requests.limit is None
+
+
+def test_cerebras_snapshot_is_none_without_matching_headers():
+    """Same contract as `snapshot_from_headers`: absence of a header is
+    absence of information, never a claim that no limit exists."""
+    assert snapshot_from_cerebras_headers(None) is None
+    assert snapshot_from_cerebras_headers({"content-type": "application/json"}) is None
 
 
 # --- pacing ------------------------------------------------------------------

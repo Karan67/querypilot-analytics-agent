@@ -46,9 +46,11 @@ tiktoken>=0.7,<1.0
 # validator, which imports sqlglot.
 sqlglot>=27,<28
 
-# The provider SDK. `tests/test_llm_provider.py` imports the concrete provider
-# to assert the vendor boundary -- the one place outside api/llm/ that may.
+# The provider SDKs. `tests/test_llm_provider.py` imports each concrete
+# provider to assert the vendor boundary -- the one place outside api/llm/
+# that may.
 groq>=0.37,<1.0
+cerebras-cloud-sdk>=1.91,<2.0
 
 # `starlette.testclient` requires it, and every test that drives an endpoint
 # through `TestClient` fails at *collection* without it. It arrived here
