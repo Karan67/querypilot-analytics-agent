@@ -15,9 +15,10 @@ the working rhythm, the measured state, and the mistakes that cost real time.
 | [`EVALS.md`](EVALS.md) | Every measured number, with its caveats. Append-only |
 | [`specs/008-prompt-tuning-plan.md`](specs/008-prompt-tuning-plan.md) | Iteration 5, delivered. Read it for the working method, not for pending work |
 | [`specs/010-hardening.md`](specs/010-hardening.md) and its plan | Iteration 7, delivered 2026-09-10. Its §2 holds the latency, cost and quota measurements |
-| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 11 is closed**; the open board is B-4, B-6 (live leg), B-11, B-12 |
+| §4 of this file, and §8 of the charter | Where things stand, and what is next. **Iteration 12 is closed**; the open board is B-4, B-6 (live leg), B-11 (custody half), B-12 |
 | [`specs/012-board.md`](specs/012-board.md) and its plan | Iteration 9, delivered 2026-09-11. Read it for how a measurement retired working code |
 | [`specs/013-auth.md`](specs/013-auth.md) and its plan | Iteration 10, delivered 2026-09-14. **Read this before touching a route or a test client** — every endpoint but `/health` is behind a credential now, and the suite has two client fixtures where it used to have one |
+| [`specs/015-production-deployment.md`](specs/015-production-deployment.md) and its plan | Iteration 12, delivered 2026-09-15. **Read this before touching the Dockerfile, `docker-compose.yml`, or `/health`** — the image is non-root and multi-stage, every response carries a security policy, TLS is exercised through a `--profile tls` Caddy terminator, both secrets have a `_FILE` form, a daily spend ceiling gates `/ask`, and `/health` no longer tells an anonymous caller anything but `{"status": "ok"}` |
 | This file, §2 and §6 | The rules, and the traps |
 
 Each iteration has a spec (`NNN-name.md`) and a plan (`NNN-name-plan.md`). The
@@ -101,13 +102,21 @@ because a measurement contradicted the premise.
 | **8 Ship** | **Closed 2026-09-11** — T1-T7, all 14 ACs met, merged as PR #10. CI, B-9, B-10 and AC6's feedback all discharged. Deployment and the demo video deferred as B-11/B-12, by decision rather than omission |
 | **9 The board** | **Closed 2026-09-11** — T1-T7, merged as PR #11. **B-14 discharged** (the schema cache retired on its own measurement), **B-6 half discharged** (mid-run 429 reconciliation; the live leg stays open), **B-13 budgeted** (20 clean CI runs). Charter §6's map, which ended at 8, gained a row rather than being outgrown |
 | **10 Authentication** | **Closed 2026-09-14** — T1-T7. HTTP Basic over an env-configured credential map; everything but `/health` refused without one. Carved out of B-11 rather than added beside it: deployment is blocked on three things and only this one was engineering |
+| **11 Test isolation** | **Closed 2026-09-15** — T1-T6. Discharged **B-15**: `@pytest.mark.needs_db` plus `configured_database` partitions the suite, and `tests/isolation.py` refuses an Engine to anything undeclared. 923 of the suite's then-1,383 total ran hermetic |
+| **12 Production deployment** | **Closed 2026-09-15** — T1-T13. Discharged **the engineering half of B-11** (`specs/015-production-deployment.md`); key provisioning and secrets custody remain a deferred decision, laid out as a matrix in that spec's §7 rather than resolved by default |
 
-**1,383 tests**, ~80s (live provider tests skip when rate-limited, which is
-a working guard rather than a red failure -- see the traps below). Iteration 9
-is the only iteration so far to end with **fewer** tests than it began: it added
-19 and deleted 22 with the schema cache, which is what retiring a module looks
+**1,547 tests**, measured with `docker compose --profile tls up -d` (live
+provider tests skip when rate-limited, which is a working guard rather than a
+red failure -- see the traps below). **1,081 of them, ~41s**, run with
+`pytest -m "not needs_db"` and no Docker daemon at all. Iteration 9 is the
+only iteration so far to end with **fewer** tests than it began: it added 19
+and deleted 22 with the schema cache, which is what retiring a module looks
 like when the tests went with it. Iteration 10 added 100 — most of them one
-negative suite walking every route in four credential modes.
+negative suite walking every route in four credential modes. Iteration 12
+added 164, the largest single-iteration addition to date, spread across nine
+new task areas rather than concentrated in one suite; timing for the full run
+is no longer a fixed figure, because it now depends on whether the `tls`
+profile and a Docker daemon are actually up.
 
 ### The gate, in one paragraph (Iteration 10)
 
@@ -218,7 +227,7 @@ and it was written *before* the change for that reason.
 | ~~B-14~~ | did the schema cache still earn its weight after B-10? | **discharged 2026-09-11** at Iteration 9 T4 -- it did not; the cache is retired |
 | **B-11** | production deployment | still deferred — **one of its three blockers discharged** 2026-09-14 by Iteration 10. Who may spend the quota is now answered in code; *whose key* and *where the secret lives* are unchanged, and both are decisions rather than tasks. TLS belongs here too |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
-| **B-15** | the auth suite cannot run without a database | **discharged 2026-09-15** at Iteration 11. `configured_database` is opt-in, `@pytest.mark.needs_db` declares the database lane, and `tests/isolation.py` refuses an Engine to anything else. 923 of 1,383 tests run with the stack down; `tests/test_auth.py` gives 61 passed, 6 deselected. Measurement corrected the entry twice: the file holds 67 tests rather than 64, and six of them really do need Postgres because `/health` goes through `execute_sql()` |
+| **B-15** | the auth suite cannot run without a database | **discharged 2026-09-15** at Iteration 11. `configured_database` is opt-in, `@pytest.mark.needs_db` declares the database lane, and `tests/isolation.py` refuses an Engine to anything else. 923 of the suite's then-1,383 total ran with the stack down; `tests/test_auth.py` gives 61 passed, 6 deselected. Measurement corrected the entry twice: the file holds 67 tests rather than 64, and six of them really do need Postgres because `/health` goes through `execute_sql()` |
 | ~~B-13~~ | the gold-query pair flaked — `hard-001` exceeded the 10s ceiling under load | **discharged 2026-09-11** — the reference query now pre-aggregates: 48x faster, identical result, fingerprints unmoved |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
@@ -309,8 +318,8 @@ cp .env.example .env          # then add GROQ_API_KEY
 ./db/fetch_chinook.sh          # or db\fetch_chinook.ps1 on Windows
 docker compose up -d
 
-.venv/Scripts/python.exe -m pytest -q                 # 1,383 tests, ~80s
-.venv/Scripts/python.exe -m pytest -q -m "not needs_db"   # 923, stack down
+.venv/Scripts/python.exe -m pytest -q                 # 1,547 tests, with --profile tls up
+.venv/Scripts/python.exe -m pytest -q -m "not needs_db"   # 1,081, ~41s, no Docker at all
 .venv/Scripts/python.exe -m evals.run_evals --help
 ```
 

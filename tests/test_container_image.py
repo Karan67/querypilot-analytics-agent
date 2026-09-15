@@ -426,3 +426,33 @@ def test_the_api_waits_for_the_ownership_fix_to_finish() -> None:
 def test_the_one_shot_does_not_restart() -> None:
     """It exits 0 by design; `unless-stopped` would loop it forever."""
     assert str(_compose()["services"]["data-init"]["restart"]) == "no"
+
+
+# --- T11: Postgres is not published on every interface -----------------------
+
+
+def test_postgres_binds_loopback_by_default() -> None:
+    """AC22. Measured before this line existed: `docker ps` reported
+    `0.0.0.0:5432->5432/tcp`, reachable from any machine that could route to
+    this host at all. Nothing in this project needs more than loopback -- the
+    host test suite and the eval runner both connect to `localhost`."""
+    port = _compose()["services"]["db"]["ports"][0]
+    assert port.startswith("${POSTGRES_BIND_HOST:-127.0.0.1}:"), (
+        f"the db port is not bound to a loopback default: {port!r}"
+    )
+
+
+def test_postgres_bind_host_is_configurable() -> None:
+    """The escape hatch is real configuration, not a hand-edit of the file."""
+    port = _compose()["services"]["db"]["ports"][0]
+    assert "POSTGRES_BIND_HOST" in port
+
+
+def test_the_api_port_is_unrestricted() -> None:
+    """Only Postgres narrows. The API is meant to be publicly reachable --
+    that is the whole point of a deployment -- so its port stays as it was."""
+    port = _compose()["services"]["api"]["ports"][0]
+    assert not port.startswith("127.0.0.1"), (
+        "the API's own port narrowed too, which would make it unreachable "
+        "from outside the host"
+    )

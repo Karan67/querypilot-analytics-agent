@@ -23,12 +23,13 @@ the runtime image.
 cp .env.example .env          # then add GROQ_API_KEY and QUERYPILOT_DATABASE_URL
 ./db/fetch_chinook.sh         # or db\fetch_chinook.ps1 — NOT optional, stack won't start
 docker compose up -d
-curl http://localhost:8000/health          # user must read querypilot_ro
+curl http://localhost:8000/health          # anonymous: {"status":"ok"} only
+curl -u analyst:<secret> http://localhost:8000/health   # user must read querypilot_ro
 ```
 
 ```bash
-.venv/Scripts/python.exe -m pytest              # 1,383 tests, ~80s
-.venv/Scripts/python.exe -m pytest -m "not needs_db"   # 923, no database needed
+.venv/Scripts/python.exe -m pytest              # 1,547 tests, with --profile tls up
+.venv/Scripts/python.exe -m pytest -m "not needs_db"   # 1,081, ~41s, no database needed
 .venv/Scripts/python.exe -m pytest tests/test_orchestrator.py -q
 .venv/Scripts/python.exe -m pytest tests/test_expert_tier.py -q -k "ac12"
 ```
@@ -109,6 +110,22 @@ has three limits, and the one that bites is invisible to every response header:
 - Never raise `--daily-token-limit` past the measured 200,000 without being
   told to. `--max-projection` raises only the run's own ceiling, which is what
   lets a `--token-budget` breaker coexist with a large projection.
+
+### The deployment artifact (Iteration 12)
+
+`specs/015-production-deployment.md` closed the engineering half of B-11: a
+non-root multi-stage image, a CSP and HSTS derived from what `api/web/` and
+`api/http/forwarded.py` actually do, a `--profile tls` Caddy terminator
+(`deploy/Caddyfile`) that exercises a real HTTPS request rather than asserting
+one, `_FILE` indirection for both secrets (`api/config.py`), and a daily
+spend ceiling in front of `/ask` (`api/store/history.py::reserve_question`).
+`/health` now tells an anonymous caller only `{"status": "ok"}` — everything
+else needs the same credential every other route does.
+
+None of it chose a host, a domain, or a managed Postgres. Those are custody
+decisions, laid out as an explicit matrix in that spec's §7 rather than
+resolved by default — read it before assuming this project is "deployed"
+anywhere.
 
 ---
 

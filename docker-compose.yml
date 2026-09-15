@@ -23,7 +23,22 @@ services:
       QUERYPILOT_RO_PASSWORD: ${QUERYPILOT_RO_PASSWORD}
       QUERYPILOT_STATEMENT_TIMEOUT: ${QUERYPILOT_STATEMENT_TIMEOUT:-10s}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Iteration 12 T11, AC22. Loopback by default, not every interface.
+      #
+      # Measured before this line existed: `docker ps` reported
+      # `0.0.0.0:5432->5432/tcp`, which is Postgres reachable from any machine
+      # that can route to this host at all -- a laptop on a coffee-shop wifi,
+      # or any other tenant on the same cloud subnet. Nothing in this project
+      # needs that: the host test suite and the eval runner both connect to
+      # `localhost`, which `127.0.0.1` answers exactly as well as `0.0.0.0`
+      # does, on this same machine. There was no case that needed the wider
+      # bind; it was simply Compose's own default, never chosen on purpose.
+      #
+      # `POSTGRES_BIND_HOST` exists for the one legitimate exception -- a
+      # database client on another machine, deliberately -- and is left to be
+      # widened on purpose rather than narrowed by an operator who has to
+      # remember to do it.
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Init scripts run in filename order, ONCE, on an empty data volume:

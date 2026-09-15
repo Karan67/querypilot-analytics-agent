@@ -298,14 +298,14 @@ def _auth_status() -> dict:
 
 
 @app.get("/health", tags=["ops"])
-def health() -> JSONResponse:
+def health(request: Request) -> JSONResponse:
     """Liveness plus target-database readiness.
 
     Iteration 0 is done when this endpoint reports ``ok``, because that proves
     the whole chain: the API started, the read-only role exists, it can
     authenticate, and the sample dataset was loaded.
 
-    Returns 200 with::
+    An **authenticated** caller sees the full body::
 
         {
           "status": "ok",
@@ -318,28 +318,49 @@ def health() -> JSONResponse:
           "auth": {"configured": true, "error": ""}
         }
 
-    and 503 with ``{"status": "degraded", "database": {"connected": false,
-    "error": "..."}}`` if the database is unreachable. A health check that
-    reports healthy while its dependency is down is worse than no health check,
-    so the database round-trip is not optional here.
+    (plus `history`, `proxy`, `secrets` and `spend` — see below), or 503 with
+    ``{"status": "degraded", "database": {"connected": false, "error": "..."}}``
+    if the database is unreachable. A health check that reports healthy while
+    its dependency is down is worse than no health check, so the database
+    round-trip is not optional here.
 
-    **Iteration 10 made this the only endpoint an anonymous caller can reach**
-    (`013-auth.md` §2.7: the compose healthcheck probes it with a bare
+    **An anonymous caller sees only `{"status": "ok"}`, or `{"status":
+    "degraded"}` on a 503** (Iteration 12 T10, resolved spec §7 Q-H). Every
+    field this endpoint could return was individually harmless on a laptop —
+    ``querypilot_ro`` and ``chinook`` are both already in the README — but
+    together, to a stranger, they are a free answer to "is this worth
+    attacking, and what is it running." The status **code** is what a
+    healthcheck actually needs, and `api/healthcheck.py` was written at T3 to
+    read only that; collapsing the body changes nothing it depends on. This
+    reverses `013-auth.md`'s D-4, which kept `/health` unchanged specifically
+    to let an *anonymous* operator see why authentication was misconfigured —
+    that operator now has to authenticate to see it, on the same terms as
+    every other diagnostic below.
+
+    **Iteration 10 made this the only endpoint an anonymous caller can reach
+    at all** (`013-auth.md` §2.7: the compose healthcheck probes it with a bare
     ``urlopen`` and no credentials, so a gate here makes the container
-    permanently unhealthy). Every field it returns was already here and none is
-    a secret — ``querypilot_ro`` and ``chinook`` are both in the README.
-    ``auth`` is new and reports whether the credential map parsed, which is the
-    only way an operator can see *why* everything else is returning 401.
+    permanently unhealthy). T10 narrows what reaching it gets you; it does not
+    reopen the gate.
 
     Goes through `execute_sql()` like everything else (see `_HEALTH_QUERY`).
     That also simplifies the failure handling: the exception cases this used to
     catch by hand — a missing DSN, an auth failure, a database still starting —
     are what `ExecutionResult.ok` already reports.
     """
+    authenticated = (
+        auth.identify_caller(
+            request.headers.get("Authorization"), config.get_secret(auth.USERS_ENV)
+        )
+        is not None
+    )
+
     result = execute_sql(_HEALTH_QUERY)
 
     if not result.ok:
         logger.warning("health check failed: %s (%s)", result.error, result.category)
+        if not authenticated:
+            return JSONResponse(status_code=503, content={"status": "degraded"})
         return JSONResponse(
             status_code=503,
             content={
@@ -348,6 +369,9 @@ def health() -> JSONResponse:
                 "auth": _auth_status(),
             },
         )
+
+    if not authenticated:
+        return JSONResponse(status_code=200, content={"status": "ok"})
 
     db_user, db_name, public_tables = result.rows[0]
 

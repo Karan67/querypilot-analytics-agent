@@ -7,13 +7,17 @@ Read [`specs/000-project.md`](specs/000-project.md) first — it is the source o
 truth for intent, scope, non-goals, and the safety rules that bind every
 iteration.
 
-**Current state: Iteration 10 (Authentication).** `docker compose up` gives you a working
-page at **<http://localhost:8000>** — sign in, ask a question, get the answer,
-the SQL that produced it, and the agent's steps. Behind it: a hand-written agent
-loop that reads its own execution errors and retries, a four-gate safety layer
-nothing bypasses, and a 50-question benchmark with a held-out split. Every
-endpoint but `/health` now needs a credential, because `POST /ask` spends real
-provider quota — see [Who can ask](#who-can-ask-authentication).
+**Current state: Iteration 12 (Production deployment).** `docker compose up` gives
+you a working page at **<http://localhost:8000>** — sign in, ask a question,
+get the answer, the SQL that produced it, and the agent's steps. Behind it: a
+hand-written agent loop that reads its own execution errors and retries, a
+four-gate safety layer nothing bypasses, and a 50-question benchmark with a
+held-out split. Every endpoint but `/health` needs a credential, because
+`POST /ask` spends real provider quota — see
+[Who can ask](#who-can-ask-authentication). The image is now non-root,
+multi-stage and deployable, with a daily spend ceiling in front of the agent
+and TLS exercised through a `--profile tls` Caddy terminator — see
+[Deployment](#deployment).
 
 Every accuracy number lives in [`EVALS.md`](EVALS.md) with its caveats, and the
 numbers are deliberately not repeated here — the honest reading of the held-out
@@ -35,8 +39,8 @@ estimate, and each carries the caveat that makes it true.
 | a repeated question | **0 tokens** | the answer cache; caveat below |
 | free-tier ceiling | **200,000 tokens/day** ≈ 180 questions | `010-hardening.md` §2.5 |
 | schema introspection | **9 statements, 29.0ms** | `011-ship.md` B-10, Iteration 8 T5 |
-| the test suite | **1,383 tests, ~80s** | `docker compose up`, then `pytest` |
-| without a database | **923 of them, ~35s** | `pytest -m "not needs_db"` — no Docker, no Postgres |
+| the test suite | **1,547 tests** | `docker compose --profile tls up -d`, then `pytest` |
+| without a database | **1,081 of them, ~41s** | `pytest -m "not needs_db"` — no Docker, no Postgres |
 
 Three of those need their caveat stated rather than footnoted:
 
@@ -255,16 +259,94 @@ price of adding a gate with no login page, no cookie, no session store and no
 new dependency.
 
 **Unset means locked, not open.** With `QUERYPILOT_USERS` empty or malformed,
-every protected route returns `401` and `/health` reports `auth.configured:
-false` with a message naming the variable. A deployment that forgets to set it
-is refused, never silently public — the failure mode that makes an unset
-variable look exactly like a working one is the thing this design spends its
-complexity avoiding.
+every protected route returns `401`. **To an authenticated caller**, `/health`
+reports `auth.configured: false` with a message naming the variable — a
+deployment that forgets to set it is refused, never silently public, which is
+the failure mode this design spends its complexity avoiding. An **anonymous**
+caller of `/health` no longer sees that message at all: since Iteration 12
+(§"Deployment" below), `/health` tells a stranger only `{"status": "ok"}`, and
+that includes the one case where this genuinely costs something — a deployment
+whose `QUERYPILOT_USERS` is itself broken has no credential that can ever
+authenticate, so this particular diagnostic is now only found in the container
+log, not from outside.
 
 **The secret is never logged.** It does not appear in an error message, a trace,
 a history row, or the page — the same rule `GROQ_API_KEY` has. A refused request
 gets one identical `401` whatever went wrong, so the response cannot be read as
 a hint about whether the name exists.
+
+---
+
+## Deployment
+
+Iteration 12 (`specs/015-production-deployment.md`) closed the engineering half
+of B-11: the artifact is now something a reasonable platform would accept, and
+none of it required a cloud account. What it did **not** do is deploy anything
+— no host was chosen, and the custody questions below are recorded as an
+explicit, deferred matrix rather than resolved by default.
+
+**What changed, and what it buys:**
+
+- **The image runs as a fixed non-root uid**, is built in two stages so no
+  compiler or `pip` cache reaches the runtime layer, binds `$PORT` when a
+  platform sets it, and carries its own `HEALTHCHECK` rather than depending on
+  `docker-compose.yml` to supply one.
+- **Every response carries a security policy**, including the `401` a wrong
+  password produces: a `Content-Security-Policy` derived from what `api/web/`
+  actually loads (and asserted against it, so the policy cannot drift silently
+  looser than the page), `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`, and a `Strict-Transport-Security` header that is emitted
+  **only** once a trusted reverse proxy confirms the request arrived over
+  HTTPS — never unconditionally, because a laptop serving plain
+  `http://localhost` that emitted it even once would make every other project
+  ever served from that host unreachable in that browser for a year.
+- **TLS is exercised, not asserted.** `docker compose --profile tls up -d`
+  puts [Caddy](https://caddyserver.com/) in front of the API with its own
+  internal CA, so a real HTTPS request completes end to end with no domain, no
+  ACME round trip, and no network access. It is a development profile, not a
+  production TLS story — see the matrix below.
+- **Both secrets can be read from a file instead of an environment variable.**
+  `GROQ_API_KEY_FILE` and `QUERYPILOT_USERS_FILE` point at a path; the file
+  wins when both are set, and a configured-but-unreadable path fails **closed**
+  rather than silently falling back to the environment variable. This matters
+  because an environment variable is part of a container's configuration:
+  `docker inspect` prints it in full to anyone holding the Docker socket, and
+  every child process inherits it. A file does not have that problem.
+- **A daily question ceiling now sits in front of the agent** — 50 per
+  identity, 150 across the deployment, both configurable, both resetting at
+  UTC midnight. Authentication (Iteration 10) answers *who* may spend the
+  project's quota; this answers *how much*, which authentication alone never
+  did. A caller who is refused is told which ceiling they hit, because a
+  message that did not distinguish "you" from "everyone" would read as a bug
+  the first time the less common reason fired.
+- **`/health` tells an anonymous caller only `{"status": "ok"}`.** Everything
+  it used to say to anyone — the database role, the database name, the table
+  count, whether the credential map parsed — now requires the same credential
+  every other route does. A container orchestrator's own healthcheck never
+  presents one and never needs to: it reads the HTTP status code, never the
+  body, and always has.
+- **Postgres is no longer published on every network interface by default** —
+  `127.0.0.1` only, configurable via `POSTGRES_BIND_HOST` for the one
+  legitimate exception, a database client on another machine, deliberately.
+
+**What this deliberately does not do.** Nothing here chose a host, a domain, a
+DNS provider, or a managed Postgres. Those are custody decisions — whose card,
+whose account, whose name on the bill — and `specs/015-production-deployment.md`
+§7 lays them out as a matrix rather than resolving them:
+
+| Decision | What it needs | Reversible? |
+|---|---|---|
+| API host (Fly.io, Render, Railway, a VPS, …) | a card on file | yes, if the image stays portable |
+| Managed Postgres, or a container on the same host | an account; a different seeding path if managed | painful — data has to move |
+| TLS issuance in production | a domain, or a platform that issues one | yes |
+| Domain and DNS | a registrar, roughly £10–15/yr | yes |
+| Container registry | GHCR is free for this repository | yes |
+
+And the sharpest of B-11's original three blockers is still exactly where it
+was: **whose LLM key** a public deployment spends, and how hard the credential
+gate and the spend ceiling hold against a stranger who finds the URL. A
+ceiling bounds the bill; it does not make the URL safe to publish to strangers
+you have not decided to trust.
 
 ---
 

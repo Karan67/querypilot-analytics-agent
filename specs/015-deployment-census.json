@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-15T09:45:38Z",
-  "commit": "cc7e108",
+  "generated_at": "2026-09-15T15:40:34Z",
+  "commit": "03b6f76",
   "generated_by": "tools/deploy_census.py",
   "argv": [],
   "targets": {
@@ -12,37 +12,50 @@
   "image": {
     "reference": "querypiolt-api:latest",
     "python_version": "3.12.13",
-    "size_bytes": 70271069,
+    "size_bytes": 70128821,
     "size_reported": "297MB",
-    "rootfs_layers": 8,
-    "history_entries": 17,
-    "config_user": "",
-    "config_user_declared": false,
+    "rootfs_layers": 10,
+    "history_entries": 21,
+    "config_user": "10001:10001",
+    "config_user_declared": true,
     "config_cmd": [
-      "uvicorn",
-      "api.main:app",
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000"
+      "sh",
+      "-c",
+      "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-server-header"
     ],
-    "healthcheck_declared": false,
+    "healthcheck_declared": true,
     "history": [
       {
         "size": "0B",
-        "instruction": "CMD [\"uvicorn\" \"api.main:app\" \"--host\" \"0.0.0.0\" \"--port\" \"8000\"]"
+        "instruction": "CMD [\"sh\" \"-c\" \"exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-server-header\"]"
+      },
+      {
+        "size": "0B",
+        "instruction": "HEALTHCHECK {Test:[CMD python -m api.healthcheck] Interval:15s Timeout:10s StartPeriod:30s StartInterval:0s Retries:3}"
       },
       {
         "size": "0B",
         "instruction": "EXPOSE [8000/tcp]"
       },
       {
-        "size": "1.1MB",
+        "size": "0B",
+        "instruction": "USER 10001:10001"
+      },
+      {
+        "size": "520kB",
         "instruction": "COPY . ./api/ # buildkit"
       },
       {
+        "size": "8.19kB",
+        "instruction": "RUN /bin/sh -c mkdir -p /data && chown 10001:10001 /data # buildkit"
+      },
+      {
+        "size": "41kB",
+        "instruction": "RUN /bin/sh -c groupadd --system --gid 10001 querypilot && useradd --system --uid 10001 --gid 10001 --no-create-home --s..."
+      },
+      {
         "size": "92.2MB",
-        "instruction": "RUN /bin/sh -c pip install --no-cache-dir -r requirements.lock # buildkit"
+        "instruction": "RUN /bin/sh -c pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.lock # buildkit"
       },
       {
         "size": "16.4kB",
@@ -97,19 +110,19 @@
         "instruction": "# debian.sh --arch 'amd64' out/ 'trixie' '@1785715200'"
       }
     ],
-    "pycache_dirs": 208
+    "pycache_dirs": 201
   },
   "containers": {
     "api": {
       "name": "querypilot-api",
       "running": true,
       "process_users": [
-        "root"
+        "10001"
       ],
       "process_user_method": "docker top (UID column)",
       "ports": "0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp",
       "image": "querypiolt-api",
-      "status": "Up 2 hours (healthy)"
+      "status": "Up 59 minutes (healthy)"
     },
     "db": {
       "name": "querypilot-db",
@@ -118,9 +131,9 @@
         "70"
       ],
       "process_user_method": "docker top (UID column)",
-      "ports": "0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp",
+      "ports": "127.0.0.1:5432->5432/tcp",
       "image": "postgres:16-alpine",
-      "status": "Up 2 hours (healthy)"
+      "status": "Up 38 minutes (healthy)"
     }
   },
   "http": {
@@ -128,11 +141,17 @@
     "health_header_names": [
       "connection",
       "content-length",
+      "content-security-policy",
       "content-type",
+      "cross-origin-opener-policy",
+      "cross-origin-resource-policy",
       "date",
-      "server"
+      "permissions-policy",
+      "referrer-policy",
+      "x-content-type-options",
+      "x-frame-options"
     ],
-    "health_server": "uvicorn",
+    "health_server": null,
     "health_body_keys": [
       "auth",
       "auth.configured",
@@ -145,6 +164,23 @@
       "history",
       "history.error",
       "history.writable",
+      "proxy",
+      "proxy.configured",
+      "proxy.error",
+      "proxy.networks",
+      "secrets",
+      "secrets.GROQ_API_KEY",
+      "secrets.GROQ_API_KEY.readable",
+      "secrets.GROQ_API_KEY.source",
+      "secrets.QUERYPILOT_USERS",
+      "secrets.QUERYPILOT_USERS.readable",
+      "secrets.QUERYPILOT_USERS.source",
+      "spend",
+      "spend.available",
+      "spend.error",
+      "spend.global_count",
+      "spend.global_limit",
+      "spend.identity_limit",
       "status"
     ],
     "status": {

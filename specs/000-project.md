@@ -193,7 +193,17 @@ regressions are bugs; safety regressions are stop-the-line events.
   > *Chat UI* is also narrower than it sounds: charter §3 already lists
   > conversational memory as a non-goal, so this is one question and one
   > answer, not a thread.
-- **Deployment** — Vercel (frontend), Render or Fly.io (API), Supabase (Postgres).
+- **Deployment** — the artifact, not the platform: a production-grade image and
+  compose posture built and tested by Iteration 12
+  (`specs/015-production-deployment.md`), with the host, DNS and managed
+  Postgres left as an explicit, deferred decision matrix.
+  > **Amended 2026-09-15.** This line originally read *"Vercel (frontend),
+  > Render or Fly.io (API), Supabase (Postgres)"*, written before Iteration 6
+  > removed the separately deployable frontend: `api/web/` has been served by
+  > FastAPI itself, with no build step and no npm, since then. A charter line
+  > naming an artifact that no longer exists is wrong in a checkable way,
+  > which is worse than silent — `specs/015-production-deployment.md` §2
+  > measured it and §7 resolved amending it under AC23.
 
 ### Non-goals
 
@@ -204,7 +214,7 @@ not "later" — they are **out**, unless a future spec deliberately reverses one
 |---|---|
 | **Writing to the target database** | The system is analytical. No `INSERT` / `UPDATE` / `DELETE` / DDL is ever generated, validated, or executed — not behind a flag, not in an admin mode, not for tests |
 | **Multi-dialect support** | PostgreSQL only. No MySQL / Snowflake / BigQuery abstraction layer |
-| **Multi-tenancy, auth, user accounts** | Single-user demo. No login, no per-user data isolation, no RBAC |
+| **Multi-tenancy, auth, user accounts** | Single-user demo. No login, no per-user data isolation, no RBAC. **Partially reversed by Iteration 10** (`specs/013-auth.md`): HTTP Basic now gates every route but `/health`, because a public URL in front of the project's own quota needed *someone* to be turned away. It is named a spend gate, not an identity system, in the README's own words — there is still no per-user data isolation and still no RBAC; `/history` shows every signed-in identity every question anybody asked. This row was not amended at the time; Iteration 12 T12 does so, so the charter matches what shipped two iterations earlier rather than the non-goal reading as still fully intact |
 | **A semantic layer or metrics store** | The agent reads the physical schema. No dbt, no cube, no curated metric definitions |
 | **Fine-tuning or training a model** | Prompting, grounding, and retry logic only |
 | **Agent frameworks** | No LangChain, LlamaIndex, CrewAI, AutoGen, or equivalent — see §5 |
@@ -475,7 +485,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 | ~~B-9~~ | ~~AC14's live injection test asserts a model behaviour~~ | Iteration 7 T4 | **discharged 2026-09-10** at Iteration 8 T3 |
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
-| **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task. **One of three blockers discharged 2026-09-14** by Iteration 10; see the entry below |
+| **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task. **The engineering half discharged 2026-09-15** by Iteration 12; key provisioning and secrets custody remain open; see the entry below |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
 | **B-15** | `tests/test_auth.py` cannot run without a database it does not need | Iteration 10 T4 | **discharged 2026-09-15** at Iteration 11 — 923 of 1,383 tests now run with the stack down; see the entry below |
 | ~~B-13~~ | ~~The gold-query test pair fails intermittently~~ — `hard-001` exceeded the 10s ceiling under load | Iteration 8 T2 | **discharged 2026-09-11** — diagnosed, then fixed by pre-aggregating the reference query |
@@ -1408,6 +1418,44 @@ missing is a decision, and the decision is not the assistant's to make.
 > and replayable by anyone on the path. Iteration 10 states this in the README
 > rather than letting a reader infer more safety than exists, and transport
 > security is a deployment concern that lands here with the rest.
+
+> **THE ENGINEERING HALF DISCHARGED 2026-09-15, at Iteration 12
+> (`specs/015-production-deployment.md`). Blockers 1 and 2 — whose key, and
+> where the secret lives — remain open, and remain a decision rather than a
+> task.**
+>
+> This iteration answered the part of B-11 that was code, having named the
+> split explicitly: the image now runs as a fixed non-root uid, is multi-stage,
+> binds `$PORT`, carries its own healthcheck, and ships a `.dockerignore` that
+> did not exist before. Every response — including the `401` — carries a CSP
+> derived from what `api/web/` actually does, `X-Content-Type-Options`,
+> `X-Frame-Options`, `Referrer-Policy` and a conditional `Strict-Transport-
+> Security` that only fires once a trusted proxy confirms HTTPS. TLS itself is
+> exercised, not asserted: `docker compose --profile tls up` puts Caddy in
+> front of the API with its own internal CA, so a real HTTPS request completes
+> on an offline laptop. Both existing secrets gained a `_FILE` indirection that
+> fails closed rather than falling back to the environment. A daily spend
+> ceiling — 50 questions per identity, 150 across the deployment — now sits in
+> front of the agent, closing the gap authentication left: *who* may spend was
+> answered at Iteration 10; *how much* is answered here. `/health` no longer
+> tells an anonymous caller the database role, the database name or the table
+> count. Postgres is no longer published on every interface by default.
+>
+> **Blocker 1 is genuinely unchanged**, and this iteration's own §1 said so
+> before any of it was built: a spend ceiling bounds a *deployed* instance's
+> bill, and a credential gate decides who reaches it, but whose free-tier key a
+> live deployment spends is still nobody's to decide in code. **Blocker 2 is
+> now better rather than worse**: `_FILE` indirection means a secret need not
+> live in the container's environment at all, which is the concrete thing that
+> was missing when Iteration 10 called this blocker *"arguably slightly
+> worse."* Neither blocker is a decision this iteration was entitled to make on
+> the user's behalf, and neither was attempted.
+>
+> Nothing was deployed. The deliverable is an artifact — proven against a
+> local Caddy terminator and a local Docker daemon, with zero cloud account and
+> zero card — and the custody questions (which host, which registrar, whose
+> Postgres, whose LLM key) are recorded as an explicit, deferred matrix in
+> `specs/015-production-deployment.md` §7, rather than resolved by default.
 
 ### B-15 — `tests/test_auth.py` cannot run without a database it does not need
 
