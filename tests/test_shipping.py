@@ -116,7 +116,7 @@ def test_ac12_the_healthcheck_asks_the_endpoint_that_proves_the_chain():
     truth that T3 removed.
     """
     command = " ".join(str(part) for part in service("api")["healthcheck"]["test"])
-    assert "healthcheck.py" in command, (
+    assert "api.healthcheck" in command, (
         f"the compose probe no longer delegates to the script: {command!r}"
     )
 

@@ -38,7 +38,7 @@ from api.llm.base import LLMError, TokenUsage
 from api.llm.factory import get_provider
 from api.store import history
 from api.store.history import AskRecord
-from api.http import auth, cache, quota
+from api.http import auth, cache, headers, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
 from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
@@ -202,6 +202,26 @@ async def require_credentials(request: Request, call_next):
         return _unauthorized()
 
     return await call_next(request)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """AC7. Every response carries the security headers, including the 401.
+
+    **Registered after the gate on purpose.** Starlette builds its middleware
+    stack so that the last one registered is the outermost, so declaring this
+    below `require_credentials` is what puts it *around* the gate. Register it
+    above and it would run only for requests the gate already let through --
+    and the `401` is precisely the response an unauthenticated browser renders,
+    so it is the one that most needs a content policy.
+
+    The policy itself lives in `api/http/headers.py`. This function is the
+    registration and nothing else, on the same terms as `api/agent/tools.py`:
+    a thin wrapper delegating to the module that owns the decision.
+    """
+    response = await call_next(request)
+    headers.apply(response.headers)
+    return response
 
 
 def _auth_status() -> dict:

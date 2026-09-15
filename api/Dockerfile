@@ -90,11 +90,24 @@ EXPOSE 8000
 # compose file -- which is most of them -- ran this container with no probe at
 # all. The script resolves $PORT itself, so the port is named in exactly one
 # place.
+#
+# Invoked as a **module**, never as a file path. `python /app/api/healthcheck.py`
+# puts /app/api on sys.path, where the application's own `api/http/` package
+# shadows the standard library's `http` -- so `import urllib.request` fails with
+# `No module named 'http.client'` and the container reports unhealthy while
+# serving requests perfectly. `-m` resolves from WORKDIR /app instead, which is
+# the same path the CMD's `api.main:app` already relies on.
 HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=3 \
-    CMD ["python", "/app/api/healthcheck.py"]
+    CMD ["python", "-m", "api.healthcheck"]
 
 # Shell form, because $PORT has to be expanded at start time: Render, Fly.io and
 # Railway all inject it and expect the process to bind it, and before AC6 this
 # container could not comply. `exec` keeps uvicorn as PID 1 so that a SIGTERM
 # from the platform reaches it instead of the shell.
-CMD ["sh", "-c", "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+#
+# `--no-server-header` is AC11. uvicorn announces itself in every response, and
+# the deployment gains nothing from telling a scanner which server and which
+# version it is talking to. Suppressed at the server rather than stripped in
+# middleware, because the header is uvicorn's to emit and not emitting it is
+# cheaper than removing it 8,000 times a day.
+CMD ["sh", "-c", "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-server-header"]

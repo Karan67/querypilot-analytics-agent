@@ -253,7 +253,31 @@ def test_the_image_declares_its_own_healthcheck() -> None:
 
 def test_the_healthcheck_delegates_to_the_committed_script() -> None:
     probe = " ".join(directives("HEALTHCHECK"))
-    assert "healthcheck.py" in probe
+    assert "api.healthcheck" in probe
+
+
+def test_the_probe_is_invoked_as_a_module_and_never_as_a_file_path() -> None:
+    """A real failure, found by running the container rather than reading it.
+
+    `python /app/api/healthcheck.py` puts /app/api on sys.path, where this
+    project's own `api/http/` package shadows the standard library's `http`.
+    `import urllib.request` then dies with `No module named 'http.client'`,
+    and the container reports unhealthy while serving every request correctly
+    -- the precise failure mode Iteration 0 called worse than no probe at all.
+
+    `-m` resolves from WORKDIR /app, the same path `api.main:app` already
+    depends on.
+    """
+    for probe in (
+        " ".join(directives("HEALTHCHECK")),
+        " ".join(_compose()["services"]["api"]["healthcheck"]["test"]),
+    ):
+        tokens = re.split(r"[\s,\[\]\"']+", probe)
+        assert "-m" in tokens, f"probe is not a module invocation: {probe}"
+        assert "healthcheck.py" not in probe, (
+            "invoking the probe by file path puts api/ on sys.path, where "
+            "api/http/ shadows the stdlib http module"
+        )
 
 
 # --- AC6: the port can move ---------------------------------------------------
@@ -343,8 +367,8 @@ def test_the_compose_healthcheck_no_longer_hardcodes_a_port() -> None:
 def test_the_compose_healthcheck_runs_the_same_script_the_image_does() -> None:
     """One script, so the probe and the server cannot disagree about the port."""
     probe = " ".join(_compose()["services"]["api"]["healthcheck"]["test"])
-    assert "healthcheck.py" in probe
-    assert "healthcheck.py" in " ".join(directives("HEALTHCHECK"))
+    assert "api.healthcheck" in probe
+    assert "api.healthcheck" in " ".join(directives("HEALTHCHECK"))
 
 
 def test_the_compose_file_still_parses_and_declares_both_services() -> None:
@@ -354,3 +378,51 @@ def test_the_compose_file_still_parses_and_declares_both_services() -> None:
     services = _compose()["services"]
     assert {"api", "db"} <= set(services)
     assert "healthcheck" in services["api"]
+
+
+# --- T4: the volume belongs to the account the API runs as -------------------
+
+
+def test_a_one_shot_service_takes_ownership_of_the_data_volume() -> None:
+    """The Dockerfile's `chown` only reaches a *fresh* named volume.
+
+    Docker copies the image's ownership of a directory when it initialises an
+    empty volume. A volume that already exists keeps the ownership it was
+    created with, which for every deployment predating T2 is root -- measured,
+    not assumed: the new image against the existing volume answered
+    `touch: cannot touch '/data/probe': Permission denied`.
+    """
+    services = _compose()["services"]
+    assert "data-init" in services, "nothing fixes the ownership of an existing volume"
+
+    init = services["data-init"]
+    entrypoint = " ".join(init["entrypoint"])
+    assert "chown" in entrypoint
+    assert "10001" in entrypoint
+    assert any("/data" in str(v) for v in init["volumes"])
+
+
+def test_the_one_shot_runs_privileged_and_the_api_does_not() -> None:
+    """A chown needs root. Isolating it here is what lets the API image stay
+    non-root without `gosu` and without a privilege-dropping entrypoint."""
+    services = _compose()["services"]
+    assert str(services["data-init"]["user"]) in {"0:0", "0", "root"}
+    assert "user" not in services["api"], (
+        "the api service overrides the image's USER, which would undo AC1"
+    )
+
+
+def test_the_api_waits_for_the_ownership_fix_to_finish() -> None:
+    """`service_completed_successfully`, not `service_started`.
+
+    The chown has to have *finished* before uvicorn opens the history store,
+    and it has to have succeeded -- a failed chown that the API started anyway
+    would surface as an unwritable history and a healthy-looking container.
+    """
+    depends = _compose()["services"]["api"]["depends_on"]
+    assert depends["data-init"]["condition"] == "service_completed_successfully"
+
+
+def test_the_one_shot_does_not_restart() -> None:
+    """It exits 0 by design; `unless-stopped` would loop it forever."""
+    assert str(_compose()["services"]["data-init"]["restart"]) == "no"

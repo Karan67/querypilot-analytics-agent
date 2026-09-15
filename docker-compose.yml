@@ -43,6 +43,38 @@ services:
       retries: 30
       start_period: 60s
 
+  # Iteration 12 T4. The one-shot that makes the volume belong to the account
+  # the API now runs as.
+  #
+  # T2 moved the API off root and onto uid 10001. The Dockerfile creates /data
+  # owned by that uid, which is enough for a *fresh* named volume -- Docker
+  # copies the image's ownership when it initialises an empty one. It is not
+  # enough for a volume that already exists: those keep the ownership they were
+  # created with, which for every deployment predating T2 is root. Measured
+  # rather than assumed -- the new image against the existing volume answers
+  # `touch: cannot touch '/data/probe': Permission denied`.
+  #
+  # **Why a separate service and not an entrypoint.** A chown at boot needs
+  # root, so an entrypoint doing it would have to start the container as root
+  # and drop privileges afterwards -- which reintroduces exactly the thing AC1
+  # removes, and needs `gosu` or `su-exec` in the runtime image to do it
+  # safely. Isolating the privileged step in a container that exits before the
+  # API starts keeps the API's own image non-root with no new dependency.
+  #
+  # It reuses the API's build rather than pulling busybox, so `docker compose
+  # up` still needs exactly the two images it needed before. It is idempotent:
+  # chown on an already-correct tree is a no-op, so this costs a second or two
+  # on every start and nothing else.
+  data-init:
+    build:
+      context: ./api
+    container_name: querypilot-data-init
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown -R 10001:10001 /data && chmod 700 /data"]
+    volumes:
+      - querypilot_data:/data
+    restart: "no"
+
   api:
     build:
       context: ./api
@@ -98,6 +130,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      data-init:
+        condition: service_completed_successfully
     healthcheck:
       # AC12. Until Iteration 8 T7 only `db` had a healthcheck, so
       # `docker compose ps` reported the API as `Up` whether or not it could
@@ -132,7 +166,8 @@ services:
       test:
         - CMD
         - python
-        - /app/api/healthcheck.py
+        - -m
+        - api.healthcheck
       interval: 15s
       timeout: 10s
       retries: 3
