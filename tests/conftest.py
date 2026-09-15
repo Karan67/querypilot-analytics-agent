@@ -21,6 +21,17 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
+# Re-exported, not re-implemented. `prohibit_database_access` is autouse, and an
+# autouse fixture only applies where pytest can see it -- which for the whole
+# suite means this file. Imported as `tests.isolation` rather than bare
+# `isolation`: `tests/` has no `__init__.py` and pytest's `prepend` import mode
+# makes both spellings resolve, to two module objects with two distinct
+# `DatabaseAccessProhibitedError` classes.
+from tests.isolation import (  # noqa: F401 - re-exported for pytest to collect
+    DatabaseAccessProhibitedError,
+    prohibit_database_access,
+)
+
 #: Local-development fallback only. Matches the committed `.env.example`, which
 #: holds no real secret. CI overrides it via TEST_DATABASE_URL.
 DEFAULT_TEST_DATABASE_URL = (
@@ -38,7 +49,15 @@ DEFAULT_TEST_DATABASE_URL = (
 #: libpq clamps anything below 2 to 2 seconds.
 PROBE_CONNECT_TIMEOUT_SECONDS = 3
 
-#: Set to ``1`` to make an unreachable database a **failure** instead of a skip.
+#: Set to ``1`` to make an unreachable database a **failure** instead of a skip,
+#: **for the tests that declare one**.
+#:
+#: The qualifier is new at Iteration 11 T4 and it narrows what this flag does.
+#: While `configured_database` was autouse, setting this failed the entire run.
+#: Now it fails only the `needs_db` lane; the 888 hermetic tests run and pass
+#: regardless. That is still a red build, which is all the flag was ever for --
+#: but `ci.yml` and `ci/require_executed_tests.py` both quote the old, wider
+#: claim and are corrected at T6.
 #:
 #: `011-ship.md` §2.1 measured the reason this exists. Pointed at a dead DSN the
 #: suite reports ``1109 skipped`` and **exit code 0** — a green build that
@@ -70,9 +89,21 @@ def _database_url() -> str:
     return os.environ.get("TEST_DATABASE_URL") or DEFAULT_TEST_DATABASE_URL
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def configured_database() -> str:
-    """Point the application's engine at the test database, or skip the suite.
+    """Point the application's engine at the test database, or skip the test.
+
+    **Opt-in since Iteration 11 T4 (B-15).** This was `autouse=True`, which gave
+    all 1,348 tests a database and made every one of them skip when the stack was
+    down. `specs/014-test-isolation.md` §2.1 measured what that cost: **888 of
+    them never issue a statement.** A test reaches this fixture now by declaring
+    a database two ways -- `@pytest.mark.needs_db` and a request for this fixture
+    -- and `tests/isolation.py` refuses an Engine to any test that does neither.
+
+    The marker does not apply the fixture and the fixture does not imply the
+    marker. Both are written, and `tests/test_isolation.py` asserts the two sets
+    are equal; injecting one from the other would make half that equality true by
+    construction.
 
     ``get_schema()`` reads ``QUERYPILOT_DATABASE_URL`` through ``get_engine()``,
     which is ``lru_cache``d. Setting the variable and clearing that cache lets

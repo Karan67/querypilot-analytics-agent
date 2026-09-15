@@ -260,6 +260,8 @@ def test_a_refused_question_reports_no_usage(anonymous_client, unusable_provider
 # --- AC3: what stays open, and only that -------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_health_answers_without_a_credential(anonymous_client):
     """AC3, and `013-auth.md` §2.7 measured that it must.
 
@@ -278,6 +280,8 @@ def test_health_answers_without_a_credential(anonymous_client):
     assert "database" in response.json(), "the handler did not run"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_health_with_a_trailing_slash_is_open_too(anonymous_client):
     """The hazard `013-auth-plan.md` §2.4 named before the code existed.
 
@@ -389,6 +393,8 @@ def test_the_walk_finds_more_than_the_hand_written_list(anonymous_client):
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_every_endpoint_the_app_declares_refuses_an_anonymous_caller(anonymous_client):
     """AC3, asked of the app rather than of a list somebody maintains.
 
@@ -500,6 +506,8 @@ def test_an_unconfigured_deployment_refuses_everything(
     assert response.status_code == 401
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_an_unconfigured_deployment_still_says_why(unconfigured_client):
     """The other half of D-2, and what makes fail-closed survivable.
 
@@ -519,6 +527,8 @@ def test_an_unconfigured_deployment_still_says_why(unconfigured_client):
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_configured_deployment_reports_itself_configured(anonymous_client):
     """The positive half, so the field above cannot be a constant `false`."""
     payload = anonymous_client.get("/health").json()
@@ -526,6 +536,8 @@ def test_a_configured_deployment_reports_itself_configured(anonymous_client):
     assert payload["auth"] == {"configured": True, "error": ""}
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_health_payload_never_carries_the_secret(unconfigured_client, monkeypatch):
     """AC5, at the one place a credential could plausibly reach a public body.
 

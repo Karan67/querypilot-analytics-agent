@@ -118,12 +118,14 @@ def test_ac19_prose_is_returned_unchanged_not_searched():
 # --- T5: orchestration (AC16, AC20-AC25) -----------------------------------
 
 
+@pytest.mark.needs_db
 def test_ac16_exactly_one_llm_call(configured_database):
     provider = FakeProvider("SELECT 1")
     answer_question("how many tracks?", provider=provider)
     assert len(provider.calls) == 1
 
 
+@pytest.mark.needs_db
 def test_ac16_no_retry_on_rejection(configured_database):
     """A rejected query is **not** regenerated. Retry policy is Iteration 4's,
     and the rate at which rejection happens is a baseline number worth having
@@ -134,6 +136,7 @@ def test_ac16_no_retry_on_rejection(configured_database):
     assert result.category == "rejected"
 
 
+@pytest.mark.needs_db
 def test_ac16_no_retry_on_provider_failure(configured_database):
     provider = FakeProvider(raises=LLMError("rate limited"))
     result = answer_question("q", provider=provider)
@@ -141,6 +144,7 @@ def test_ac16_no_retry_on_provider_failure(configured_database):
     assert result.category == CATEGORY_PROVIDER_ERROR
 
 
+@pytest.mark.needs_db
 def test_successful_question_executes(configured_database):
     provider = FakeProvider("SELECT COUNT(*) AS n FROM track")
     result = answer_question("how many tracks?", provider=provider)
@@ -149,6 +153,7 @@ def test_successful_question_executes(configured_database):
     assert result.category == "" and result.error == ""
 
 
+@pytest.mark.needs_db
 def test_ac22_result_carries_question_and_sql(configured_database):
     provider = FakeProvider("SELECT 1")
     result = answer_question("my question", provider=provider)
@@ -157,6 +162,7 @@ def test_ac22_result_carries_question_and_sql(configured_database):
     assert result.result is not None
 
 
+@pytest.mark.needs_db
 def test_ac21_rejection_keeps_the_validator_reason(configured_database):
     """The reason is exactly what Iteration 4 will feed back, so it must survive
     the trip unchanged."""
@@ -172,6 +178,7 @@ def test_ac21_rejection_keeps_the_validator_reason(configured_database):
     assert result.sql == sql, "the rejected SQL must stay inspectable"
 
 
+@pytest.mark.needs_db
 def test_ac18_refusal_becomes_no_sql_or_rejected(configured_database):
     """A refusal is the ordinary way a response contains no SQL — measured, not
     hypothetical. Either categorisation is defensible; what matters is that it
@@ -182,6 +189,7 @@ def test_ac18_refusal_becomes_no_sql_or_rejected(configured_database):
     assert result.error
 
 
+@pytest.mark.needs_db
 @pytest.mark.parametrize("response", ["", "   ", "<think>only thinking</think>"])
 def test_ac18_empty_response_is_no_sql_returned(configured_database, response):
     result = answer_question("q", provider=FakeProvider(response))
@@ -189,6 +197,7 @@ def test_ac18_empty_response_is_no_sql_returned(configured_database, response):
     assert result.result is None
 
 
+@pytest.mark.needs_db
 def test_ac24_provider_failure_is_its_own_category(configured_database):
     """Distinct from a SQL failure: the agent's response to "the model is
     unreachable" differs from its response to "that column does not exist"."""
@@ -197,6 +206,7 @@ def test_ac24_provider_failure_is_its_own_category(configured_database):
     assert result.result is None
 
 
+@pytest.mark.needs_db
 def test_ac23_never_raises_on_bad_input(configured_database):
     for question in (None, 42, "", "   ", []):
         result = answer_question(question, provider=FakeProvider("SELECT 1"))
@@ -204,6 +214,7 @@ def test_ac23_never_raises_on_bad_input(configured_database):
         assert result.ok is False
 
 
+@pytest.mark.needs_db
 def test_raw_response_captured_on_failure_only(configured_database):
     """Resolved Q-E: diagnostic on a failed eval case, noise otherwise."""
     ok_result = answer_question("q", provider=FakeProvider("SELECT 1"))

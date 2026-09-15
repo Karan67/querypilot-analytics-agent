@@ -35,7 +35,10 @@ from evals.dataset import (
     split_fingerprint,
 )
 
-pytestmark = pytest.mark.usefixtures("configured_database")
+pytestmark = [
+    pytest.mark.usefixtures('configured_database'),
+    pytest.mark.needs_db,
+]
 
 
 #: The frozen held-out set, named question by question (guard 1).

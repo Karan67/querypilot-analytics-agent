@@ -154,6 +154,8 @@ def test_an_explicit_rendering_always_wins():
     assert resolve_rendering("single-shot", SCHEMA_DDL) == SCHEMA_DDL
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_perfect_run_over_the_whole_corpus_scores_100_percent(full, full_gold):
     """Echoing each gold query back must score 100% on all forty.
 
@@ -178,6 +180,8 @@ def test_a_perfect_run_over_the_whole_corpus_scores_100_percent(full, full_gold)
 # --- AC13-AC17: the arithmetic ----------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_runner_asks_the_model_once_per_question(dataset, gold):
     """No retries in the runner. Iteration 4 adds them to the agent, and the
     improvement has to show up as a delta against this."""
@@ -186,6 +190,8 @@ def test_the_runner_asks_the_model_once_per_question(dataset, gold):
     assert provider.calls == len(dataset.questions)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_wrong_but_valid_answer_is_wrong_result(dataset, gold):
     """**The category that matters most.** Everything worked mechanically and
     the rows were still wrong — a reasoning failure, not a mechanical one, and
@@ -201,6 +207,8 @@ def test_a_wrong_but_valid_answer_is_wrong_result(dataset, gold):
     assert report.correct == len(dataset.questions) - 1
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_rejected_answer_is_recorded_as_rejected(dataset, gold):
     """Gate 2 refused it, so it never ran. A prompting problem, not a reasoning
     one."""
@@ -214,6 +222,8 @@ def test_a_rejected_answer_is_recorded_as_rejected(dataset, gold):
     assert case.generated_sql == "DROP TABLE track", "AC18 — the SQL is kept"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_bad_column_is_recorded_as_a_database_error(dataset, gold):
     """Passed Gate 2, refused by PostgreSQL. A schema-grounding problem — the
     model did not know what exists."""
@@ -226,6 +236,8 @@ def test_a_bad_column_is_recorded_as_a_database_error(dataset, gold):
     assert case.executed is False
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_refusal_is_not_scored_as_correct(dataset, gold):
     provider = ScriptedProvider(
         dataset, {"easy-004": "I'm sorry, but I can't help with that."}
@@ -239,6 +251,8 @@ def test_a_refusal_is_not_scored_as_correct(dataset, gold):
     assert case.category in {"rejected", "no_sql_returned"}
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac21_a_provider_failure_does_not_abort_the_run(dataset, gold):
     """One bad question must cost one question, not the run."""
     provider = ScriptedProvider(
@@ -254,6 +268,8 @@ def test_ac21_a_provider_failure_does_not_abort_the_run(dataset, gold):
     assert report.correct == len(dataset.questions) - 1
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_mixed_run_reports_every_metric_consistently(dataset, gold):
     """The whole pipeline at once: correct, wrong, rejected, database error."""
     provider = ScriptedProvider(
@@ -274,6 +290,8 @@ def test_a_mixed_run_reports_every_metric_consistently(dataset, gold):
     assert report.accuracy <= report.execution_rate <= report.gate2_pass_rate
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac17_per_tier_accuracy_splits_the_headline(dataset, gold):
     """"89%" must not be able to hide a tier at zero."""
     hard_ids = {q.id for q in dataset.by_tier("hard")}
@@ -286,6 +304,8 @@ def test_ac17_per_tier_accuracy_splits_the_headline(dataset, gold):
     assert 0.0 < report.accuracy < 1.0
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac18_failures_carry_their_sql_and_reason(dataset, gold):
     provider = ScriptedProvider(dataset, {"easy-001": "SELECT count(*) FROM artist"})
     report = run_pass(dataset, provider, gold)
@@ -313,6 +333,8 @@ ORDER BY n ASC
 """
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_ordered_flag_reaches_the_comparison(dataset, gold):
     """AC10 end to end: the flag has to travel from the YAML, through the
     runner, into `results_match`. `medium-001` is ordered, so the right three
@@ -330,6 +352,8 @@ def test_the_ordered_flag_reaches_the_comparison(dataset, gold):
     assert case.category == CATEGORY_WRONG_RESULT
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_same_rows_would_pass_an_unordered_question(dataset, gold):
     """The other half of the discriminator. `medium-002` is unordered, so this
     proves the previous test failed for the ordering and not for the rows —
@@ -349,6 +373,8 @@ def test_the_same_rows_would_pass_an_unordered_question(dataset, gold):
 # --- AC22: determinism ------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac22_the_same_script_produces_the_same_report(dataset, gold):
     """Everything except the model is deterministic. Structural equality on
     frozen dataclasses is what asserts it."""
@@ -358,6 +384,8 @@ def test_ac22_the_same_script_produces_the_same_report(dataset, gold):
     assert first == second
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac22_cases_are_reported_in_dataset_order(dataset, gold):
     report = run_pass(dataset, ScriptedProvider(dataset), gold)
     assert [c.id for c in report.cases] == [q.id for q in dataset.questions]
@@ -406,6 +434,8 @@ def test_ac20_the_runner_never_reaches_around_the_validator():
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac11_both_sides_go_through_execute_sql(gold):
     """The reference results the runner compares against are `ExecutionResult`s,
     so they carry the same row cap and truncation as the generated side. A
@@ -429,6 +459,7 @@ def test_execute_sql_still_offers_no_way_to_skip_validation():
 # --- AC12: the fingerprint gate ---------------------------------------------
 
 
+@pytest.mark.needs_db
 def test_ac12_a_drifted_fingerprint_aborts_before_any_model_call(dataset, configured_database):
     """Before, not after. A run that cannot produce a comparable number should
     not spend forty requests finding that out."""
@@ -443,6 +474,7 @@ def test_ac12_a_drifted_fingerprint_aborts_before_any_model_call(dataset, config
     assert provider.calls == 0, "the model was called despite an aborted run"
 
 
+@pytest.mark.needs_db
 def test_run_evaluation_returns_one_report_per_pass(dataset, configured_database):
     reports = run_evaluation(dataset, ScriptedProvider(dataset), repeat=2)
     assert len(reports) == 2
@@ -452,6 +484,8 @@ def test_run_evaluation_returns_one_report_per_pass(dataset, configured_database
 # --- broken gold ------------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_broken_gold_query_is_not_charged_to_the_model(dataset, gold):
     """A defect of ours must not enter Iteration 5's backlog as a model failure.
     The dataset tests make this unreachable in a healthy repo; it is handled
@@ -471,6 +505,8 @@ def test_a_broken_gold_query_is_not_charged_to_the_model(dataset, gold):
     assert CATEGORY_WRONG_RESULT not in report.breakdown
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_broken_gold_does_not_consume_a_model_call(dataset, gold):
     from api.db.execution import ExecutionResult
 
@@ -531,6 +567,8 @@ def test_the_real_provider_reports_its_model():
 # --- AC23, AC25: the record -------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac23_the_block_records_everything_the_number_depends_on(dataset, gold):
     report = run_pass(dataset, ScriptedProvider(dataset), gold)
     block = format_report([report], dataset)
@@ -544,6 +582,8 @@ def test_ac23_the_block_records_everything_the_number_depends_on(dataset, gold):
     assert "Authorship" in block, "Q-D — the number carries its own caveat"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_block_reports_per_tier_and_the_breakdown(dataset, gold):
     provider = ScriptedProvider(dataset, {"easy-001": "SELECT count(*) FROM artist"})
     block = format_report([run_pass(dataset, provider, gold)], dataset)
@@ -554,6 +594,8 @@ def test_the_block_reports_per_tier_and_the_breakdown(dataset, gold):
     assert "SELECT count(*) FROM artist" in block
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_block_reports_the_spread_only_when_repeated(dataset, gold):
     reports = [run_pass(dataset, ScriptedProvider(dataset), gold)]
     assert "spread" not in format_report(reports, dataset)
@@ -716,6 +758,8 @@ def test_the_one_call_control_is_expressible():
     assert (args.strategy, args.schema_mode, args.max_calls) == ("loop", "withheld", 1)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_record_states_the_strategy_and_schema(dataset, gold):
     """A number is only comparable to another taken the same way, so both go in
     the record alongside the model and the prompt."""
@@ -733,6 +777,8 @@ def test_the_record_states_the_strategy_and_schema(dataset, gold):
     assert "loop, schema withheld" in block
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_record_defaults_to_the_full_loop_budget(dataset, gold):
     from evals.run_evals import STRATEGY_LOOP
 
@@ -744,6 +790,8 @@ def test_the_record_defaults_to_the_full_loop_budget(dataset, gold):
     assert f"| Provider-call budget | {MAX_PROVIDER_CALLS} |" in block
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_loop_strategy_scores_through_the_same_code_path(dataset, gold):
     """`AgentResult` and `AnswerResult` share field names precisely so the
     runner needs one scoring path, not two that could disagree."""
@@ -754,6 +802,8 @@ def test_the_loop_strategy_scores_through_the_same_code_path(dataset, gold):
     assert report.correct == len(dataset.questions)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_loop_strategy_records_a_wrong_result(dataset, gold):
     from evals.run_evals import STRATEGY_LOOP
 

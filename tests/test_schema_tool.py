@@ -113,11 +113,15 @@ TRACK_COLUMNS_IN_ORDER = [
 ]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_returns_every_base_table(relations):
     missing = [name for name in BASE_TABLES if name not in relations]
     assert not missing, f"base tables absent from the schema map: {missing}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_base_tables_are_marked_as_tables(relations):
     wrong = {
         name: relations[name].kind
@@ -127,17 +131,23 @@ def test_base_tables_are_marked_as_tables(relations):
     assert not wrong, f"relations with the wrong kind: {wrong}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac3_columns_are_in_ordinal_order(relations):
     """Ordinal order, not alphabetical. Sorting here would be a silent
     regression that no other assertion would catch."""
     assert [c.name for c in relations["track"].columns] == TRACK_COLUMNS_IN_ORDER
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac4_nullability_is_accurate(track_columns):
     assert track_columns["name"].nullable is False
     assert track_columns["album_id"].nullable is True
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac5_types_preserve_length_and_precision(track_columns):
     """`information_schema.data_type` would flatten these to 'character
     varying' and 'numeric', losing exactly the detail the model needs."""
@@ -145,6 +155,8 @@ def test_ac5_types_preserve_length_and_precision(track_columns):
     assert track_columns["unit_price"].type == "NUMERIC(10, 2)"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac6_primary_key_is_flagged(track_columns):
     assert track_columns["track_id"].primary_key is True
     assert track_columns["name"].primary_key is False
@@ -153,6 +165,8 @@ def test_ac6_primary_key_is_flagged(track_columns):
 # --- T5: keys and relationships (AC7-AC10) --------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac7_composite_primary_key_flags_every_column(relations):
     """`playlist_track`'s key is (playlist_id, track_id). A tool that reports
     only the first column of a composite key is wrong, and would still pass
@@ -161,26 +175,36 @@ def test_ac7_composite_primary_key_flags_every_column(relations):
     assert flagged == ["playlist_id", "track_id"]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac8_returns_every_foreign_key(relations):
     actual = {name: _fk_tuples(relations[name]) for name in EXPECTED_FOREIGN_KEYS}
     assert actual == EXPECTED_FOREIGN_KEYS
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac8_foreign_key_count_is_eleven(relations):
     total = sum(len(relations[name].foreign_keys) for name in EXPECTED_FOREIGN_KEYS)
     assert total == 11
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac8_album_has_exactly_one_foreign_key(relations):
     assert _fk_tuples(relations["album"]) == {(("artist_id",), "artist", ("artist_id",))}
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac9_invoice_line_returns_both_foreign_keys(relations):
     """Returning only the first key of a multi-key table is a plausible bug
     that a single-key table cannot detect."""
     assert len(relations["invoice_line"].foreign_keys) == 2
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac10_self_referencing_foreign_key_is_present(relations):
     """employee.reports_to -> employee.employee_id. Must survive: neither
     filtered out as a self-join nor recursed into."""
@@ -189,6 +213,8 @@ def test_ac10_self_referencing_foreign_key_is_present(relations):
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac10_self_reference_does_not_duplicate_the_relation(schema):
     """Guards the recursion half of AC10 — a naive follow-the-reference walk
     would yield `employee` more than once."""
@@ -199,10 +225,14 @@ def test_ac10_self_reference_does_not_duplicate_the_relation(schema):
 # --- T6: views (AC1, AC2, AC11) --------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac1_returns_every_relation_alphabetically_with_kinds_interleaved(schema):
     assert [table.name for table in schema.tables] == ALL_RELATIONS_IN_ORDER
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac2_kinds_are_distinguishable(relations):
     """A consumer must tell a view from a table without a second call — the
     Iteration 2 prompt renderer needs it, and so does the validator."""
@@ -212,6 +242,8 @@ def test_ac2_kinds_are_distinguishable(relations):
     assert sum(1 for k in kinds.values() if k == KIND_VIEW) == 1
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac11_view_has_no_primary_key(relations):
     """Code that assumes every relation has a primary key breaks here. This is
     the case that would otherwise surface as an IndexError in production."""
@@ -219,10 +251,14 @@ def test_ac11_view_has_no_primary_key(relations):
     assert [c.name for c in view.columns if c.primary_key] == []
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac11_view_has_no_foreign_keys(relations):
     assert relations[VIEW_NAME].foreign_keys == ()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac11_view_still_reports_its_columns(relations):
     """Having no keys must not mean having no content."""
     assert [c.name for c in relations[VIEW_NAME].columns] == [
@@ -234,6 +270,8 @@ def test_ac11_view_still_reports_its_columns(relations):
     ]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac5_computed_view_columns_carry_no_synthesised_precision(relations):
     """`invoice.total` is NUMERIC(10, 2), but the view's computed `total` has no
     declared precision. The tool must report the catalog's bare answer rather
@@ -243,6 +281,8 @@ def test_ac5_computed_view_columns_carry_no_synthesised_precision(relations):
     assert view_columns["line_count"].type == "BIGINT"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac4_view_nullability_is_not_a_constraint(relations):
     """Postgres does not propagate NOT NULL through a view: `invoice_id` derives
     from a NOT NULL primary key yet reports nullable. Documented so the
@@ -252,6 +292,8 @@ def test_ac4_view_nullability_is_not_a_constraint(relations):
     assert view_columns["invoice_id"].nullable is True
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_materialized_views_are_excluded(schema):
     """Non-goal for Iteration 1. Chinook has none, so this guards the decision
     rather than the data: if a matview is ever added, it must not appear
@@ -262,12 +304,16 @@ def test_materialized_views_are_excluded(schema):
 # --- behaviour -------------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac13_is_deterministic():
     """Two calls must be equal. Eval reproducibility depends on stable ordering
     of relations, columns, and foreign keys."""
     assert get_schema() == get_schema()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac13_relations_are_sorted_by_name(schema):
     names = [table.name for table in schema.tables]
     assert names == sorted(names)
@@ -279,6 +325,8 @@ def test_ac14_takes_no_parameters():
     assert not pyinspect.signature(get_schema).parameters
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac15_excludes_system_catalogs(relations):
     offenders = [
         name
@@ -288,6 +336,8 @@ def test_ac15_excludes_system_catalogs(relations):
     assert not offenders, f"system catalog relations leaked in: {offenders}"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac16_runs_over_a_read_only_connection():
     """Behavioural, not configurational: ask the connection what it can do.
 
@@ -311,6 +361,8 @@ def test_ac16_runs_over_a_read_only_connection():
     )
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac16_reads_no_user_rows(schema):
     """The schema map carries structure only. If a value from the data ever
     appeared in it, this tool would have become `sample_rows()`."""
@@ -356,6 +408,7 @@ def missing_database_url(monkeypatch):
     engine_module.get_engine.cache_clear()
 
 
+@pytest.mark.constructs_engine
 def test_ac17_unreachable_database_raises_schema_error(unreachable_database):
     """Not a bare SQLAlchemyError: callers distinguish "catalog unavailable"
     from "a query failed", and from Iteration 4 the agent reads this message."""
@@ -371,6 +424,7 @@ def test_ac17_missing_dsn_raises_schema_error(missing_database_url):
         get_schema()
 
 
+@pytest.mark.constructs_engine
 def test_ac17_an_unreachable_database_is_reported_as_unreachable(unreachable_database):
     """**B-10 narrowed what this can promise, and the narrowing is the point.**
 
@@ -439,6 +493,8 @@ def test_ac17_empty_schema_is_never_returned_as_success(monkeypatch):
         introspection.get_schema()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_ac12_every_reported_relation_is_readable_by_the_role(schema):
     """Anything `get_schema()` reports must actually be selectable.
 

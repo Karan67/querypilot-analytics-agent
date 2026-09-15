@@ -8,6 +8,15 @@ somebody can delete* — in a workflow file, during an unrelated change, with a
 green build to reassure them. This script is the smoke alarm behind it: it does
 not care *why* nothing ran, only that something did.
 
+**Narrowed at Iteration 11 T4, and no longer sufficient alone.** Both sentences
+above were written when `configured_database` was autouse and a dead database
+skipped the entire suite. It is opt-in now, so the flag fails only the
+``needs_db`` lane and ~923 hermetic tests still run and pass. The floor below
+still fires today — 923 is under 1,000 — but the hermetic lane grows with every
+unit test anybody writes, and the day it passes the floor this guard is dead.
+``ci/require_database_lane.py`` is the belt for that: a total cannot detect an
+empty lane.
+
 The number it defends against is measured, not imagined (`011-ship.md` §2.1):
 
     $ TEST_DATABASE_URL=<unreachable> pytest -q

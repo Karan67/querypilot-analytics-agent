@@ -35,7 +35,8 @@ estimate, and each carries the caveat that makes it true.
 | a repeated question | **0 tokens** | the answer cache; caveat below |
 | free-tier ceiling | **200,000 tokens/day** ≈ 180 questions | `010-hardening.md` §2.5 |
 | schema introspection | **9 statements, 29.0ms** | `011-ship.md` B-10, Iteration 8 T5 |
-| the test suite | **1,348 tests, ~60s** | `docker compose up`, then `pytest` |
+| the test suite | **1,383 tests, ~80s** | `docker compose up`, then `pytest` |
+| without a database | **923 of them, ~35s** | `pytest -m "not needs_db"` — no Docker, no Postgres |
 
 Three of those need their caveat stated rather than footnoted:
 

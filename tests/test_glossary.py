@@ -33,7 +33,10 @@ from api.agent.prompts import (
 from api.db.execution import execute_sql
 from evals.dataset import load_dataset
 
-pytestmark = pytest.mark.usefixtures("configured_database")
+pytestmark = [
+    pytest.mark.usefixtures('configured_database'),
+    pytest.mark.needs_db,
+]
 
 
 #: term -> (naive reading, conventional reading, expected naive, expected conventional)

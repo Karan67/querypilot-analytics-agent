@@ -193,6 +193,7 @@ CATALOG_RELATIONS = [
 ]
 
 
+@pytest.mark.needs_db
 def test_ac1_every_relation_from_get_schema_is_samplable(configured_database):
     from api.db.introspection import get_schema
     from api.db.sampling import sample_rows
@@ -203,6 +204,7 @@ def test_ac1_every_relation_from_get_schema_is_samplable(configured_database):
         assert len(result.columns) == len(table.columns)
 
 
+@pytest.mark.needs_db
 def test_ac4_the_view_is_samplable(configured_database):
     from api.db.sampling import sample_rows
 
@@ -211,6 +213,7 @@ def test_ac4_the_view_is_samplable(configured_database):
     assert result.row_count == SAMPLE_ROW_COUNT
 
 
+@pytest.mark.needs_db
 @pytest.mark.parametrize("relation", CATALOG_RELATIONS)
 def test_ac3_system_catalogs_are_refused(configured_database, relation):
     """The allowlist is the only thing stopping these — see the companion test
@@ -235,6 +238,7 @@ def test_gate_two_does_not_object_to_catalog_relations(relation):
     assert ok is True
 
 
+@pytest.mark.needs_db
 def test_ac2_comparison_is_case_sensitive(configured_database):
     """PostgreSQL permits `track` and `Track` as distinct relations. Folding
     would let one be reached by asking for the other."""
@@ -245,6 +249,7 @@ def test_ac2_comparison_is_case_sensitive(configured_database):
     assert sample_rows("TRACK").category == CATEGORY_UNKNOWN_RELATION
 
 
+@pytest.mark.needs_db
 @pytest.mark.parametrize(
     "value",
     [None, 42, [], {"table": "track"}, "", "   ", 'track"; DROP TABLE track; --'],
@@ -257,6 +262,7 @@ def test_ac17_bad_input_is_refused_not_raised(configured_database, value):
     assert result.category == CATEGORY_UNKNOWN_RELATION
 
 
+@pytest.mark.needs_db
 def test_ac5_rejection_names_the_relation_and_lists_valid_ones(configured_database):
     from api.db.sampling import sample_rows
 
@@ -289,6 +295,7 @@ def test_ac10_ac11_module_opens_no_connection_of_its_own():
     assert "execute_sql(query)" in source
 
 
+@pytest.mark.needs_db
 def test_ac12_returns_an_execution_result(configured_database):
     from api.db.execution import ExecutionResult
     from api.db.sampling import sample_rows
@@ -296,6 +303,7 @@ def test_ac12_returns_an_execution_result(configured_database):
     assert isinstance(sample_rows("track"), ExecutionResult)
 
 
+@pytest.mark.needs_db
 def test_ac16_returns_at_most_the_sample_size(configured_database):
     from api.db.sampling import sample_rows
 
@@ -303,6 +311,7 @@ def test_ac16_returns_at_most_the_sample_size(configured_database):
     assert sample_rows("genre").row_count == SAMPLE_ROW_COUNT
 
 
+@pytest.mark.needs_db
 def test_ac13_repeated_calls_return_identical_rows(configured_database):
     """Iteration 5 puts these values into the prompt. If they varied between
     runs, two eval runs would differ for reasons unrelated to the change under
@@ -314,6 +323,7 @@ def test_ac13_repeated_calls_return_identical_rows(configured_database):
         assert len(results) == 1, f"{relation} sampled non-deterministically"
 
 
+@pytest.mark.needs_db
 def test_ac18_empty_relation_returns_columns_and_no_rows(configured_database):
     """Chinook has no empty relation, so this drives the pipeline directly with
     a query that cannot match — the same shape `sample_rows` produces."""
@@ -342,6 +352,7 @@ def test_get_schema_failure_becomes_a_connection_error(monkeypatch):
     assert result.category == CATEGORY_CONNECTION_ERROR
 
 
+@pytest.mark.needs_db
 def test_ac6_allowlist_runs_before_any_sql_is_built(monkeypatch, configured_database):
     """Ordering, asserted rather than assumed.
 

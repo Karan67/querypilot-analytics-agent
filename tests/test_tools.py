@@ -75,6 +75,8 @@ def test_every_registry_value_is_callable():
     assert not non_callable
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_wrapper_returns_what_the_implementation_returns():
     """The wrapper adds nothing and subtracts nothing. `Schema` is frozen and
     compares structurally, so this is a real equality check rather than an
@@ -82,6 +84,8 @@ def test_wrapper_returns_what_the_implementation_returns():
     assert tools.get_schema() == introspection.get_schema()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_wrapper_returns_a_schema_instance():
     assert isinstance(tools.get_schema(), introspection.Schema)
 
@@ -93,6 +97,7 @@ def test_ac14_wrapper_takes_no_parameters():
     assert not pyinspect.signature(tools.get_schema).parameters
 
 
+@pytest.mark.constructs_engine
 def test_wrapper_propagates_introspection_errors(monkeypatch):
     """Errors must not be flattened on the way through. From Iteration 4 the
     agent reacts to this exception, and a wrapper that swallowed it into a
@@ -111,6 +116,8 @@ def test_wrapper_propagates_introspection_errors(monkeypatch):
         engine_module.get_engine.cache_clear()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_execute_sql_wrapper_delegates_unchanged():
     from api.db import execution
 
@@ -122,6 +129,7 @@ def test_execute_sql_registry_entry_is_the_wrapper():
     assert tools.TOOLS["execute_sql"] is tools.execute_sql
 
 
+@pytest.mark.needs_db
 def test_execute_sql_validates_through_the_registry(configured_database):
     """The registry entry must carry the safety layer with it. A tool reachable
     by name that skipped Gate 2 would be the worst possible regression."""

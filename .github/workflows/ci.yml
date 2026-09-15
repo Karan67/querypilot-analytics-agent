@@ -116,6 +116,7 @@ jobs:
 
       # Where the floor guard reads its counts from.
       JUNIT_REPORT: junit.xml
+      DATABASE_LANE_CENSUS: database-lane.json
 
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +229,32 @@ jobs:
         # empty run behind it, and so the counts are reported either way.
         if: always()
         run: python ci/require_executed_tests.py "$JUNIT_REPORT" 1000
+
+      - name: Measure the database lane
+        # Iteration 11, B-15. The step above counts tests that executed, and
+        # since the partition that is no longer evidence about the database: an
+        # unreachable one now skips only the `needs_db` lane while ~923 hermetic
+        # tests run and clear the floor of 1,000.
+        #
+        # Collection only, over the WHOLE suite. `-m needs_db` would collect just
+        # the lane, making its count equal the total and saying nothing about
+        # what was left out. No --junitxml either: a --collect-only run writes a
+        # report with zero testcases (measured), which is why the guard below
+        # reads the census instead.
+        if: always()
+        run: |
+          python -m pytest \
+            --ignore=tests/test_llm_live.py \
+            --collect-only -q \
+            -p tools.measure_db_access \
+            --db-access-out="$DATABASE_LANE_CENSUS"
+
+      - name: Require that the database lane is not empty
+        # A total cannot detect an empty lane. If every `needs_db` marker were
+        # dropped, the suite above would stay green and the floor would still
+        # clear, with zero database coverage.
+        if: always()
+        run: python ci/require_database_lane.py "$DATABASE_LANE_CENSUS"
 
       - name: Check the page scripts parse
         # The suite asserts things *about* api/web/*.js as text - that it never

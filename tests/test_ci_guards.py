@@ -30,6 +30,7 @@ Three groups, in increasing order of how much they prove:
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import subprocess
@@ -844,3 +845,126 @@ def test_the_ci_workflow_overrides_the_local_junit_path():
         "the workflow no longer passes its own --junitxml, so the floor check "
         "would read pytest.ini's local report instead of CI's"
     )
+
+
+# --- The database lane (Iteration 11, B-15) ----------------------------------
+#
+# The partition is only a guarantee while the two halves of a declaration stay
+# in step. These shell out rather than inspecting the running session: the
+# invariant is about the whole suite, and a hook that saw only the selected
+# items would give `pytest -k something` a confidently wrong verdict.
+
+
+def collect_lane_census(tmp_path) -> dict:
+    """Collect the whole suite under the census plugin. Needs no database."""
+    census = tmp_path / "lane.json"
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header",
+         "-p", "no:cacheprovider", "-p", "tools.measure_db_access",
+         f"--db-access-out={census}", f"--junitxml={tmp_path / 'junit.xml'}"],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
+    )
+    assert completed.returncode == 0, completed.stdout[-2000:]
+    return json.loads(census.read_text(encoding="utf-8"))
+
+
+def test_every_database_test_declares_it_both_ways(tmp_path):
+    """`needs_db` and `configured_database` name the same set, both directions.
+
+    Neither half is free. The marker decides what `-m "not needs_db"` deselects,
+    so a missing marker puts a database test in the hermetic lane, where it fails
+    the moment the stack is down. The fixture decides whether a probe runs, so a
+    missing fixture means the test cannot skip and instead connects to whatever
+    DSN `_load_dotenv()` left in the environment.
+
+    The marker deliberately does not apply the fixture (`pytest.ini` says why),
+    which is what keeps both assertions below capable of failing.
+    """
+    data = collect_lane_census(tmp_path)
+    marked = {nodeid for nodeid, e in data["tests"].items() if e["marked"]}
+    closure = {nodeid for nodeid, e in data["tests"].items() if e["closure"]}
+
+    assert len(data["tests"]) > 1_000, "collection returned almost nothing"
+    assert marked, "nothing carries the marker, so both assertions are vacuous"
+
+    assert not marked - closure, (
+        "carries @pytest.mark.needs_db but nothing in the closure reaches "
+        f"`configured_database`: {sorted(marked - closure)[:5]}"
+    )
+    assert not closure - marked, (
+        "requests `configured_database` but carries no marker, so it is "
+        f"deselected from the database lane: {sorted(closure - marked)[:5]}"
+    )
+
+
+def test_the_database_lane_has_not_silently_emptied(tmp_path):
+    """The floor `ci/require_executed_tests.py` cannot see.
+
+    That guard counts tests that executed. After the partition a dead database no
+    longer empties the suite -- the hermetic lane still runs and clears the floor
+    -- so a merge that dropped every `needs_db` marker would leave the total
+    healthy and the database lane at zero. A total cannot detect an empty lane;
+    only the lane can.
+    """
+    from ci.require_database_lane import DEFAULT_DATABASE_LANE_FLOOR
+
+    data = collect_lane_census(tmp_path)
+    marked = sum(1 for e in data["tests"].values() if e["marked"])
+    assert marked >= DEFAULT_DATABASE_LANE_FLOOR, (
+        f"only {marked} tests are in the database lane, below the floor of "
+        f"{DEFAULT_DATABASE_LANE_FLOOR} -- markers have been lost"
+    )
+
+
+def test_the_gate_subject_stays_in_the_database_lane(tmp_path):
+    """Two subprocess guards above aim at one nodeid and assert a non-zero exit.
+
+    If that subject ever left the database lane those runs would still fail --
+    from deselection, or from the prohibition refusing an Engine -- and both
+    guards would pass while testing nothing about the require-database gate.
+    """
+    data = collect_lane_census(tmp_path)
+    matching = [n for n in data["tests"] if n.startswith(GATE_SUBJECT)]
+    assert matching, f"{GATE_SUBJECT} no longer exists"
+    assert all(data["tests"][n]["marked"] for n in matching)
+
+
+def test_the_lane_guard_refuses_a_starved_census(tmp_path):
+    """The lane guard on input the repository will never produce.
+
+    A census where the markers have been lost. The tree is consistent, so the
+    scan above can only ever report success — this is the half that proves the
+    comparison still bites.
+    """
+    from ci.require_database_lane import DEFAULT_DATABASE_LANE_FLOOR, main
+
+    starved = tmp_path / "starved.json"
+    starved.write_text(
+        json.dumps({"totals": {"marked": 3, "items": 1380}}), encoding="utf-8"
+    )
+    assert main([str(starved)]) == 1
+
+    healthy = tmp_path / "healthy.json"
+    healthy.write_text(
+        json.dumps(
+            {"totals": {"marked": DEFAULT_DATABASE_LANE_FLOOR + 1, "items": 1380}}
+        ),
+        encoding="utf-8",
+    )
+    assert main([str(healthy)]) == 0
+
+
+def test_the_lane_guard_will_not_read_a_partial_collection(tmp_path):
+    """A `-k` or `-m needs_db` run would make `marked` equal `items`.
+
+    Counting markers among only the marked lane says nothing about what was left
+    out, so a census that plainly did not collect the suite is refused rather
+    than believed.
+    """
+    from ci.require_database_lane import main
+
+    partial = tmp_path / "partial.json"
+    partial.write_text(
+        json.dumps({"totals": {"marked": 460, "items": 460}}), encoding="utf-8"
+    )
+    assert main([str(partial)]) == 1

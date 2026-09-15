@@ -163,6 +163,8 @@ def test_ac5_the_deployed_api_does_not_pace():
 # --- the contract -----------------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_scalar_answer_carries_its_shape_and_sql(authed_client, monkeypatch):
     _answer(monkeypatch, _ok(["count"], [[3503]], sql="SELECT count(*) FROM track"))
     response = authed_client.post("/ask", json={"question": "how many tracks?"})
@@ -176,6 +178,8 @@ def test_a_scalar_answer_carries_its_shape_and_sql(authed_client, monkeypatch):
     assert body["error"] == ""
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_decimals_reach_the_client_as_exact_strings(authed_client, monkeypatch):
     """D-1 end to end. The float round trip renders this `2328.6`."""
     import decimal
@@ -185,6 +189,8 @@ def test_decimals_reach_the_client_as_exact_strings(authed_client, monkeypatch):
     assert body["rows"] == [["2328.60"]]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_chartable_result_is_labelled_not_charted(authed_client, monkeypatch):
     """Q-B: the server says a chart is *offerable*; the human decides."""
     _answer(monkeypatch, _ok(["genre", "n"], [["Rock", 1297], ["Jazz", 130]]))
@@ -192,6 +198,8 @@ def test_a_chartable_result_is_labelled_not_charted(authed_client, monkeypatch):
     assert body["shape"] == "chartable"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_an_empty_result_is_not_a_failure(authed_client, monkeypatch):
     """Zero rows answers the question; `ok` stays true."""
     _answer(monkeypatch, _ok(["name"], []))
@@ -202,6 +210,8 @@ def test_an_empty_result_is_not_a_failure(authed_client, monkeypatch):
     assert body["shape"] == "empty"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_trace_shows_the_retry_and_the_error_that_caused_it(authed_client, monkeypatch):
     """Q-E, and charter §1's diagram: *read the error, revise*.
 
@@ -235,6 +245,8 @@ def _failed(category: str) -> AgentResult:
     return AgentResult(ok=False, question="q", category=category)
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_question_the_agent_could_not_answer_returns_200(authed_client, monkeypatch):
     """D-2. The request was understood and processed; the answer is negative."""
     _answer(monkeypatch, _failed(CATEGORY_NO_SQL))
@@ -246,12 +258,16 @@ def test_a_question_the_agent_could_not_answer_returns_200(authed_client, monkey
     assert body["error"]
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_an_unreachable_database_is_a_service_error(authed_client, monkeypatch):
     _answer(monkeypatch, _failed(CATEGORY_CONNECTION_ERROR))
     response = authed_client.post("/ask", json={"question": "?"})
     assert response.status_code == STATUS_UNAVAILABLE
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_rate_limit_is_a_service_error_and_says_so_plainly(authed_client, monkeypatch):
     """B-1: a billing condition must never arrive wearing a security message."""
     _answer(monkeypatch, _failed(CATEGORY_RATE_LIMITED))
@@ -263,6 +279,8 @@ def test_a_rate_limit_is_a_service_error_and_says_so_plainly(authed_client, monk
     assert "limit" in body["error"].lower()
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_failure_still_carries_the_sql_that_failed(authed_client, monkeypatch):
     """AC12: a demo audience learns more from a legible failure than a spinner
     that stops."""
@@ -277,6 +295,8 @@ def test_a_failure_still_carries_the_sql_that_failed(authed_client, monkeypatch)
     assert body["sql"] == "SELECT nope FROM track"
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_no_failure_message_leaks_internals_to_the_caller(authed_client, monkeypatch):
     _answer(monkeypatch, _failed(CATEGORY_DATABASE_ERROR))
     body = authed_client.post("/ask", json={"question": "?"}).json()
@@ -295,6 +315,8 @@ def test_a_missing_question_is_refused(authed_client):
     assert authed_client.post("/ask", json={}).status_code == 422
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_question_containing_sql_is_not_sanitised(authed_client, monkeypatch):
     """`007` AC20: the question reaches the agent verbatim.
 
@@ -433,6 +455,8 @@ def test_the_page_does_not_hide_the_sql_behind_a_toggle(authed_client):
 # --- T7: the chart toggle ----------------------------------------------------
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_chartable_result_says_which_column_the_bars_come_from(authed_client, monkeypatch):
     """The client must not re-derive the measure.
 
@@ -446,12 +470,16 @@ def test_a_chartable_result_says_which_column_the_bars_come_from(authed_client, 
     assert body["series"] == {"label": 0, "measure": 1}
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_the_series_survives_the_columns_being_the_other_way_round(authed_client, monkeypatch):
     _answer(monkeypatch, _ok(["n", "genre"], [[1297, "Rock"], [130, "Jazz"]]))
     body = authed_client.post("/ask", json={"question": "genres?"}).json()
     assert body["series"] == {"label": 1, "measure": 0}
 
 
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
 def test_a_non_chartable_result_offers_no_series(authed_client, monkeypatch):
     """A scalar has nothing to chart, and the payload says so rather than
     leaving the client to infer it from `shape`."""

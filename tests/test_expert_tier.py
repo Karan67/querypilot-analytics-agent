@@ -22,7 +22,10 @@ from api.db.execution import execute_sql
 from evals.dataset import TIER_EXPERT, DatasetError, load_dataset, parse_dataset
 from evals.scoring import results_match
 
-pytestmark = pytest.mark.usefixtures("configured_database")
+pytestmark = [
+    pytest.mark.usefixtures('configured_database'),
+    pytest.mark.needs_db,
+]
 
 
 @pytest.fixture(scope="module")
