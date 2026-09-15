@@ -10,7 +10,7 @@ network, no configuration — so the tests need no fixture.
 
 from __future__ import annotations
 
-from api.agent.glossary import render_glossary
+from api.agent.glossary import current_glossary_terms, render_glossary
 from api.db.introspection import KIND_VIEW, Schema, Table
 
 #: The instruction block. Kept as one constant so Iteration 5 can diff prompt
@@ -486,7 +486,16 @@ def build_loop_system(
     # in the question mean, and it reads directly above the schema those words
     # resolve against.
     if glossary:
-        schema_block = f"{render_glossary()}\n\n{schema_block}"
+        # Iteration 14 (specs/017-schema-generality.md, D-1). Reads whatever
+        # QUERYPILOT_GLOSSARY_FILE resolves to (current_glossary_terms()),
+        # not the Chinook-shaped GLOSSARY constant -- and skips the block
+        # entirely rather than rendering a header over zero definitions when
+        # that resolves to nothing. Deployments with no glossary file
+        # configured get exactly the Iteration 4 prompt shape, glossary=True
+        # or not.
+        terms = current_glossary_terms()
+        if terms:
+            schema_block = f"{render_glossary(terms)}\n\n{schema_block}"
 
     return LOOP_SYSTEM_TEMPLATE.format(
         actions=render_action_list(LOOP_ACTIONS), schema=schema_block

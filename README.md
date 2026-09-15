@@ -381,6 +381,39 @@ Because init scripts are skipped on a non-empty volume, **changing anything in
 docker compose down -v && docker compose up --build
 ```
 
+### Bring your own database
+
+Chinook is this repo's shipped demo, not a requirement. `api/db/introspection.py`
+reads whatever schema is live in the database `QUERYPILOT_DATABASE_URL` points
+at — three hand-written `pg_catalog` queries, no table or column name from
+Chinook anywhere in that path (`specs/017-schema-generality.md` confirmed this
+by reading the code, then proved it against a second, unrelated schema —
+Pagila, a DVD-rental sample this repo did not seed — with `evals/pagila_smoke.py`
+and `evals/PAGILA_SMOKE.md`).
+
+To point QueryPilot at a database you already have, rather than the one
+`db/init/` builds:
+
+1. Set `QUERYPILOT_DATABASE_URL` to a role that can `SELECT` there and nothing
+   else — QueryPilot's safety layer assumes a read-only connection; it does not
+   create one for you the way `db/init/03_readonly_role.sh` does for the demo.
+2. `QUERYPILOT_GLOSSARY_FILE` is unset by default, which means **no business
+   terms are injected** — correct for a database this repo has no domain
+   knowledge about. If your schema has the same kind of population ambiguity
+   Chinook's glossary exists to resolve (which rows count as "active", which
+   column is authoritative when two disagree — `evals/PAGILA_SMOKE.md` records
+   a real example, `customer.active` vs `customer.activebool` disagreeing on 43
+   Pagila rows), point this at your own JSON file of `{"term": "definition"}`
+   pairs, the same shape as `api/glossary/chinook.json`.
+3. Everything else — the agent loop, the validator, the prompt renderer — needs
+   no configuration change. It was built to read the catalog, not to assume
+   Chinook's.
+
+What this does **not** cover: a database engine other than Postgres. The
+`pg_catalog` queries, the sqlglot validator's dialect and the
+`SET TRANSACTION READ ONLY` semantics are Postgres-specific, and widening past
+that is a different, much larger project.
+
 ---
 
 ## Running the tests

@@ -26,69 +26,86 @@ database. A definition that does not reproduce its measured number is a wrong
 definition rather than a wording preference, and `tests/test_glossary.py`
 re-executes all sixteen queries so the pair cannot silently converge if the
 database is reseeded.
+
+### Iteration 14: the eight terms moved into `api/glossary/chinook.json`
+
+`specs/017-schema-generality.md` AC2. A deployment pointed at a database this
+repo did not seed has no business reason to carry Chinook's music-store
+vocabulary into every prompt — measured directly against Pagila (`evals/
+PAGILA_SMOKE.md`): the model answered "how many customers are active" using a
+different, equally real `activebool` column instead of the `active` one a
+Chinook-shaped assumption would reach for, a 43-row disagreement that only a
+supplied definition can settle. So the terms now live in a file,
+`QUERYPILOT_GLOSSARY_FILE` says where to find it, and Chinook's own eight are
+that file's shipped content rather than a code-level default no other
+deployment can opt out of (resolved Q-B: unset means empty, not Chinook's).
+
+The measured counts that justified each term, preserved here since the JSON
+file itself cannot hold a comment:
+
+- **active customer** — 59 customers exist; 46 are active. Retired question
+  `medium-008`'s sibling ambiguity: unfair without a stated convention, fair
+  with one.
+- **support representative** — 8 employees exist; 3 are support
+  representatives. Precisely the ambiguity that got `medium-008` retired in
+  Iteration 3 as unfair.
+- **sold track** — 3503 tracks in the catalogue; 1984 have ever been
+  purchased.
+- **charting artist** — 275 artists exist; 165 have a track that has sold.
+- **active genre** — 25 genres exist; 24 have any sales. The narrowest margin
+  of the eight, kept for exactly that reason: a one-row difference is still a
+  difference, and a question that hinges on it cannot be answered by guessing
+  the shape.
+- **curated playlist** — 18 playlists exist; 14 contain at least one track.
+- **average order value** — 5.6519 per invoice against 1.0396 per line. The
+  one term whose direction the spec had backwards: an invoice_line is not an
+  order, and AOV universally means revenue per order. Corrected at T3 after
+  the spec originally labelled the per-line figure "conventional" — both
+  measured numbers stand, only which one is the naive reading flipped.
+- **credited track** — 3503 tracks; 2526 name a composer.
 """
 
 from __future__ import annotations
 
-#: Term -> definition, in schema terms.
+import json
+import logging
+import os
+import pathlib
+
+from api.config import read_secret_file
+
+logger = logging.getLogger("querypilot")
+
+#: The environment variable naming a glossary file to load, term ->
+#: definition, as JSON. Unset (or a file that cannot be read or parsed) means
+#: no glossary at all (D-2, fail open) — this is domain guidance, not a
+#: safety gate, so a typo here costs accuracy, never availability.
+GLOSSARY_FILE_ENV = "QUERYPILOT_GLOSSARY_FILE"
+
+#: Chinook's own glossary, shipped as data rather than code so it is loaded
+#: through the exact same path any other deployment's file would be — see
+#: `docker-compose.yml`, which points the demo's `QUERYPILOT_GLOSSARY_FILE`
+#: here by default, and `tests/conftest.py`, which does the same for the
+#: suite.
+CHINOOK_GLOSSARY_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent / "glossary" / "chinook.json"
+)
+
+#: Term -> definition, in schema terms, loaded once at import.
 #:
 #: Definitions are written to be **acted on, not admired**: each names the
-#: relations and columns that decide membership, because a definition the model
-#: cannot translate into a WHERE clause has cost tokens and taught nothing.
+#: relations and columns that decide membership, because a definition the
+#: model cannot translate into a WHERE clause has cost tokens and taught
+#: nothing.
 #:
 #: Measured at T3 with `tiktoken`/`o200k_base`: 168 tokens for the eight
-#: definitions, 178 for the rendered block including its header -- against the
-#: plan's §6 estimate of 220. Charged on **every** call (resolved Q-D), which at
-#: 40 questions is 7,160 tokens per pass and very nearly cancels what schema
-#: compaction saves. That trade is deliberate and is documented in the spec: a
-#: glossary injected only for the questions that need it would tell the model
-#: which questions are the ambiguous ones, which no real deployment could do.
-GLOSSARY: dict[str, str] = {
-    # 59 customers exist; 46 are active. Retired question `medium-008`'s sibling
-    # ambiguity -- unfair without a stated convention, fair with one.
-    "active customer": (
-        "a customer with at least one invoice dated within 12 months of the "
-        "most recent invoice_date in the database"
-    ),
-    # 8 employees exist; 3 are support representatives. This is precisely the
-    # ambiguity that got `medium-008` retired in Iteration 3 as unfair.
-    "support representative": (
-        "an employee who appears as customer.support_rep_id for at least one "
-        "customer; other employees are not"
-    ),
-    # 3503 tracks in the catalogue; 1984 have ever been purchased.
-    "sold track": (
-        "a track appearing in at least one invoice_line; a track never "
-        "purchased is not one"
-    ),
-    # 275 artists exist; 165 have a track that has sold.
-    "charting artist": (
-        "an artist with at least one track that appears in an invoice_line, "
-        "joined through album"
-    ),
-    # 25 genres exist; 24 have any sales. The narrowest margin of the eight, and
-    # kept for exactly that reason -- a one-row difference is still a difference,
-    # and a question that hinges on it cannot be answered by guessing the shape.
-    "active genre": "a genre with at least one track that appears in an invoice_line",
-    # 18 playlists exist; 14 contain at least one track.
-    "curated playlist": (
-        "a playlist containing at least one track; an empty playlist is not one"
-    ),
-    # 5.6519 per invoice against 1.0396 per line.
-    #
-    # **The one term whose direction the spec had backwards.** §2.4 originally
-    # labelled the per-line figure "conventional"; an invoice_line is not an
-    # order, and AOV universally means revenue per order. Corrected at T3 --
-    # both measured numbers stand, only which one is the naive reading flipped.
-    # Defining it the spec's original way would have taught a definition most
-    # analysts would call wrong, and punished the correct instinct.
-    "average order value": (
-        "the mean of invoice.total across invoices; one order is one invoice, "
-        "never one invoice_line"
-    ),
-    # 3503 tracks; 2526 name a composer.
-    "credited track": "a track whose composer is not null",
-}
+#: definitions, 178 for the rendered block including its header. Kept
+#: identical by keeping `chinook.json`'s content identical to what used to be
+#: a Python literal here — this module-level load exists so
+#: `tests/test_glossary.py`'s `from api.agent.glossary import GLOSSARY` still
+#: has something to import; the *deployed* prompt path no longer reads this
+#: constant at all (see `current_glossary_terms` below).
+GLOSSARY: dict[str, str] = json.loads(CHINOOK_GLOSSARY_PATH.read_text(encoding="utf-8"))
 
 #: Introduces the block. **"not your own" is load-bearing**: the terms below are
 #: ordinary English whose everyday meaning is exactly the naive reading each one
@@ -105,11 +122,94 @@ def render_glossary(terms: dict[str, str] | None = None) -> str:
     between eval runs (`001` AC13) and a fingerprint stable.
 
     Args:
-        terms: override, for tests and for measuring a subset. Defaults to the
-            whole `GLOSSARY`, because resolved Q-D injects all of it on every
-            call regardless of what the question asks.
+        terms: override, for tests and for measuring a subset. Defaults to
+            Chinook's own `GLOSSARY` — this default is what
+            `tests/test_glossary.py` exercises directly; the deployed prompt
+            path goes through `current_glossary_terms()` instead (Iteration
+            14), which reads `QUERYPILOT_GLOSSARY_FILE` rather than this
+            constant.
     """
     entries = GLOSSARY if terms is None else terms
     lines = [GLOSSARY_HEADER]
     lines += [f"- {term}: {definition}" for term, definition in entries.items()]
     return "\n".join(lines)
+
+
+def _load_glossary_terms(path: str) -> dict[str, str]:
+    """Parse one glossary file into term -> definition, or `{}` having logged why.
+
+    **Fails open, deliberately unlike `api/http/auth.py::load_identities`.**
+    An unreadable or malformed credential map is a security hole and refuses
+    every request; an unreadable or malformed glossary file is a missing
+    piece of domain guidance, and refusing to answer *because a business-term
+    file had a typo* would make a config mistake outrank a safety mistake in
+    how hard it fails. So every branch below returns `{}` rather than raising,
+    each logged once with what was wrong and never with the file's contents.
+
+    `config.read_secret_file` already logs a missing, unreadable or
+    non-UTF-8 path without this function repeating that branch; only "valid
+    file, invalid JSON" and "JSON is not a flat string-to-string object" are
+    new here.
+    """
+    if not path.strip():
+        return {}
+
+    raw = read_secret_file(path)
+    if raw is None:
+        # Already logged by read_secret_file with the reason (missing,
+        # unreadable, not UTF-8).
+        return {}
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # `str(exc)` only, matching `auth.load_identities`'s discipline: never
+        # interpolate the raw document, which could echo file contents into
+        # the log.
+        logger.warning("%s (%s) is not valid JSON: %s", GLOSSARY_FILE_ENV, path, exc)
+        return {}
+
+    if not isinstance(parsed, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in parsed.items()
+    ):
+        logger.warning(
+            "%s (%s) must be a JSON object of term to definition, both strings.",
+            GLOSSARY_FILE_ENV,
+            path,
+        )
+        return {}
+
+    return parsed
+
+
+#: The last raw path and what it parsed to. Keyed on the **path string**, the
+#: same shape as `api/http/auth.py`'s `_memo`: a changed `QUERYPILOT_GLOSSARY_FILE`
+#: is a different key and re-reads, so a rotated glossary needs no restart.
+_memo: tuple[str, dict[str, str]] | None = None
+
+
+def current_glossary_terms() -> dict[str, str]:
+    """The glossary terms this deployment should inject, or `{}` — never raises.
+
+    Reads `QUERYPILOT_GLOSSARY_FILE` fresh (memoised on its value) rather than
+    returning `GLOSSARY`: unset means no glossary (resolved Q-B), not
+    Chinook's by default. The demo's own `docker-compose.yml` points this
+    variable at `chinook.json`, which is what makes the shipped demo's prompt
+    unchanged from before this existed.
+    """
+    global _memo
+
+    path = os.environ.get(GLOSSARY_FILE_ENV, "")
+    if _memo is not None and _memo[0] == path:
+        return _memo[1]
+
+    terms = _load_glossary_terms(path)
+    _memo = (path, terms)
+    return terms
+
+
+def reset_glossary_cache() -> None:
+    """Forget the memo — for a test that wants the next call to re-read."""
+    global _memo
+
+    _memo = None

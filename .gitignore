@@ -4,6 +4,9 @@
 # Chinook dump is fetched, never committed (~1.7 MB of generated SQL)
 db/seed/*.sql
 
+# Pagila dump is fetched, never committed (Iteration 14, ~13 MB of generated SQL)
+db/pagila-seed/*.sql
+
 # Python
 __pycache__/
 *.py[cod]

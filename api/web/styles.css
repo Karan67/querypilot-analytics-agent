@@ -42,7 +42,8 @@ h2 {
   font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin: 0 0 .5rem; font-weight: 600;
 }
-.tagline { color: var(--muted); margin: 0 0 1.75rem; }
+.tagline { color: var(--muted); margin: 0 0 .35rem; }
+.demo-note { color: var(--muted); font-size: .85rem; margin: 0 0 1.75rem; }
 
 /* --- asking ------------------------------------------------------------- */
 
