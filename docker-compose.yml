@@ -94,6 +94,27 @@ services:
       QUERYPILOT_LLM_PROVIDER: ${QUERYPILOT_LLM_PROVIDER:-groq}
       QUERYPILOT_LLM_MODEL: ${QUERYPILOT_LLM_MODEL:-openai/gpt-oss-120b}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Iteration 12 T8. The file form of each secret, and the reason it
+      # exists: an environment variable is part of the container's
+      # configuration, so `docker inspect querypilot-api` prints it in full, as
+      # does anything that can reach the Docker socket. It is also inherited by
+      # every child process and readable in /proc/1/environ.
+      #
+      # Set `GROQ_API_KEY_FILE=/run/secrets/groq_api_key` and mount the file,
+      # and the variable above can stay empty. The file form wins when both are
+      # set. A path that cannot be read fails closed -- it does *not* fall back
+      # to the variable -- and /health reports `source` and `readable` for each
+      # secret so the failure is visible without being disclosed.
+      #
+      # Both default to empty, so the laptop path is unchanged: nothing is
+      # mounted, nothing is read from a file, and `.env` keeps working.
+      GROQ_API_KEY_FILE: ${GROQ_API_KEY_FILE:-}
+      QUERYPILOT_USERS_FILE: ${QUERYPILOT_USERS_FILE:-}
+      # Iteration 12 T6. Whose `X-Forwarded-Proto` this deployment believes.
+      # Empty means the default: loopback plus the RFC-1918 range Docker
+      # allocates bridge networks from, which is what lets the `tls` profile
+      # work with no configuration.
+      QUERYPILOT_TRUSTED_PROXIES: ${QUERYPILOT_TRUSTED_PROXIES:-}
       # Who may spend that quota (Iteration 10, specs/013-auth.md). A JSON
       # object of name to secret, read at request time so rotating a credential
       # is an environment change and not a rebuild (AC9).
@@ -125,6 +146,11 @@ services:
       # repository working tree, which is how a gitignored file becomes a
       # committed one. T7's reader is the supported way to look inside.
       - querypilot_data:/data
+      # The secrets directory, read-only, mounted from wherever the operator
+      # keeps it. Defaults to `./deploy/secrets`, which is gitignored and
+      # empty -- so this mount is inert until something is put in it, and the
+      # `_FILE` variables above are what actually switch the behaviour on.
+      - ${QUERYPILOT_SECRETS_DIR:-./deploy/secrets}:/run/secrets:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -176,6 +202,49 @@ services:
       # uvicorn's import of the app plus the first catalog read.
       start_period: 30s
 
+  # TLS termination, behind `--profile tls` (Iteration 12 T7).
+  #
+  # Not part of the default stack. `docker compose up -d` is still the two
+  # containers it has always been, and the charter's "only setup instruction is
+  # docker compose up" property survives. `docker compose --profile tls up -d`
+  # adds this one.
+  #
+  # It exists so the deployment's TLS story is exercised rather than asserted.
+  # Caddy's internal CA issues a certificate with no ACME round trip and no
+  # public DNS name, so this works on an offline laptop -- which is the whole
+  # reason a profile is worth having over a paragraph in the README saying the
+  # platform will handle it.
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: querypilot-caddy
+    profiles:
+      - tls
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # Deliberately not 80 and 443: this is a development profile and those
+      # ports are privileged on Linux and frequently taken on a laptop.
+      #
+      # The consequence is visible in AC14's test. Caddy's HTTP-to-HTTPS
+      # redirect names port 443, because that is the port it is listening on
+      # inside its own network namespace, and it has no way to know the host
+      # published it somewhere else. The test therefore asserts the redirect's
+      # scheme, host and path -- which is what AC14 asks for -- and not its
+      # port.
+      - "${TLS_HTTP_PORT:-8080}:80"
+      - "${TLS_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named, so the internal CA's root key survives a restart. Without this
+      # every `up` mints a new CA and anything that trusted the last one stops
+      # trusting this one.
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   pgdata:
   querypilot_data:
+  caddy_data:
+  caddy_config:

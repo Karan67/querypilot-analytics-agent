@@ -238,7 +238,21 @@ def test_ac11_both_volumes_are_named_so_down_keeps_them():
     tree, which is how a gitignored file becomes a committed one.
     """
     declared = compose()["volumes"]
-    assert set(declared) == {"pgdata", "querypilot_data"}
+    assert {"pgdata", "querypilot_data"} <= set(declared)
+
+    # Iteration 12 T7 added `caddy_data` and `caddy_config`, which hold the
+    # internal CA's root key. They are named for the same reason and one
+    # further one: a CA regenerated on every `up` is a CA nothing can keep
+    # trusting. The assertion became a subset rather than an equality so that a
+    # later profile adding a store is not a failure -- what AC11 is about is
+    # that the two data stores are not bind mounts.
+    assert {"caddy_data", "caddy_config"} <= set(declared)
+
+    for name in ("pgdata", "querypilot_data", "caddy_data", "caddy_config"):
+        assert declared[name] is None, (
+            f"{name} is configured rather than a plain named volume; AC11 "
+            f"assumes docker manages its lifetime"
+        )
 
     api_volumes = service("api")["volumes"]
     assert any(entry.startswith("querypilot_data:") for entry in api_volumes)

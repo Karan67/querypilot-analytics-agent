@@ -80,20 +80,41 @@ SECURITY_HEADERS: Mapping[str, str] = {
     "Cross-Origin-Resource-Policy": "same-origin",
 }
 
-# `Strict-Transport-Security` is deliberately absent from the mapping above.
-# It belongs to T6, which emits it only for a request that actually arrived
-# over HTTPS -- pinning a laptop on plain HTTP to HTTPS for a year is a way to
-# make a developer machine unreachable with no obvious cause.
+#: Emitted only for a request that actually arrived over HTTPS (T6, AC9).
+#:
+#: **Never unconditionally.** HSTS tells a browser to refuse plain HTTP to this
+#: host for a year, and it is cached by host, not by port. Sent once from a
+#: laptop on `http://localhost:8000`, it makes every other project that ever
+#: serves `http://localhost` unreachable in that browser, with no error that
+#: names the cause and no way to clear it but a buried settings page. The
+#: failure is remote in time from the change that caused it, which is the worst
+#: kind this project has met.
+#:
+#: One year, subdomains included, and no `preload`. Preload is a one-way door
+#: -- removal takes months and a request to a browser vendor -- and it is not a
+#: decision a deployment that has not chosen a domain yet is entitled to make.
+#: That is Q-M, and it is deferred.
+STRICT_TRANSPORT_SECURITY = "max-age=31536000; includeSubDomains"
+
+HSTS_HEADER = "Strict-Transport-Security"
 
 
-def apply(headers, *, overwrite: bool = False) -> None:
+def apply(headers, *, overwrite: bool = False, secure: bool = False) -> None:
     """Add the security headers to a response's header mapping, in place.
+
+    `secure` says the request reached the client over HTTPS -- which behind a
+    terminating proxy is not the same as the scheme this process accepted, and
+    is resolved by `api/http/forwarded.py` from a header that is only believed
+    when a configured proxy sent it.
 
     `overwrite` is False by default so that a route which has deliberately set
     a stricter value for itself keeps it. Nothing does that today; the default
     exists so that adding such a route later does not silently lose its
     intent.
     """
-    for name, value in SECURITY_HEADERS.items():
+    emit = dict(SECURITY_HEADERS)
+    if secure:
+        emit[HSTS_HEADER] = STRICT_TRANSPORT_SECURITY
+    for name, value in emit.items():
         if overwrite or name not in headers:
             headers[name] = value

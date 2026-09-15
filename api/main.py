@@ -38,7 +38,8 @@ from api.llm.base import LLMError, TokenUsage
 from api.llm.factory import get_provider
 from api.store import history
 from api.store.history import AskRecord
-from api.http import auth, cache, headers, quota
+from api import config
+from api.http import auth, cache, forwarded, headers, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
 from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
@@ -176,7 +177,7 @@ async def require_credentials(request: Request, call_next):
         return await call_next(request)
 
     try:
-        identities = auth.current_identities(os.environ.get(auth.USERS_ENV))
+        identities = auth.current_identities(config.get_secret(auth.USERS_ENV))
     except auth.AuthConfigurationError as exc:
         # **Fail closed** (resolved D-2). A deployment with a typo in the
         # variable name refuses everything rather than serving the API to the
@@ -220,8 +221,52 @@ async def add_security_headers(request: Request, call_next):
     a thin wrapper delegating to the module that owns the decision.
     """
     response = await call_next(request)
-    headers.apply(response.headers)
+    headers.apply(response.headers, secure=request.url.scheme == "https")
     return response
+
+
+@app.middleware("http")
+async def trust_configured_proxies(request: Request, call_next):
+    """AC10. Rewrite the scheme and client from `X-Forwarded-*`, if we may.
+
+    **The outermost middleware, and it has to be.** Everything downstream that
+    asks how the request arrived -- the header middleware's HSTS decision
+    above, and any future per-client accounting -- reads `request.url.scheme`
+    and `request.client`. Those come from the ASGI scope, so the correction has
+    to happen before anything else looks, which means this runs first, which in
+    Starlette means it is registered last.
+
+    The decision itself is `api/http/forwarded.py`'s: believe the headers only
+    when the peer that sent them is inside a configured proxy network. A
+    misconfiguration here is silent in both directions -- too permissive and
+    any client can claim HTTPS, too strict and a correct deployment never
+    emits HSTS -- so `/health` reports the resolved networks.
+
+    A malformed `QUERYPILOT_TRUSTED_PROXIES` is not allowed to take the service
+    down. The request proceeds on the evidence of the connection itself, which
+    is the conservative answer: no HSTS, and the peer's own address.
+    """
+    try:
+        raw = os.environ.get(forwarded.TRUSTED_PROXIES_ENV)
+        client_host = request.client.host if request.client else None
+        scheme = forwarded.resolve_scheme(
+            request.url.scheme,
+            client_host,
+            request.headers.get(forwarded.FORWARDED_PROTO_HEADER),
+            raw,
+        )
+        resolved = forwarded.resolve_client(
+            client_host, request.headers.get(forwarded.FORWARDED_FOR_HEADER), raw
+        )
+    except forwarded.TrustConfigurationError as exc:
+        logger.warning("trusted proxy configuration is unusable: %s", exc)
+        return await call_next(request)
+
+    request.scope["scheme"] = scheme
+    if resolved and resolved != client_host:
+        port = request.scope["client"][1] if request.scope.get("client") else 0
+        request.scope["client"] = (resolved, port)
+    return await call_next(request)
 
 
 def _auth_status() -> dict:
@@ -239,7 +284,7 @@ def _auth_status() -> dict:
     route is refusing anyway.
     """
     try:
-        auth.current_identities(os.environ.get(auth.USERS_ENV))
+        auth.current_identities(config.get_secret(auth.USERS_ENV))
     except auth.AuthConfigurationError as exc:
         return {"configured": False, "error": str(exc)}
     return {"configured": True, "error": ""}
@@ -325,6 +370,26 @@ def health() -> JSONResponse:
             # escalated -- the container is genuinely up, and every protected
             # route is genuinely refusing.
             "auth": _auth_status(),
+            # Iteration 12 T6. Which networks this deployment believes when
+            # they claim a request arrived over HTTPS.
+            #
+            # It is here because getting it wrong is silent in both
+            # directions: too permissive and any client can claim HTTPS, so
+            # HSTS becomes a lie it tells on its own behalf; too strict and a
+            # correct deployment behind Caddy never emits HSTS at all. Neither
+            # failure produces an error anybody sees. Networks only -- never a
+            # header, never a client address.
+            "proxy": forwarded.status(),
+            # Iteration 12 T8. Where each secret was read from, never what it
+            # says. `source` is file, environment or unset; `readable` is the
+            # one thing an operator cannot see from outside, because a
+            # `_FILE` path that does not exist fails closed on purpose and
+            # would otherwise look identical to a credential that was simply
+            # never configured.
+            "secrets": {
+                auth.USERS_ENV: config.secret_status(auth.USERS_ENV),
+                "GROQ_API_KEY": config.secret_status("GROQ_API_KEY"),
+            },
         },
     )
 
