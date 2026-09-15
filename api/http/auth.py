@@ -332,3 +332,34 @@ def reset_identities_cache() -> None:
     global _memo
 
     _memo = None
+
+
+def identify_caller(header: str | None, raw_identities: str | None) -> str | None:
+    """The identity behind an `Authorization` header, or `None` — never raises.
+
+    Iteration 12 T10. `/health` is the one route `require_credentials` never
+    reaches (`OPEN_PATHS`), and it now needs to tell an authenticated caller
+    from an anonymous one anyway, to decide how much of its own body to show.
+    This is that check, factored out rather than re-assembled at the call
+    site: `require_credentials` already composes `current_identities`,
+    `parse_basic` and `verify` in exactly this order, and a second hand-written
+    copy is a second place their order could drift apart.
+
+    **Deliberately collapses every failure to the same `None`.** The gate
+    itself keeps `AuthConfigurationError` distinct from a bad credential, to
+    decide whether to log a configuration problem — but both paths still end
+    at the identical 401. A caller of `/health` never gets a 401 at all, so
+    there is nothing here for the distinction to change, and collapsing it is
+    what makes this function usable without the caller re-deriving the same
+    three-way branch.
+    """
+    try:
+        identities = current_identities(raw_identities)
+    except AuthConfigurationError:
+        return None
+
+    presented = parse_basic(header)
+    if presented is None:
+        return None
+
+    return verify(identities, *presented)

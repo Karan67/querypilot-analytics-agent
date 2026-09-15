@@ -269,15 +269,20 @@ def test_health_answers_without_a_credential(anonymous_client):
     credentials, so a gate here makes the container permanently unhealthy — the
     container reports itself broken *because* it is correctly secured.
 
-    Asserted as "not 401, and the handler ran" rather than as 200, because the
-    status depends on the database being up and this file's whole point is that
-    the gate is decided before any handler needs one. `/health`'s own 200/503
-    behaviour is tested in `tests/test_ask_recording.py`.
+    Asserted as "not 401" rather than as 200, because the status depends on the
+    database being up and this file's whole point is that the gate is decided
+    before any handler needs one. `/health`'s own 200/503 behaviour is tested
+    in `tests/test_ask_recording.py`.
+
+    **What the body contains is a separate question as of Iteration 12 T10**:
+    an anonymous caller now sees `{"status": "ok"}` and nothing that could
+    identify the deployment. That the handler ran at all is asserted by the
+    status code alone, which is also what `api/healthcheck.py` reads.
     """
     response = anonymous_client.get("/health")
 
     assert response.status_code != 401
-    assert "database" in response.json(), "the handler did not run"
+    assert response.json().get("status") == "ok", "the handler did not run"
 
 
 @pytest.mark.needs_db
@@ -508,32 +513,50 @@ def test_an_unconfigured_deployment_refuses_everything(
 
 @pytest.mark.needs_db
 @pytest.mark.usefixtures("configured_database")
-def test_an_unconfigured_deployment_still_says_why(unconfigured_client):
-    """The other half of D-2, and what makes fail-closed survivable.
+def test_an_unconfigured_deployment_no_longer_says_why_anonymously(unconfigured_client):
+    """D-2's other half, narrowed by Iteration 12 T10 -- deliberately, and
+    worth stating plainly rather than quietly losing the property.
 
     D-2 chose 401-everything over refusing to boot *so that an operator can ask
-    the container what is wrong*. If the answer were only "401" the choice would
-    have bought nothing: a container that will not start and one that refuses
-    everything for an unstated reason are equally undiagnosable from outside.
-
-    So `/health` stays open, reports `configured: false`, and the message names
-    the variable to set (AC9 — set and rotate without editing code).
+    the container what is wrong*, and until T10 `/health` answered that
+    question to anyone, unauthenticated, because there was no credential yet
+    to check. T10 requires one. The consequence is exact and worth naming: when
+    `QUERYPILOT_USERS` itself is the thing that is broken, there is no
+    credential that can ever authenticate, so this diagnostic is now
+    unreachable from outside in precisely the scenario D-2 wrote it for. What
+    an anonymous caller gets instead is `{"status": "ok"}` -- the container is
+    up, and that is all this route says to a stranger. The `auth.configured`
+    detail still exists; `test_an_unconfigured_deployment_refuses_everything`
+    and this project's logs are where it is still found.
     """
     payload = unconfigured_client.get("/health").json()
 
-    assert payload["auth"]["configured"] is False
-    assert USERS_ENV in payload["auth"]["error"], (
-        f"the message does not name the variable to set: {payload['auth']['error']!r}"
-    )
+    assert payload == {"status": "ok"}
 
 
 @pytest.mark.needs_db
 @pytest.mark.usefixtures("configured_database")
-def test_a_configured_deployment_reports_itself_configured(anonymous_client):
-    """The positive half, so the field above cannot be a constant `false`."""
-    payload = anonymous_client.get("/health").json()
+def test_a_configured_deployment_reports_itself_configured(authed_client):
+    """The positive half, so the field above cannot be a constant `false`.
+
+    Iteration 12 T10 moved this detail behind a credential -- `anonymous_client`
+    no longer sees it at all, which is the point of the test above.
+    """
+    payload = authed_client.get("/health").json()
 
     assert payload["auth"] == {"configured": True, "error": ""}
+
+
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
+def test_an_anonymous_caller_of_a_configured_deployment_still_sees_nothing(
+    anonymous_client,
+):
+    """The other side of the test above: being configured correctly does not
+    reopen the detail to a caller who presents no credential at all."""
+    payload = anonymous_client.get("/health").json()
+
+    assert payload == {"status": "ok"}
 
 
 @pytest.mark.needs_db

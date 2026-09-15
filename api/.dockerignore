@@ -1,0 +1,54 @@
+# Build context is ./api (see docker-compose.yml), so this file governs what
+# `COPY . ./api/` in the Dockerfile is even able to see.
+#
+# Iteration 12 T2 measured the cost of not having this file: the context was
+# 106 files and 809,363 bytes against 45 files and 346,978 bytes of source --
+# 61 files and 57% of the bytes were host bytecode being shipped into a
+# production image. `PYTHONDONTWRITEBYTECODE=1` in the Dockerfile stops the
+# container writing *new* bytecode; it has never had anything to say about
+# bytecode copied in from the developer's machine.
+
+# **Pattern syntax is `filepath.Match`, not gitignore.** Measured the hard way:
+# the first version of this file wrote `__pycache__/`, rebuilt, and 6 of the 7
+# bytecode directories still shipped. A bare or trailing-slash pattern matches
+# only at the context root; nested directories need the `**/` prefix. The
+# trailing slash does nothing at all here and is not a directory marker.
+
+# Host bytecode. The reason this file exists.
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+
+# Test and type-checker caches, none of which belong in a runtime image.
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+
+# Virtual environments. `.venv` is where this project's host interpreter lives,
+# and copying it in would shadow the wheels the image installed.
+**/.venv
+**/venv
+**/env
+
+# Development dependencies are deliberately never installed into the runtime
+# image (see api/requirements-dev.txt's own header). Before this file they were
+# still *copied* into it, which is inventory nobody asked for.
+requirements-dev.txt
+requirements-dev.lock
+
+# Version control and editor leavings.
+**/.git
+**/.gitignore
+**/.dockerignore
+**/*.swp
+**/*~
+**/.DS_Store
+
+# Local databases and logs. The history store lives on a volume at /data; a
+# stray copy baked into a layer would be both stale and a disclosure.
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.log

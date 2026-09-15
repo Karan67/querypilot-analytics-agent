@@ -384,8 +384,19 @@ def test_the_gate_pins_the_interpreter_the_image_ships():
         for line in DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()
         if line.startswith("FROM ")
     ]
-    assert len(from_lines) == 1, "expected a single FROM in api/Dockerfile"
-    image = from_lines[0].split()[1]
+    assert from_lines, "expected at least one FROM in api/Dockerfile"
+
+    # Iteration 12 T2 made the Dockerfile multi-stage, so there are now two
+    # FROM lines. Both must name the same interpreter: a builder that compiles
+    # wheels against a different Python than the runtime imports them with is
+    # the same skew this test exists to catch, one stage earlier.
+    images = {line.split()[1] for line in from_lines}
+    assert len(images) == 1, (
+        f"the build stages disagree about the interpreter: {sorted(images)}; "
+        f"wheels compiled against one Python and imported by another is the "
+        f"skew this test exists to catch"
+    )
+    image = images.pop()
     image_version = image.removeprefix("python:").removesuffix("-slim")
 
     assert pinned == image_version, (

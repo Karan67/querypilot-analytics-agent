@@ -23,7 +23,22 @@ services:
       QUERYPILOT_RO_PASSWORD: ${QUERYPILOT_RO_PASSWORD}
       QUERYPILOT_STATEMENT_TIMEOUT: ${QUERYPILOT_STATEMENT_TIMEOUT:-10s}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Iteration 12 T11, AC22. Loopback by default, not every interface.
+      #
+      # Measured before this line existed: `docker ps` reported
+      # `0.0.0.0:5432->5432/tcp`, which is Postgres reachable from any machine
+      # that can route to this host at all -- a laptop on a coffee-shop wifi,
+      # or any other tenant on the same cloud subnet. Nothing in this project
+      # needs that: the host test suite and the eval runner both connect to
+      # `localhost`, which `127.0.0.1` answers exactly as well as `0.0.0.0`
+      # does, on this same machine. There was no case that needed the wider
+      # bind; it was simply Compose's own default, never chosen on purpose.
+      #
+      # `POSTGRES_BIND_HOST` exists for the one legitimate exception -- a
+      # database client on another machine, deliberately -- and is left to be
+      # widened on purpose rather than narrowed by an operator who has to
+      # remember to do it.
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Init scripts run in filename order, ONCE, on an empty data volume:
@@ -42,6 +57,38 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+
+  # Iteration 12 T4. The one-shot that makes the volume belong to the account
+  # the API now runs as.
+  #
+  # T2 moved the API off root and onto uid 10001. The Dockerfile creates /data
+  # owned by that uid, which is enough for a *fresh* named volume -- Docker
+  # copies the image's ownership when it initialises an empty one. It is not
+  # enough for a volume that already exists: those keep the ownership they were
+  # created with, which for every deployment predating T2 is root. Measured
+  # rather than assumed -- the new image against the existing volume answers
+  # `touch: cannot touch '/data/probe': Permission denied`.
+  #
+  # **Why a separate service and not an entrypoint.** A chown at boot needs
+  # root, so an entrypoint doing it would have to start the container as root
+  # and drop privileges afterwards -- which reintroduces exactly the thing AC1
+  # removes, and needs `gosu` or `su-exec` in the runtime image to do it
+  # safely. Isolating the privileged step in a container that exits before the
+  # API starts keeps the API's own image non-root with no new dependency.
+  #
+  # It reuses the API's build rather than pulling busybox, so `docker compose
+  # up` still needs exactly the two images it needed before. It is idempotent:
+  # chown on an already-correct tree is a no-op, so this costs a second or two
+  # on every start and nothing else.
+  data-init:
+    build:
+      context: ./api
+    container_name: querypilot-data-init
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown -R 10001:10001 /data && chmod 700 /data"]
+    volumes:
+      - querypilot_data:/data
+    restart: "no"
 
   api:
     build:
@@ -62,6 +109,32 @@ services:
       QUERYPILOT_LLM_PROVIDER: ${QUERYPILOT_LLM_PROVIDER:-groq}
       QUERYPILOT_LLM_MODEL: ${QUERYPILOT_LLM_MODEL:-openai/gpt-oss-120b}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Iteration 12 T8. The file form of each secret, and the reason it
+      # exists: an environment variable is part of the container's
+      # configuration, so `docker inspect querypilot-api` prints it in full, as
+      # does anything that can reach the Docker socket. It is also inherited by
+      # every child process and readable in /proc/1/environ.
+      #
+      # Set `GROQ_API_KEY_FILE=/run/secrets/groq_api_key` and mount the file,
+      # and the variable above can stay empty. The file form wins when both are
+      # set. A path that cannot be read fails closed -- it does *not* fall back
+      # to the variable -- and /health reports `source` and `readable` for each
+      # secret so the failure is visible without being disclosed.
+      #
+      # Both default to empty, so the laptop path is unchanged: nothing is
+      # mounted, nothing is read from a file, and `.env` keeps working.
+      GROQ_API_KEY_FILE: ${GROQ_API_KEY_FILE:-}
+      QUERYPILOT_USERS_FILE: ${QUERYPILOT_USERS_FILE:-}
+      # Iteration 12 T6. Whose `X-Forwarded-Proto` this deployment believes.
+      # Empty means the default: loopback plus the RFC-1918 range Docker
+      # allocates bridge networks from, which is what lets the `tls` profile
+      # work with no configuration.
+      QUERYPILOT_TRUSTED_PROXIES: ${QUERYPILOT_TRUSTED_PROXIES:-}
+      # Iteration 12 T9. The daily spend ceiling. 50 questions per
+      # identity per day, 150 across the deployment -- both reset at
+      # UTC midnight, and both are configuration rather than code.
+      QUERYPILOT_DAILY_IDENTITY_LIMIT: ${QUERYPILOT_DAILY_IDENTITY_LIMIT:-50}
+      QUERYPILOT_DAILY_GLOBAL_LIMIT: ${QUERYPILOT_DAILY_GLOBAL_LIMIT:-150}
       # Who may spend that quota (Iteration 10, specs/013-auth.md). A JSON
       # object of name to secret, read at request time so rotating a credential
       # is an environment change and not a rebuild (AC9).
@@ -93,11 +166,18 @@ services:
       # repository working tree, which is how a gitignored file becomes a
       # committed one. T7's reader is the supported way to look inside.
       - querypilot_data:/data
+      # The secrets directory, read-only, mounted from wherever the operator
+      # keeps it. Defaults to `./deploy/secrets`, which is gitignored and
+      # empty -- so this mount is inert until something is put in it, and the
+      # `_FILE` variables above are what actually switch the behaviour on.
+      - ${QUERYPILOT_SECRETS_DIR:-./deploy/secrets}:/run/secrets:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+      data-init:
+        condition: service_completed_successfully
     healthcheck:
       # AC12. Until Iteration 8 T7 only `db` had a healthcheck, so
       # `docker compose ps` reported the API as `Up` whether or not it could
@@ -112,20 +192,28 @@ services:
       #
       # **Python rather than curl**, because `python:3.12.13-slim` has no curl
       # and adding one would put a package in the runtime image to run a
-      # liveness probe. `urlopen` raises `HTTPError` on a non-2xx, so /health's
-      # 503-on-unreachable-database becomes `unhealthy` with no extra logic --
-      # the status code is doing the work, not a grep of the body.
+      # liveness probe.
       #
-      # 127.0.0.1 and not `localhost`: the probe runs inside this container, and
-      # on a dual-stack resolver `localhost` can pick ::1 while uvicorn is bound
-      # to 0.0.0.0 (IPv4 only), which fails while everything is in fact fine.
+      # As of Iteration 12 T3 this delegates to `api/healthcheck.py` instead of
+      # inlining the probe, for one reason: the inlined version hardcoded
+      # `http://127.0.0.1:8000/health`, which was the *second* place the port
+      # 8000 was written down and had no way of disagreeing out loud with the
+      # first. AC6 makes the server bind `$PORT`, so a hardcoded probe would
+      # have started checking the wrong port the moment a platform moved it.
+      # The script resolves `$PORT` itself and the image declares the same
+      # script in its own HEALTHCHECK, so there is exactly one answer to "which
+      # port is this service on".
+      #
+      # The script keeps the two properties the inline version was chosen for:
+      # it reads `/health` rather than the TCP port, so a process that accepts
+      # connections and cannot answer is reported unhealthy; and it builds its
+      # URL from 127.0.0.1 rather than `localhost`, because on a dual-stack
+      # resolver `localhost` can pick ::1 while uvicorn is bound to 0.0.0.0.
       test:
         - CMD
         - python
-        - -c
-        - |
-          import urllib.request
-          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)
+        - -m
+        - api.healthcheck
       interval: 15s
       timeout: 10s
       retries: 3
@@ -134,6 +222,49 @@ services:
       # uvicorn's import of the app plus the first catalog read.
       start_period: 30s
 
+  # TLS termination, behind `--profile tls` (Iteration 12 T7).
+  #
+  # Not part of the default stack. `docker compose up -d` is still the two
+  # containers it has always been, and the charter's "only setup instruction is
+  # docker compose up" property survives. `docker compose --profile tls up -d`
+  # adds this one.
+  #
+  # It exists so the deployment's TLS story is exercised rather than asserted.
+  # Caddy's internal CA issues a certificate with no ACME round trip and no
+  # public DNS name, so this works on an offline laptop -- which is the whole
+  # reason a profile is worth having over a paragraph in the README saying the
+  # platform will handle it.
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: querypilot-caddy
+    profiles:
+      - tls
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # Deliberately not 80 and 443: this is a development profile and those
+      # ports are privileged on Linux and frequently taken on a laptop.
+      #
+      # The consequence is visible in AC14's test. Caddy's HTTP-to-HTTPS
+      # redirect names port 443, because that is the port it is listening on
+      # inside its own network namespace, and it has no way to know the host
+      # published it somewhere else. The test therefore asserts the redirect's
+      # scheme, host and path -- which is what AC14 asks for -- and not its
+      # port.
+      - "${TLS_HTTP_PORT:-8080}:80"
+      - "${TLS_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named, so the internal CA's root key survives a restart. Without this
+      # every `up` mints a new CA and anything that trusted the last one stops
+      # trusting this one.
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   pgdata:
   querypilot_data:
+  caddy_data:
+  caddy_config:

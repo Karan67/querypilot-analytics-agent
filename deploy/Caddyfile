@@ -1,0 +1,67 @@
+# TLS termination for the `tls` compose profile (Iteration 12 T7, AC13 AC14).
+#
+# The point of this file is that the deployment's TLS story is *exercised*
+# rather than asserted. Before it, "TLS is a deployment concern" meant TLS
+# existed nowhere and worked on no machine anybody had. A story that only works
+# on a platform nobody here has an account with is not a story.
+#
+# Caddy was chosen over nginx and Traefik for one reason (spec §7 Q-I): its
+# internal CA issues a certificate with no ACME round trip, no public DNS name
+# and no network access, so `docker compose --profile tls up` produces a real
+# HTTPS endpoint on a laptop that is offline. nginx would need a certificate
+# generated and mounted before it could start.
+
+{
+	# Issue from Caddy's own CA instead of Let's Encrypt.
+	#
+	# This is what makes the profile work offline, and it is also what makes it
+	# obviously *not* a production certificate: a browser will refuse it and say
+	# why. That is the right failure for a profile whose purpose is to prove the
+	# plumbing. A deployment that wants public certificates removes this line
+	# and gives the site a real domain name -- which is Q-M, deferred until the
+	# artifact exists.
+	local_certs
+
+	# No admin API. It is unauthenticated by default and would be a second,
+	# entirely unguarded surface sitting beside the one Iteration 10 spent a
+	# whole milestone putting a credential in front of.
+	admin off
+}
+
+localhost {
+	# Caddy redirects plain HTTP to HTTPS for this site automatically (AC14) --
+	# the redirect is 308 and preserves host and path, which is what the test
+	# asserts rather than the mechanism.
+
+	reverse_proxy api:8000 {
+		# Caddy sets X-Forwarded-Proto, X-Forwarded-For and X-Forwarded-Host on
+		# its own. They are named here because they are the entire contract
+		# with `api/http/forwarded.py`: the API believes them only because this
+		# container's address falls inside the compose network, which the
+		# default `QUERYPILOT_TRUSTED_PROXIES` covers.
+		#
+		# If that default is ever narrowed, the symptom is not an error. It is
+		# HSTS quietly disappearing, which is why /health reports the resolved
+		# networks.
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# The API owns its own security headers, including HSTS, and it is the only
+	# thing that knows whether the request reached the client over TLS. Caddy
+	# deliberately adds none: two components emitting the same header is how
+	# they come to disagree.
+	#
+	# It does have one of its own to take away. Caddy announces itself in
+	# `Server:` exactly as uvicorn did, so AC11 is only satisfied end to end if
+	# the proxy is told to stop -- suppressing it at the application and then
+	# putting a proxy in front that reintroduces it would be a header
+	# suppression that suppressed nothing.
+	header {
+		-Server
+	}
+
+	log {
+		output stderr
+		format console
+	}
+}

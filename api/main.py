@@ -38,10 +38,11 @@ from api.llm.base import LLMError, TokenUsage
 from api.llm.factory import get_provider
 from api.store import history
 from api.store.history import AskRecord
-from api.http import auth, cache, quota
+from api import config
+from api.http import auth, cache, forwarded, headers, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
 from api.http.serialization import encode_rows
-from api.http.shapes import SHAPE_CHARTABLE, chart_series, classify
+from api.http.shapes import SHAPE_CHARTABLE, SHAPE_EMPTY, chart_series, classify
 
 #: The liveness probe, as a query rather than as engine calls.
 #:
@@ -176,7 +177,7 @@ async def require_credentials(request: Request, call_next):
         return await call_next(request)
 
     try:
-        identities = auth.current_identities(os.environ.get(auth.USERS_ENV))
+        identities = auth.current_identities(config.get_secret(auth.USERS_ENV))
     except auth.AuthConfigurationError as exc:
         # **Fail closed** (resolved D-2). A deployment with a typo in the
         # variable name refuses everything rather than serving the API to the
@@ -198,9 +199,80 @@ async def require_credentials(request: Request, call_next):
     if presented is None:
         return _unauthorized()
 
-    if auth.verify(identities, *presented) is None:
+    identity = auth.verify(identities, *presented)
+    if identity is None:
         return _unauthorized()
 
+    # Iteration 12 T9. The one place the name that authenticated is available
+    # at all -- `verify()` returns it and nothing downstream re-derives it.
+    # `/ask` reads this to weigh the request against its own daily ceiling; no
+    # other route looks at it, so leaving it unset costs nothing anywhere else.
+    request.state.identity = identity
+
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """AC7. Every response carries the security headers, including the 401.
+
+    **Registered after the gate on purpose.** Starlette builds its middleware
+    stack so that the last one registered is the outermost, so declaring this
+    below `require_credentials` is what puts it *around* the gate. Register it
+    above and it would run only for requests the gate already let through --
+    and the `401` is precisely the response an unauthenticated browser renders,
+    so it is the one that most needs a content policy.
+
+    The policy itself lives in `api/http/headers.py`. This function is the
+    registration and nothing else, on the same terms as `api/agent/tools.py`:
+    a thin wrapper delegating to the module that owns the decision.
+    """
+    response = await call_next(request)
+    headers.apply(response.headers, secure=request.url.scheme == "https")
+    return response
+
+
+@app.middleware("http")
+async def trust_configured_proxies(request: Request, call_next):
+    """AC10. Rewrite the scheme and client from `X-Forwarded-*`, if we may.
+
+    **The outermost middleware, and it has to be.** Everything downstream that
+    asks how the request arrived -- the header middleware's HSTS decision
+    above, and any future per-client accounting -- reads `request.url.scheme`
+    and `request.client`. Those come from the ASGI scope, so the correction has
+    to happen before anything else looks, which means this runs first, which in
+    Starlette means it is registered last.
+
+    The decision itself is `api/http/forwarded.py`'s: believe the headers only
+    when the peer that sent them is inside a configured proxy network. A
+    misconfiguration here is silent in both directions -- too permissive and
+    any client can claim HTTPS, too strict and a correct deployment never
+    emits HSTS -- so `/health` reports the resolved networks.
+
+    A malformed `QUERYPILOT_TRUSTED_PROXIES` is not allowed to take the service
+    down. The request proceeds on the evidence of the connection itself, which
+    is the conservative answer: no HSTS, and the peer's own address.
+    """
+    try:
+        raw = os.environ.get(forwarded.TRUSTED_PROXIES_ENV)
+        client_host = request.client.host if request.client else None
+        scheme = forwarded.resolve_scheme(
+            request.url.scheme,
+            client_host,
+            request.headers.get(forwarded.FORWARDED_PROTO_HEADER),
+            raw,
+        )
+        resolved = forwarded.resolve_client(
+            client_host, request.headers.get(forwarded.FORWARDED_FOR_HEADER), raw
+        )
+    except forwarded.TrustConfigurationError as exc:
+        logger.warning("trusted proxy configuration is unusable: %s", exc)
+        return await call_next(request)
+
+    request.scope["scheme"] = scheme
+    if resolved and resolved != client_host:
+        port = request.scope["client"][1] if request.scope.get("client") else 0
+        request.scope["client"] = (resolved, port)
     return await call_next(request)
 
 
@@ -219,21 +291,21 @@ def _auth_status() -> dict:
     route is refusing anyway.
     """
     try:
-        auth.current_identities(os.environ.get(auth.USERS_ENV))
+        auth.current_identities(config.get_secret(auth.USERS_ENV))
     except auth.AuthConfigurationError as exc:
         return {"configured": False, "error": str(exc)}
     return {"configured": True, "error": ""}
 
 
 @app.get("/health", tags=["ops"])
-def health() -> JSONResponse:
+def health(request: Request) -> JSONResponse:
     """Liveness plus target-database readiness.
 
     Iteration 0 is done when this endpoint reports ``ok``, because that proves
     the whole chain: the API started, the read-only role exists, it can
     authenticate, and the sample dataset was loaded.
 
-    Returns 200 with::
+    An **authenticated** caller sees the full body::
 
         {
           "status": "ok",
@@ -246,28 +318,49 @@ def health() -> JSONResponse:
           "auth": {"configured": true, "error": ""}
         }
 
-    and 503 with ``{"status": "degraded", "database": {"connected": false,
-    "error": "..."}}`` if the database is unreachable. A health check that
-    reports healthy while its dependency is down is worse than no health check,
-    so the database round-trip is not optional here.
+    (plus `history`, `proxy`, `secrets` and `spend` — see below), or 503 with
+    ``{"status": "degraded", "database": {"connected": false, "error": "..."}}``
+    if the database is unreachable. A health check that reports healthy while
+    its dependency is down is worse than no health check, so the database
+    round-trip is not optional here.
 
-    **Iteration 10 made this the only endpoint an anonymous caller can reach**
-    (`013-auth.md` §2.7: the compose healthcheck probes it with a bare
+    **An anonymous caller sees only `{"status": "ok"}`, or `{"status":
+    "degraded"}` on a 503** (Iteration 12 T10, resolved spec §7 Q-H). Every
+    field this endpoint could return was individually harmless on a laptop —
+    ``querypilot_ro`` and ``chinook`` are both already in the README — but
+    together, to a stranger, they are a free answer to "is this worth
+    attacking, and what is it running." The status **code** is what a
+    healthcheck actually needs, and `api/healthcheck.py` was written at T3 to
+    read only that; collapsing the body changes nothing it depends on. This
+    reverses `013-auth.md`'s D-4, which kept `/health` unchanged specifically
+    to let an *anonymous* operator see why authentication was misconfigured —
+    that operator now has to authenticate to see it, on the same terms as
+    every other diagnostic below.
+
+    **Iteration 10 made this the only endpoint an anonymous caller can reach
+    at all** (`013-auth.md` §2.7: the compose healthcheck probes it with a bare
     ``urlopen`` and no credentials, so a gate here makes the container
-    permanently unhealthy). Every field it returns was already here and none is
-    a secret — ``querypilot_ro`` and ``chinook`` are both in the README.
-    ``auth`` is new and reports whether the credential map parsed, which is the
-    only way an operator can see *why* everything else is returning 401.
+    permanently unhealthy). T10 narrows what reaching it gets you; it does not
+    reopen the gate.
 
     Goes through `execute_sql()` like everything else (see `_HEALTH_QUERY`).
     That also simplifies the failure handling: the exception cases this used to
     catch by hand — a missing DSN, an auth failure, a database still starting —
     are what `ExecutionResult.ok` already reports.
     """
+    authenticated = (
+        auth.identify_caller(
+            request.headers.get("Authorization"), config.get_secret(auth.USERS_ENV)
+        )
+        is not None
+    )
+
     result = execute_sql(_HEALTH_QUERY)
 
     if not result.ok:
         logger.warning("health check failed: %s (%s)", result.error, result.category)
+        if not authenticated:
+            return JSONResponse(status_code=503, content={"status": "degraded"})
         return JSONResponse(
             status_code=503,
             content={
@@ -276,6 +369,9 @@ def health() -> JSONResponse:
                 "auth": _auth_status(),
             },
         )
+
+    if not authenticated:
+        return JSONResponse(status_code=200, content={"status": "ok"})
 
     db_user, db_name, public_tables = result.rows[0]
 
@@ -305,6 +401,30 @@ def health() -> JSONResponse:
             # escalated -- the container is genuinely up, and every protected
             # route is genuinely refusing.
             "auth": _auth_status(),
+            # Iteration 12 T6. Which networks this deployment believes when
+            # they claim a request arrived over HTTPS.
+            #
+            # It is here because getting it wrong is silent in both
+            # directions: too permissive and any client can claim HTTPS, so
+            # HSTS becomes a lie it tells on its own behalf; too strict and a
+            # correct deployment behind Caddy never emits HSTS at all. Neither
+            # failure produces an error anybody sees. Networks only -- never a
+            # header, never a client address.
+            "proxy": forwarded.status(),
+            # Iteration 12 T8. Where each secret was read from, never what it
+            # says. `source` is file, environment or unset; `readable` is the
+            # one thing an operator cannot see from outside, because a
+            # `_FILE` path that does not exist fails closed on purpose and
+            # would otherwise look identical to a credential that was simply
+            # never configured.
+            "secrets": {
+                auth.USERS_ENV: config.secret_status(auth.USERS_ENV),
+                "GROQ_API_KEY": config.secret_status("GROQ_API_KEY"),
+            },
+            # Iteration 12 T9. Today's global count and both configured
+            # limits, read without writing -- a health check that itself
+            # counted as a question would inflate the number it reports.
+            "spend": history.spend_status(),
         },
     )
 
@@ -323,7 +443,7 @@ class AskRequest(BaseModel):
 
 
 @app.post("/ask", tags=["agent"])
-def ask(request: AskRequest) -> JSONResponse:
+def ask(request: AskRequest, http_request: Request) -> JSONResponse:
     """Answer one question, and show the working.
 
     Synchronous, per resolved Q-D: measured at 1.20-2.51s over a single provider
@@ -340,7 +460,40 @@ def ask(request: AskRequest) -> JSONResponse:
     The response always carries `sql` when one was produced, including on
     failure: AC12 says a demo audience learns more from a legible failure than
     from a spinner that stops.
+
+    **The daily spend ceiling is weighed first** (Iteration 12 T9, resolved
+    D-3), before the cache and before any provider is built. Authentication
+    narrows who can spend the project's quota; it does not bound how much one
+    identity spends, or what a browser tab left reloading costs before anyone
+    notices, and that is the gap this closes. A refusal here never reaches
+    `_answer_or_replay` and is never written to history: like the 401 above it,
+    the caller has not asked a question that was processed, so there is
+    nothing for `record_ask` to have a row about.
     """
+    identity = getattr(http_request.state, "identity", "") or ""
+    decision = history.reserve_question(identity)
+    if not decision.allowed:
+        failure = failure_for(decision.category)
+        return JSONResponse(
+            status_code=failure.status,
+            content={
+                "ok": False,
+                "sql": "",
+                "columns": [],
+                "rows": [],
+                # `classify([], [])` -- an unreached agent has no result set at
+                # all, and this is the shape the classifier itself gives an
+                # empty one, so the ceiling's refusal reuses the same value
+                # rather than inventing a fourth meaning of "nothing here".
+                "shape": SHAPE_EMPTY,
+                "series": None,
+                "trace": [],
+                "category": decision.category,
+                "error": failure.message,
+                "retryable": failure.retryable,
+            },
+        )
+
     started = time.perf_counter()
     answered = _answer_or_replay(request.question)
     total_ms = int((time.perf_counter() - started) * 1000)

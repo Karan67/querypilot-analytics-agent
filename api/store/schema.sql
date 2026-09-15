@@ -89,3 +89,22 @@ CREATE TABLE IF NOT EXISTS step (
     sql      TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (ask_id, attempt)
 );
+
+-- The daily spend ceiling (Iteration 12 T9, resolved D-2). Authentication
+-- narrows who can ask; it does not stop one authenticated identity, or a
+-- browser tab left reloading, from spending the whole day's quota before
+-- lunch. This table is what a `POST /ask` is weighed against before the agent
+-- is ever invoked.
+--
+-- One row per identity per UTC day, incremented in place -- `usage_date` is
+-- part of the key rather than a filter on a timestamp column, so yesterday's
+-- rows are simply never touched again rather than needing a reset job. The
+-- global ceiling is not a second counter: it is `SUM(question_count)` over
+-- every identity for the date, which is the only way it cannot drift from the
+-- per-identity figures it is made of.
+CREATE TABLE IF NOT EXISTS daily_usage (
+    usage_date     TEXT    NOT NULL,
+    identity       TEXT    NOT NULL,
+    question_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (usage_date, identity)
+);

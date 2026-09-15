@@ -40,6 +40,11 @@ from api.db.execution import (
     CATEGORY_TIMEOUT,
 )
 from api.db.sampling import CATEGORY_UNKNOWN_RELATION
+from api.store.history import (
+    CATEGORY_GLOBAL_DAILY_LIMIT,
+    CATEGORY_IDENTITY_DAILY_LIMIT,
+    CATEGORY_LEDGER_UNAVAILABLE,
+)
 
 #: `200`. The service worked; the answer is negative.
 STATUS_ANSWERED = 200
@@ -48,6 +53,14 @@ STATUS_ANSWERED = 200
 #: telling a user "no results" when the provider was unreachable would be a
 #: lie about the data.
 STATUS_UNAVAILABLE = 503
+
+#: `429`. Iteration 12 T9. Unlike `CATEGORY_RATE_LIMITED` above -- which is
+#: this *service's* upstream allowance running out, deliberately kept off 429
+#: so as not to blame the caller for it -- a daily ceiling breach genuinely is
+#: the caller being throttled: this deployment's own accounting, of this
+#: identity's own questions. 429 is the correct word for it in a way it was not
+#: for the provider's limit.
+STATUS_CALLER_THROTTLED = 429
 
 
 @dataclass(frozen=True)
@@ -132,6 +145,36 @@ RESPONSES: dict[str, Failure] = {
         STATUS_UNAVAILABLE,
         "The daily or per-minute usage limit for the language model has been "
         "reached. This clears on its own -- try again shortly.",
+        retryable=True,
+    ),
+    # --- Iteration 12 T9: the daily spend ceiling ---------------------------
+    #
+    # Neither of these is an answer failure -- the agent is never invoked, so
+    # there is no `sql`, no trace, and nothing `record_ask` writes a row about.
+    # They are refused at the same point in the request `auth.py`'s gate is,
+    # for the reason `_unauthorized()` gives for keeping a 401 out of this
+    # table: the caller has not asked a question yet. They are mapped here
+    # anyway (AC20) so `test_every_category_in_the_project_is_accounted_for`
+    # covers them, and so the message a caller sees still comes from one place.
+    CATEGORY_IDENTITY_DAILY_LIMIT: Failure(
+        STATUS_CALLER_THROTTLED,
+        "This identity has reached its daily question limit. It resets at "
+        "midnight UTC.",
+        retryable=True,
+    ),
+    CATEGORY_GLOBAL_DAILY_LIMIT: Failure(
+        STATUS_CALLER_THROTTLED,
+        "This deployment has reached its daily question limit across every "
+        "identity. It resets at midnight UTC.",
+        retryable=True,
+    ),
+    #: `503`, on the same reasoning as `CATEGORY_CONNECTION_ERROR`: the ledger
+    #: could not be read, so there is no evidence the ceiling was not exceeded,
+    #: and reporting the question as answerable would be a claim this service
+    #: cannot back up.
+    CATEGORY_LEDGER_UNAVAILABLE: Failure(
+        STATUS_UNAVAILABLE,
+        "The daily spend ceiling could not be checked right now.",
         retryable=True,
     ),
 }

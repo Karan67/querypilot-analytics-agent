@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 
+from api import config
+
 from api.llm.base import LLMError, LLMProvider
 
 #: Environment variables. Names, not values, live in code.
@@ -39,7 +41,7 @@ def get_provider(name: str | None = None, model: str | None = None) -> LLMProvid
         from api.llm.groq_provider import DEFAULT_MODEL, GroqProvider
 
         return GroqProvider(
-            api_key=os.environ.get("GROQ_API_KEY", "").strip(),
+            api_key=(config.get_secret("GROQ_API_KEY") or "").strip(),
             model=(model or os.environ.get(MODEL_ENV) or DEFAULT_MODEL).strip(),
         )
 
