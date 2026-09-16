@@ -245,7 +245,7 @@ def test_ac4_a_non_retriable_failure_ends_the_loop_immediately():
 
     from api.db.execution import ExecutionResult
 
-    def fake_execute(sql):
+    def fake_execute(sql, target="chinook"):
         return ExecutionResult(
             ok=False, category="gate_violation", error="validator defect"
         )

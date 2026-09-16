@@ -90,7 +90,7 @@ services:
       QUERYPILOT_RO_PASSWORD: ${QUERYPILOT_RO_PASSWORD}
       QUERYPILOT_STATEMENT_TIMEOUT: ${QUERYPILOT_STATEMENT_TIMEOUT:-10s}
     ports:
-      - "${PAGILA_BIND_HOST:-127.0.0.1}:${PAGILA_PORT:-5433}:5432"
+      - "${PAGILA_BIND_HOST:-127.0.0.1}:${PAGILA_PORT:-5544}:5432"
     volumes:
       # Postgres 18's image expects the mount at the parent directory, not
       # .../data as 16's does -- it now stores data under a major-version
@@ -154,6 +154,17 @@ services:
     environment:
       # The only database credential the API ever holds is the read-only role.
       QUERYPILOT_DATABASE_URL: postgresql+psycopg://${QUERYPILOT_RO_USER}:${QUERYPILOT_RO_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Dynamic-database-switching's second registered target (`api/targets.py`).
+      # Container-network DSN -- `pagila-db:5432`, not the host-mapped
+      # `${PAGILA_PORT}` -- on the same read-only credential as `db`'s, since
+      # `db/init-pagila/02_readonly_role.sh` provisions the role from the
+      # identical `QUERYPILOT_RO_USER`/`QUERYPILOT_RO_PASSWORD` pair (verified
+      # live, 2026-09-16). Harmless to set unconditionally: `pagila-db` is
+      # behind `--profile pagila`, so this resolves to nothing reachable
+      # unless that profile is also up, and `GET /databases` still reports
+      # the target honestly as configured-but-unreachable in that case --
+      # the same distinction `/health` already draws for the primary target.
+      QUERYPILOT_PAGILA_DATABASE_URL: postgresql+psycopg://${QUERYPILOT_RO_USER}:${QUERYPILOT_RO_PASSWORD}@pagila-db:5432/pagila
       # Iteration 14 (specs/017-schema-generality.md, resolved Q-B). Unset
       # means no glossary at all -- this demo sets it so its own prompt shape
       # is unchanged from before the glossary became configurable. Pointed at

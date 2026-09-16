@@ -41,6 +41,11 @@ TEMPERATURE = 0.0
 class CerebrasProvider:
     """Cerebras chat completions behind the `LLMProvider` interface."""
 
+    #: The key `api/llm/factory.py` selects this provider by. Same
+    #: best-effort-attribute pattern as `.model` below -- see
+    #: `GroqProvider.NAME` for why.
+    NAME = "cerebras"
+
     def __init__(
         self,
         api_key: str,

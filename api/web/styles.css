@@ -22,6 +22,18 @@
   --warn: #7a5300;
   --warn-bg: #fdf7e3;
   --warn-line: #eadfae;
+
+  /* T6 (018-ui-redesign.md, resolved Q-A): a real type scale, extending the
+     token system above rather than replacing it. Used by the headings and by
+     everything new this iteration adds (the schema panel, the telemetry
+     pills) so the tokens are load-bearing rather than decorative; existing
+     rules that already had a working size keep their literal values. */
+  --text-xs: .78rem;
+  --text-sm: .875rem;
+  --text-base: 1rem;
+  --text-lg: 1.15rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 1.9rem;
 }
 
 * { box-sizing: border-box; }
@@ -34,16 +46,46 @@ body {
     "Helvetica Neue", Arial, sans-serif;
 }
 
-main { max-width: 52rem; margin: 0 auto; padding: 3rem 1.25rem 1rem; }
-footer { max-width: 52rem; margin: 0 auto; padding: 0 1.25rem 3rem; }
+/* T6: widened from the Iteration 6 single-column 52rem to fit two regions
+   side by side above the breakpoint below. */
+main { max-width: 74rem; margin: 0 auto; padding: 3rem 1.25rem 1rem; }
+footer { max-width: 74rem; margin: 0 auto; padding: 0 1.25rem 3rem; }
 
-h1 { font-size: 1.75rem; margin: 0 0 .35rem; letter-spacing: -.01em; }
+h1 { font-size: var(--text-2xl); margin: 0 0 .35rem; letter-spacing: -.01em; }
 h2 {
-  font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin: 0 0 .5rem; font-weight: 600;
 }
 .tagline { color: var(--muted); margin: 0 0 .35rem; }
-.demo-note { color: var(--muted); font-size: .85rem; margin: 0 0 1.75rem; }
+.demo-note { color: var(--muted); font-size: var(--text-sm); margin: 0 0 1.75rem; }
+
+/* --- T6: the two-region workbench ---------------------------------------- */
+
+/*
+ * One breakpoint, per the approved plan: side by side above it (question,
+ * examples and the schema panel on the left; the answer, SQL, trace and
+ * telemetry on the right), stacked into the original single column below it.
+ * `align-items: start` keeps the shorter column from stretching to match the
+ * taller one's height.
+ */
+.workbench {
+  display: grid;
+  grid-template-columns: 19rem 1fr;
+  gap: 1.5rem 2.5rem;
+  align-items: start;
+}
+
+.workbench-side {
+  position: sticky;
+  top: 1.5rem;
+}
+
+.workbench-main { min-width: 0; }
+
+@media (max-width: 860px) {
+  .workbench { grid-template-columns: 1fr; }
+  .workbench-side { position: static; }
+}
 
 /* --- asking ------------------------------------------------------------- */
 
@@ -73,6 +115,65 @@ h2 {
   text-align: left;
 }
 .example:hover { border-color: var(--accent); }
+
+/* --- T7: the schema panel ------------------------------------------------- */
+
+.side-panel {
+  margin-top: 1.75rem;
+  padding: 1rem 1.1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+#database-select {
+  width: 100%;
+  margin-bottom: .9rem;
+  padding: .45rem .6rem;
+  font: inherit;
+  font-size: var(--text-sm);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: inherit;
+}
+
+#schema-tree { display: grid; gap: .35rem; font-size: var(--text-sm); }
+
+#schema-tree summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+  padding: .2rem 0;
+}
+#schema-tree summary::marker { color: var(--line); }
+
+.schema-table-kind {
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+  letter-spacing: .04em;
+  margin-left: .35rem;
+}
+
+.schema-columns { margin: .3rem 0 .6rem 1.1rem; padding: 0; list-style: none; }
+.schema-columns li {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .15rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-xs);
+}
+.schema-column-name { color: var(--ink); }
+.schema-column-type {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.schema-note { color: var(--muted); font-size: var(--text-sm); margin: 0; }
 
 /* --- status ------------------------------------------------------------- */
 
@@ -238,6 +339,30 @@ footer p { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--l
 .chart-bar { fill: var(--accent); opacity: .85; }
 
 .chart-note { color: var(--muted); font-size: .85rem; margin: .5rem 0 0; }
+
+/* --- T8: telemetry pills (018-ui-redesign.md AC9/AC10) -------------------- */
+
+/*
+ * Same quiet pill shape `#feedback button` and `.tag` already use elsewhere
+ * on this page -- a provenance note, not a badge to draw the eye, which is
+ * the same reasoning `#cache-note` above is built on.
+ */
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  margin: 1rem 0 0;
+}
+
+.pill {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .2rem .65rem;
+  background: var(--panel);
+}
+.pill strong { color: var(--ink); font-weight: 600; }
 
 /* --- the history reader (T7, AC4) --------------------------------------- */
 

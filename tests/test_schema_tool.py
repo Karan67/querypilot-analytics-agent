@@ -319,10 +319,46 @@ def test_ac13_relations_are_sorted_by_name(schema):
     assert names == sorted(names)
 
 
-def test_ac14_takes_no_parameters():
-    """The property that makes this tool injection-free: no user or model input
-    can reach an identifier, because there is no argument to carry it."""
-    assert not pyinspect.signature(get_schema).parameters
+def test_ac14_the_only_parameter_is_a_validated_target():
+    """The property that makes this tool injection-free, restated for a
+    multi-database deployment (dynamic-database-switching).
+
+    This used to assert zero parameters at all. That stopped being possible
+    the moment `/schema?database=<name>` and `/ask`'s `database` field needed
+    to reach a specific connection pool per request rather than one fixed at
+    process startup -- a mutable "current target" global would have kept the
+    signature empty, but is unsafe under FastAPI's concurrent request
+    handling (`api/db/engine.py`'s module docstring measures why). So the
+    property this test protects is now: **the only parameter is `target`,
+    and nothing supplied through it can reach a connection string or a SQL
+    identifier** -- see `test_ac14_unknown_targets_are_refused` for the half
+    of that claim this test cannot check by inspecting a signature alone.
+    """
+    params = pyinspect.signature(get_schema).parameters
+    assert set(params) == {"target"}
+    assert params["target"].default == "chinook"
+
+
+def test_ac14_unknown_targets_are_refused():
+    """The other half of AC14's guarantee: `target` is checked against a
+    closed allow-list before it can reach a connection, not passed through.
+
+    **No database needed, and that is itself part of the property.** The
+    rejection happens in `get_database_url` before `create_engine` is ever
+    called, so an unknown target fails identically whether Postgres is up or
+    not -- a caller cannot learn anything about the deployment's connectivity
+    by probing it with garbage.
+
+    Mutation this is meant to catch: `get_database_url` (or `get_engine`)
+    building a DSN from an unvalidated `target` string instead of looking it
+    up in `DATABASE_TARGETS` first. That would not fail *this* test with an
+    obviously wrong answer -- SQLAlchemy would simply fail to parse or
+    connect to the garbage DSN -- so the assertion is on the *category* of
+    failure (a raised, typed rejection before any connection attempt), not
+    on a side effect of one.
+    """
+    with pytest.raises(SchemaIntrospectionError):
+        get_schema(target="'; drop table album; --")
 
 
 @pytest.mark.needs_db
@@ -486,7 +522,7 @@ def test_ac17_empty_schema_is_never_returned_as_success(monkeypatch):
     monkeypatch.setattr(
         introspection,
         "execute_sql",
-        lambda sql: ExecutionResult(ok=True, columns=(), rows=()),
+        lambda sql, target="chinook": ExecutionResult(ok=True, columns=(), rows=()),
     )
 
     with pytest.raises(SchemaIntrospectionError, match="no relations"):

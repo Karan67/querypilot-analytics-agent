@@ -28,6 +28,9 @@ const chartToggle = document.getElementById("chart-toggle");
 const chartBox = document.getElementById("chart");
 const quotaBox = document.getElementById("quota");
 const cacheNote = document.getElementById("cache-note");
+const databaseSelect = document.getElementById("database-select");
+const schemaTree = document.getElementById("schema-tree");
+const telemetryBox = document.getElementById("telemetry");
 const feedbackBox = document.getElementById("feedback");
 const feedbackGood = document.getElementById("feedback-good");
 const feedbackBad = document.getElementById("feedback-bad");
@@ -70,7 +73,12 @@ form.addEventListener("submit", async (event) => {
     const response = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      // Dynamic-database-switching: the selected target travels with the
+      // question. `null` when the selector never populated (the /databases
+      // fetch failed or hasn't resolved yet), which the server reads as its
+      // own default -- the same "omitted means default" contract `/schema`
+      // already has.
+      body: JSON.stringify({ question, database: databaseSelect.value || null }),
     });
     const body = await response.json();
     render(body);
@@ -250,6 +258,7 @@ function render(body) {
     clear(answerBox);
     renderSql(body.sql);
     renderTrace(body.trace);
+    renderTelemetry(body);
     return;
   }
 
@@ -265,6 +274,43 @@ function render(body) {
   }
   renderSql(body.sql);
   renderTrace(body.trace);
+  renderTelemetry(body);
+}
+
+/*
+ * 018-ui-redesign.md AC9/AC10. Provider, model and latency, next to the SQL
+ * panel -- the same per-answer precedent `usage`/`total_ms` already set on
+ * this payload, rather than a separate "current configuration" banner that
+ * could drift out of step with what actually answered (§7 Q-D).
+ *
+ * Hidden rather than showing empty pills when there is nothing to report --
+ * the daily-ceiling refusal returns `provider: ""`/`model: ""` because the
+ * agent was never reached, and an empty pill would claim a fact that is not
+ * there to claim.
+ */
+function renderTelemetry(body) {
+  clear(telemetryBox);
+  if (!body.provider && !body.model) {
+    telemetryBox.hidden = true;
+    return;
+  }
+  telemetryBox.hidden = false;
+
+  const pill = (label, value) => {
+    const span = document.createElement("span");
+    span.className = "pill";
+    span.appendChild(document.createTextNode(`${label}: `));
+    const strong = document.createElement("strong");
+    strong.textContent = value;
+    span.appendChild(strong);
+    return span;
+  };
+
+  if (body.provider) telemetryBox.appendChild(pill("Provider", body.provider));
+  if (body.model) telemetryBox.appendChild(pill("Model", body.model));
+  if (typeof body.total_ms === "number") {
+    telemetryBox.appendChild(pill("Latency", `${body.total_ms} ms`));
+  }
 }
 
 function renderAnswer(body) {
@@ -508,6 +554,128 @@ function drawChart(body) {
 }
 
 /*
+ * 018-ui-redesign.md T7 — the schema panel. `GET /schema` (AC4/AC6): a flat,
+ * collapsible list of tables and columns, not an ERD (§7 Q-C). Fetched on
+ * load and again on a database switch, never per question: the schema does
+ * not change within one selected database, and refetching it after every
+ * answer would be a database round trip nothing on the page needs.
+ */
+async function loadSchema(database) {
+  try {
+    const url = database
+      ? `/schema?database=${encodeURIComponent(database)}`
+      : "/schema";
+    const response = await fetch(url);
+    if (!response.ok) {
+      renderSchemaError();
+      return;
+    }
+    renderSchema(await response.json());
+  } catch (err) {
+    renderSchemaError();
+  }
+}
+
+/*
+ * Dynamic-database-switching. `GET /databases` (Invariant #1: names only,
+ * never a connection string) populates the dropdown; the schema panel then
+ * loads whichever target ends up selected -- the server's own `default`, or
+ * the first entry if that field is somehow missing.
+ */
+async function loadDatabases() {
+  try {
+    const response = await fetch("/databases");
+    if (response.ok) {
+      renderDatabaseOptions(await response.json());
+    }
+  } catch (err) {
+    // Quiet, same reasoning as refreshQuota: the page still works against
+    // the server's own default database if this fails.
+  }
+  loadSchema(databaseSelect.value || undefined);
+}
+
+function renderDatabaseOptions(body) {
+  clear(databaseSelect);
+  const targets = (body && body.targets) || [];
+  if (targets.length === 0) {
+    databaseSelect.hidden = true;
+    return;
+  }
+
+  targets.forEach((target) => {
+    const option = document.createElement("option");
+    option.value = target.name;
+    option.textContent = target.available
+      ? target.name
+      : `${target.name} (unavailable)`;
+    option.disabled = !target.available;
+    databaseSelect.appendChild(option);
+  });
+
+  const defaultTarget = body.default || targets[0].name;
+  if (targets.some((target) => target.name === defaultTarget)) {
+    databaseSelect.value = defaultTarget;
+  }
+  databaseSelect.hidden = false;
+}
+
+databaseSelect.addEventListener("change", () => {
+  loadSchema(databaseSelect.value);
+});
+
+/* AC7: a legible message, not a blank panel. */
+function renderSchemaError() {
+  clear(schemaTree);
+  const note = document.createElement("p");
+  note.className = "schema-note";
+  note.textContent = "The schema could not be loaded.";
+  schemaTree.appendChild(note);
+}
+
+function renderSchema(data) {
+  clear(schemaTree);
+  const tables = (data && data.tables) || [];
+  if (tables.length === 0) {
+    const note = document.createElement("p");
+    note.className = "schema-note";
+    note.textContent = "No tables found.";
+    schemaTree.appendChild(note);
+    return;
+  }
+
+  tables.forEach((table) => {
+    const details = document.createElement("details");
+
+    const summary = document.createElement("summary");
+    summary.appendChild(document.createTextNode(table.name));
+    const kind = document.createElement("span");
+    kind.className = "schema-table-kind";
+    kind.textContent = table.kind;
+    summary.appendChild(kind);
+    details.appendChild(summary);
+
+    const list = document.createElement("ul");
+    list.className = "schema-columns";
+    (table.columns || []).forEach((column) => {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "schema-column-name";
+      name.textContent = column.name;
+      const type = document.createElement("span");
+      type.className = "schema-column-type";
+      type.textContent = column.type;
+      item.appendChild(name);
+      item.appendChild(type);
+      list.appendChild(item);
+    });
+    details.appendChild(list);
+
+    schemaTree.appendChild(details);
+  });
+}
+
+/*
  * AC10 on arrival, not only after the first question.
  *
  * Somebody opening the page mid-benchmark should see the warning before they
@@ -516,3 +684,4 @@ function drawChart(body) {
  * this shows nothing on a cold process rather than guessing.
  */
 refreshQuota();
+loadDatabases();

@@ -27,14 +27,19 @@ from api.db.execution import ExecutionResult
 from api.db.execution import execute_sql as _execute_sql
 from api.db.introspection import Schema
 from api.db.introspection import get_schema as _introspect_schema
+from api.targets import DEFAULT_TARGET
 from api.safety.validator import validate_sql as _validate_sql
 
 
-def get_schema() -> Schema:
-    """Return the structural map of the target database.
+def get_schema(target: str = DEFAULT_TARGET) -> Schema:
+    """Return the structural map of one registered database.
 
-    Takes no arguments, and must keep taking none: that is what leaves the tool
-    with no injection surface (AC14 in `specs/001-schema-tool.md`).
+    `target` is the one parameter this tool has ever taken with any teeth:
+    it is validated against the closed `api.targets.DATABASE_TARGETS`
+    registry before it can reach a connection string, so the injection-free
+    property AC14 (`specs/001-schema-tool.md`) describes still holds — see
+    `get_schema()`'s own docstring in `api/db/introspection.py` for the full
+    reasoning behind the change.
 
     Raises:
         SchemaIntrospectionError: if the catalog cannot be read. Propagated
@@ -42,7 +47,7 @@ def get_schema() -> Schema:
             and flattening it here would cost exactly the detail that makes it
             actionable.
     """
-    return _introspect_schema()
+    return _introspect_schema(target=target)
 
 
 def validate_sql(sql: str) -> tuple[bool, str]:
@@ -62,8 +67,8 @@ def validate_sql(sql: str) -> tuple[bool, str]:
     return _validate_sql(sql)
 
 
-def execute_sql(sql: str) -> ExecutionResult:
-    """Run one read-only query and return its rows, or a categorised failure.
+def execute_sql(sql: str, target: str = DEFAULT_TARGET) -> ExecutionResult:
+    """Run one read-only query against one registered database.
 
     Delegates to `api.db.execution.execute_sql`. See
     `specs/003-execute-sql.md`.
@@ -71,14 +76,15 @@ def execute_sql(sql: str) -> ExecutionResult:
     This is the only tool that reaches the database with model output, and it
     validates before it does: Gate 2 runs inside the implementation, not in the
     caller, so there is no ordering for a caller to get wrong and no argument
-    that skips it.
+    that skips it. `target` never reaches the query text or an identifier —
+    it only ever selects which registered connection pool serves the query.
 
     Returns:
         An `ExecutionResult`. Failures are returned, never raised, and carry a
         `category` the retry loop can branch on -- `rejected`, `timeout`,
         `database_error`, `connection_error`, or `gate_violation`.
     """
-    return _execute_sql(sql)
+    return _execute_sql(sql, target=target)
 
 
 #: The agent's complete tool surface, name to callable.

@@ -45,6 +45,7 @@ from api.store.history import (
     CATEGORY_IDENTITY_DAILY_LIMIT,
     CATEGORY_LEDGER_UNAVAILABLE,
 )
+from api.targets import CATEGORY_UNKNOWN_DATABASE
 
 #: `200`. The service worked; the answer is negative.
 STATUS_ANSWERED = 200
@@ -53,6 +54,16 @@ STATUS_ANSWERED = 200
 #: telling a user "no results" when the provider was unreachable would be a
 #: lie about the data.
 STATUS_UNAVAILABLE = 503
+
+#: `400`. Dynamic-database-switching: the one category in this table that is
+#: genuinely the caller's mistake rather than a negative answer or a service
+#: gap -- a target outside the closed `api.targets.DATABASE_TARGETS`
+#: registry is not a question this deployment could ever have answered, in
+#: the same way a malformed request body would not be. A *known* target
+#: whose DSN merely is not configured is deliberately not this status; it
+#: categorises as `CATEGORY_CONNECTION_ERROR` (503) instead, because that is
+#: a service gap, not a bad request.
+STATUS_BAD_REQUEST = 400
 
 #: `429`. Iteration 12 T9. Unlike `CATEGORY_RATE_LIMITED` above -- which is
 #: this *service's* upstream allowance running out, deliberately kept off 429
@@ -121,6 +132,15 @@ RESPONSES: dict[str, Failure] = {
         STATUS_ANSWERED,
         "No query was produced for that question. Rephrasing it usually helps.",
         retryable=True,
+    ),
+    # --- dynamic-database-switching: the caller's mistake (400) -------------
+    CATEGORY_UNKNOWN_DATABASE: Failure(
+        STATUS_BAD_REQUEST,
+        "That is not a database this deployment knows about.",
+        # Asking again unchanged cannot succeed -- the target does not exist
+        # and will not start existing. Distinct from every other category
+        # above, which either might resolve itself or is worth retrying.
+        retryable=False,
     ),
     # --- the service failed, not the question (D-2: 503) -------------------
     CATEGORY_CONNECTION_ERROR: Failure(

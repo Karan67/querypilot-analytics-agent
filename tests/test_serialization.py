@@ -15,7 +15,8 @@ import json
 import pytest
 
 from api.agent.tools import execute_sql
-from api.http.serialization import encode_rows, to_jsonable
+from api.db.introspection import Column, ForeignKey, Schema, Table
+from api.http.serialization import encode_rows, schema_to_dict, to_jsonable
 
 
 # --- D-1: Decimal crosses as an exact string --------------------------------
@@ -164,3 +165,71 @@ def test_every_corpus_result_is_json_serialisable():
         result = execute_sql(question.gold_sql)
         assert result.ok, question.id
         json.dumps(encode_rows(result.rows))
+
+
+# --- 018-ui-redesign.md T3: GET /schema's JSON shape -------------------------
+
+
+def test_schema_to_dict_is_the_narrow_contract_ac4_names():
+    """AC4/§7 Q-C: `name`, `kind`, and each column's `name`/`type` -- nothing
+    from `foreign_keys`, even though `Table` carries it.
+
+    **The mutation this must catch is `dataclasses.asdict(schema)`.** That
+    would pass every other test here (it's a strict superset of the fields
+    asserted) while silently widening the response contract the spec
+    deliberately narrowed -- exactly the "a default elsewhere stands in for
+    the code under test" shape `HANDOFF.md` §6 keeps recording, just with the
+    permissive replacement written directly into the function instead of
+    somewhere upstream of it.
+    """
+    schema = Schema(
+        tables=(
+            Table(
+                name="album",
+                kind="table",
+                columns=(
+                    Column(name="album_id", type="INTEGER", nullable=False, primary_key=True),
+                    Column(name="title", type="VARCHAR(160)", nullable=False, primary_key=False),
+                ),
+                foreign_keys=(
+                    ForeignKey(columns=("artist_id",), referred_table="artist", referred_columns=("artist_id",)),
+                ),
+            ),
+        )
+    )
+
+    encoded = schema_to_dict(schema)
+
+    assert encoded == {
+        "tables": [
+            {
+                "name": "album",
+                "kind": "table",
+                "columns": [
+                    {"name": "album_id", "type": "INTEGER"},
+                    {"name": "title", "type": "VARCHAR(160)"},
+                ],
+            }
+        ]
+    }
+    # The narrowness itself, stated as its own assertion rather than only
+    # implied by the equality above: a reader changing the equality's shape
+    # later would not necessarily notice they had reintroduced the field.
+    assert "foreign_keys" not in encoded["tables"][0]
+
+
+def test_schema_to_dict_preserves_table_order():
+    """AC1 of `001-schema-tool.md` (alphabetical, kinds interleaved) is a
+    property of `get_schema()`'s return, not of this function -- but this
+    function must not silently re-sort or re-group what it is given, or a
+    correct `Schema` would still render wrong."""
+    schema = Schema(
+        tables=(
+            Table(name="zebra", kind="view", columns=(), foreign_keys=()),
+            Table(name="album", kind="table", columns=(), foreign_keys=()),
+        )
+    )
+
+    encoded = schema_to_dict(schema)
+
+    assert [table["name"] for table in encoded["tables"]] == ["zebra", "album"]

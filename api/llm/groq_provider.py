@@ -41,6 +41,13 @@ TEMPERATURE = 0.0
 class GroqProvider:
     """Groq chat completions behind the `LLMProvider` interface."""
 
+    #: The key `api/llm/factory.py` selects this provider by. Not on the
+    #: `LLMProvider` protocol -- same best-effort-attribute pattern as
+    #: `.model` below, read via `getattr` by any caller that wants to say
+    #: which provider answered (e.g. `/ask`'s telemetry pills,
+    #: `018-ui-redesign.md`).
+    NAME = "groq"
+
     def __init__(
         self,
         api_key: str,

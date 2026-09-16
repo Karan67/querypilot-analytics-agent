@@ -52,12 +52,12 @@ def test_the_key_is_the_exact_question_text():
     indistinguishable from a correct one. Two questions that differ at all are
     two questions.
     """
-    base = cache.cache_key("How many tracks?", "s", "p")
+    base = cache.cache_key("How many tracks?", "s", "p", "chinook")
 
-    assert cache.cache_key("how many tracks?", "s", "p") != base
-    assert cache.cache_key("How many tracks? ", "s", "p") != base
-    assert cache.cache_key("How  many tracks?", "s", "p") != base
-    assert cache.cache_key("How many tracks?", "s", "p") == base
+    assert cache.cache_key("how many tracks?", "s", "p", "chinook") != base
+    assert cache.cache_key("How many tracks? ", "s", "p", "chinook") != base
+    assert cache.cache_key("How  many tracks?", "s", "p", "chinook") != base
+    assert cache.cache_key("How many tracks?", "s", "p", "chinook") == base
 
 
 def test_a_schema_change_changes_the_key():
@@ -67,13 +67,29 @@ def test_a_schema_change_changes_the_key():
     that no longer describes the database -- correct when it was computed, wrong
     now, and with nothing to distinguish the two.
     """
-    assert cache.cache_key("q", "schema-v1", "p") != cache.cache_key("q", "schema-v2", "p")
+    assert cache.cache_key("q", "schema-v1", "p", "chinook") != cache.cache_key(
+        "q", "schema-v2", "p", "chinook"
+    )
 
 
 def test_a_prompt_change_changes_the_key():
     """Same argument for the prompt. An edited prompt is a different system, and
     a process that outlives the edit must not keep answering as the old one."""
-    assert cache.cache_key("q", "s", "prompt-v1") != cache.cache_key("q", "s", "prompt-v2")
+    assert cache.cache_key("q", "s", "prompt-v1", "chinook") != cache.cache_key(
+        "q", "s", "prompt-v2", "chinook"
+    )
+
+
+def test_a_target_change_changes_the_key():
+    """018-ui-redesign.md, dynamic-database-switching: defense in depth
+    alongside the schema fingerprint. `schema_fp` already differs between
+    structurally different databases, so this is not the only thing standing
+    between a `chinook` and a `pagila` answer colliding -- but a key that
+    names the target explicitly is one a reader can trust without
+    re-deriving why two schemas can never collide."""
+    assert cache.cache_key("q", "s", "p", "chinook") != cache.cache_key(
+        "q", "s", "p", "pagila"
+    )
 
 
 def test_the_separator_prevents_a_boundary_collision():
@@ -84,8 +100,12 @@ def test_the_separator_prevents_a_boundary_collision():
     different question under a different configuration. Guards the mutation of
     joining with `""`.
     """
-    assert cache.cache_key("ab", "c", "p") != cache.cache_key("a", "bc", "p")
-    assert cache.cache_key("q", "ab", "c") != cache.cache_key("q", "a", "bc")
+    assert cache.cache_key("ab", "c", "p", "chinook") != cache.cache_key(
+        "a", "bc", "p", "chinook"
+    )
+    assert cache.cache_key("q", "ab", "c", "chinook") != cache.cache_key(
+        "q", "a", "bc", "chinook"
+    )
 
 
 # --- computing at most once --------------------------------------------------
@@ -628,6 +648,13 @@ def test_the_schema_path_is_shared_with_the_eval_runner_deliberately():
 # partitioning it per identity would multiply the provider calls by the number
 # of callers to protect nothing. These tests pin that decision so the day it
 # stops being true is a day somebody notices.
+#
+# `target` (018-ui-redesign.md, dynamic-database-switching) is not the
+# identity Q-E refused: it is which *database* answered, a property of the
+# question's configuration exactly like `schema_fp`/`prompt_fp` already are,
+# not a property of who asked. The test below still enforces that no fourth
+# parameter is an identity in disguise -- it now names `target` explicitly as
+# the one addition that is allowed to exist.
 
 
 def test_the_cache_key_takes_no_identity():
@@ -639,12 +666,18 @@ def test_the_cache_key_takes_no_identity():
     cached answer could be served across an authorisation boundary that does not
     exist yet -- which is exactly when this test should stop being true, and
     exactly when somebody should have to come here and say so.
+
+    `target` is named explicitly as the one exception: dynamic-database-
+    switching added it deliberately (a question's *configuration*, not who
+    asked it), and `test_nothing_in_the_key_material_mentions_an_identity`
+    below is what actually guards against a fifth parameter smuggling an
+    identity in under a different name.
     """
     import inspect
 
     parameters = list(inspect.signature(cache.cache_key).parameters)
 
-    assert parameters == ["question", "schema_fp", "prompt_fp"], (
+    assert parameters == ["question", "schema_fp", "prompt_fp", "target"], (
         f"cache_key takes {parameters}; if an identity has been added, the "
         f"answer cache now crosses a boundary Iteration 10 said it would not"
     )

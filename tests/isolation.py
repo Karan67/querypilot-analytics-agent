@@ -168,10 +168,10 @@ def _raise_prohibited(*args, **kwargs):
 
 
 def _evict_cached_engine() -> None:
-    """Drop the memoised Engine, disposing its pool rather than leaking it.
+    """Drop every memoised Engine, disposing each pool rather than leaking it.
 
-    Without this the prohibition is inert for most of a run. `get_engine` is
-    `lru_cache(maxsize=1)` and `configured_database` is session-scoped, so the
+    Without this the prohibition is inert for most of a run. `get_engine` caches
+    one Engine per target and `configured_database` is session-scoped, so the
     first marked test leaves a live Engine behind that outlives every test after
     it. An unmarked test then calls `get_engine()`, gets a **cache hit**,
     connects, and never reaches `create_engine` at all — so patching the factory
@@ -180,15 +180,21 @@ def _evict_cached_engine() -> None:
 
     The dispose is not tidiness. Each eviction otherwise abandons a pool of up to
     five connections, and `pool_size=5, max_overflow=5` against a default
-    `max_connections=100` makes that a ceiling a long run can actually hit. A
-    warm `get_engine()` is a pure cache hit, so reaching the object to dispose it
-    costs no connection and cannot itself trip the prohibition.
+    `max_connections=100` makes that a ceiling a long run can actually hit.
+
+    **`dispose_all()`, not `get_engine().dispose()` (dynamic-database-
+    switching).** The latter disposes only the *default* target's pool by
+    construction — `get_engine()` with no argument — which is exactly right
+    while there is one target and quietly leaks every other target's pool
+    once there is more than one: `get_engine` now caches per target, and
+    `api/db/engine.py::_EngineCache` exists specifically because
+    `functools.lru_cache` gives no way to enumerate cached entries to dispose
+    each. Reaching a cached engine to dispose it costs no connection and
+    cannot itself trip the prohibition.
     """
     from api.db import engine as engine_module
 
-    if engine_module.get_engine.cache_info().currsize:
-        engine_module.get_engine().dispose()
-    engine_module.get_engine.cache_clear()
+    engine_module.get_engine.dispose_all()
 
 
 @contextlib.contextmanager

@@ -34,6 +34,7 @@ from api.agent.fingerprints import DeployedPrompt, deployed_fingerprints
 from api.agent.orchestrator import answer
 from api.agent.prompts import ADOPTED_RENDERING
 from api.agent.tools import execute_sql
+from api.targets import CATEGORY_UNKNOWN_DATABASE, DATABASE_TARGETS, DEFAULT_TARGET
 from api.llm.base import LLMError, TokenUsage
 from api.llm.factory import get_provider
 from api.store import history
@@ -41,7 +42,7 @@ from api.store.history import AskRecord
 from api import config
 from api.http import auth, cache, forwarded, headers, quota
 from api.http.errors import STATUS_ANSWERED, failure_for
-from api.http.serialization import encode_rows
+from api.http.serialization import encode_rows, schema_to_dict
 from api.http.shapes import SHAPE_CHARTABLE, SHAPE_EMPTY, chart_series, classify
 
 #: The liveness probe, as a query rather than as engine calls.
@@ -435,6 +436,111 @@ def health(request: Request) -> JSONResponse:
     )
 
 
+def _target_configured(name: str) -> bool:
+    """Is this registered target's DSN actually set on this deployment?
+
+    Checks presence only, never liveness -- a real connection attempt on
+    every `/databases` listing would make browsing the dropdown as slow as
+    asking a question, for a fact `/health`'s own `database.connected`
+    already reports for the one target that matters to the healthcheck.
+    """
+    entry = DATABASE_TARGETS.get(name)
+    return entry is not None and bool(os.environ.get(entry.dsn_env, "").strip())
+
+
+def _resolve_target(database: str | None) -> str | None:
+    """The registered target a client asked for, or `None` if it names none.
+
+    `None` in, `DEFAULT_TARGET` out -- every caller that predates dynamic
+    database switching. `None` out means the caller must refuse with
+    `CATEGORY_UNKNOWN_DATABASE` (400) before spending an agent turn or a
+    round trip on a target that was never going to exist.
+
+    **A known target whose DSN is not configured is deliberately not caught
+    here.** It is still returned, and reaches `execute_sql()`/`get_schema()`
+    exactly like a genuinely unreachable database would -- both now
+    categorise identically (`connection_error`, 503) since `execute_sql`'s
+    own gate covers a missing DSN as of this feature, so there is no second
+    definition of "unreachable" to keep in sync with the first.
+    """
+    if database is None:
+        return DEFAULT_TARGET
+    return database if database in DATABASE_TARGETS else None
+
+
+@app.get("/databases", tags=["ops"])
+def databases_endpoint() -> JSONResponse:
+    """Which databases this deployment can be asked about.
+
+    Invariant #1 of dynamic database switching: a client learns *names*
+    here, never a connection string -- `available` says whether this
+    deployment has that target's DSN configured, nothing about where it
+    points.
+    """
+    targets = [
+        {"name": name, "available": _target_configured(name)}
+        for name in sorted(DATABASE_TARGETS)
+    ]
+    return JSONResponse(
+        status_code=200,
+        content={"targets": targets, "default": DEFAULT_TARGET},
+    )
+
+
+@app.get("/schema", tags=["ops"])
+def schema_endpoint(database: str | None = None) -> JSONResponse:
+    """The structural map of one registered database (018-ui-redesign.md AC4-AC7).
+
+    `?database=<name>` (dynamic-database-switching) selects which; omitted
+    or `null` means `DEFAULT_TARGET`, unchanged from before this parameter
+    existed. An unrecognised name is refused with 400 before any database
+    round trip is attempted, mirroring `/ask`'s own validation below.
+
+    Protected by the same Basic Auth gate as every route but `/health` --
+    nothing here is added to `auth.OPEN_PATHS`.
+
+    Reads the schema the same way `/ask` already does: through
+    `_deployed_fingerprints()`, not a direct `get_schema()` call. That is
+    what keeps this module's "reaches the database only through the agent"
+    guarantee intact (AC5) -- `test_ac4_the_only_database_call_in_the_module_
+    is_execute_sql` asserts `api/main.py` imports nothing from `api.db`
+    except `execute_sql`, and a direct `get_schema()` import here would trip
+    it exactly like it would have at the cache key (`_deployed_fingerprints`'s
+    own docstring).
+
+    A discarded config argument (`rendering`/`glossary`) is a real cost of
+    reuse here -- this route has no prompt to fingerprint -- but it is one
+    already-cheap catalog read, not a new database round trip shape.
+    """
+    target = _resolve_target(database)
+    if target is None:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    f"Unknown database {database!r}. Known databases: "
+                    f"{sorted(DATABASE_TARGETS)}."
+                )
+            },
+        )
+
+    fingerprints = _deployed_fingerprints(target=target)
+    if fingerprints is None:
+        # Same failure `/health` reports as `database.connected: false`,
+        # phrased for this route's own shape rather than reusing that one
+        # (AC7: a legible message, not a blank panel or a stack trace). Also
+        # reached when `target` is registered but not configured on this
+        # deployment -- `execute_sql()` categorises that identically to an
+        # unreachable database, so there is nothing extra to check here.
+        return JSONResponse(
+            status_code=503,
+            content={"error": "The database schema could not be read."},
+        )
+    return JSONResponse(
+        status_code=200, content=schema_to_dict(fingerprints.schema)
+    )
+
+
 class AskRequest(BaseModel):
     """One natural-language question.
 
@@ -446,6 +552,14 @@ class AskRequest(BaseModel):
     """
 
     question: str = Field(min_length=1, max_length=1000)
+    #: Dynamic-database-switching. A target *key*, never a DSN (Invariant
+    #: #1) -- `None` (the default, and every client that predates this
+    #: field) means `DEFAULT_TARGET`. Validated against `DATABASE_TARGETS`
+    #: in `ask()` itself, not here: a bad value is a `400` in the same
+    #: answer-shaped body every other `/ask` refusal already uses
+    #: (`CATEGORY_UNKNOWN_DATABASE`), not a bare pydantic 422, so the client
+    #: always gets the one JSON shape it already handles.
+    database: str | None = None
 
 
 @app.post("/ask", tags=["agent"])
@@ -476,6 +590,34 @@ def ask(request: AskRequest, http_request: Request) -> JSONResponse:
     the caller has not asked a question that was processed, so there is
     nothing for `record_ask` to have a row about.
     """
+    # Validated before the spend ceiling is weighed, for the same reason the
+    # ceiling itself is weighed before the cache: a request this deployment
+    # was never going to be able to serve should not consume a reservation
+    # against the daily count either.
+    target = _resolve_target(request.database)
+    if target is None:
+        failure = failure_for(CATEGORY_UNKNOWN_DATABASE)
+        return JSONResponse(
+            status_code=failure.status,
+            content={
+                "ok": False,
+                "sql": "",
+                "columns": [],
+                "rows": [],
+                "shape": SHAPE_EMPTY,
+                "series": None,
+                "trace": [],
+                "category": CATEGORY_UNKNOWN_DATABASE,
+                "error": (
+                    f"Unknown database {request.database!r}. Known "
+                    f"databases: {sorted(DATABASE_TARGETS)}."
+                ),
+                "retryable": False,
+                "provider": "",
+                "model": "",
+            },
+        )
+
     identity = getattr(http_request.state, "identity", "") or ""
     decision = history.reserve_question(identity)
     if not decision.allowed:
@@ -497,11 +639,15 @@ def ask(request: AskRequest, http_request: Request) -> JSONResponse:
                 "category": decision.category,
                 "error": failure.message,
                 "retryable": failure.retryable,
+                # The agent was never reached (§ above), so there is no
+                # provider or model to name -- same reasoning as `sql: ""`.
+                "provider": "",
+                "model": "",
             },
         )
 
     started = time.perf_counter()
-    answered = _answer_or_replay(request.question)
+    answered = _answer_or_replay(request.question, target=target)
     total_ms = int((time.perf_counter() - started) * 1000)
 
     result = answered.result
@@ -594,6 +740,13 @@ def ask(request: AskRequest, http_request: Request) -> JSONResponse:
         "total_ms": total_ms,
         # Zero on a hit, because no provider was built and none was called.
         "provider_ms": provider.elapsed_ms if provider is not None else 0,
+        # 018-ui-redesign.md AC8/AC10: which provider and model produced this
+        # *answer*, unlike `provider_ms` above which reports what *this
+        # request* spent. Captured at compute time (`_Computed`) so both
+        # survive a cache hit without rebuilding a provider just to ask it
+        # its own name.
+        "provider": answered.provider_name,
+        "model": answered.model,
         # AC8: a cached answer must be *visibly* cached. Presenting an answer
         # computed some time ago as freshly computed is the analytics equivalent
         # of the accuracy claim `009` AC13 banned from the page.
@@ -878,7 +1031,7 @@ def index() -> HTMLResponse:
 app.mount("/static", StaticFiles(directory=_WEB_DIR), name="static")
 
 
-def _is_cacheable(result) -> bool:
+def _is_cacheable(computed) -> bool:
     """Only a successful answer is worth keeping.
 
     **This follows from D-3 rather than being a preference.** The cache has no
@@ -888,7 +1041,28 @@ def _is_cacheable(result) -> bool:
     exactly what the first attempt cost, which is the right price for something
     that might now succeed.
     """
-    return bool(result.ok)
+    return bool(computed.result.ok)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Computed:
+    """One `answer()` call, plus which provider actually produced it.
+
+    This is what the cache stores now (018-ui-redesign.md, D-1) -- not the
+    bare `AgentResult` -- so a later cache hit can still report which
+    provider and model produced the answer on screen, without rebuilding a
+    provider just to ask it its own name. That would undo the exact property
+    that makes a hit cheap and outage-proof (`_answer_or_replay`'s docstring).
+
+    `_record_history`'s `model` column stays empty on a hit **on purpose**:
+    no call was made *this* request, so no cost is credited to it. This is a
+    different question -- what genuinely produced the answer being shown
+    right now -- and the two are allowed to disagree.
+    """
+
+    result: object
+    provider_name: str
+    model: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -906,9 +1080,14 @@ class _Answered:
     provider: object | None
     schema_fp: str = ""
     prompt_fp: str = ""
+    # Survive a cache hit (unlike `provider` above, which stays `None` on one)
+    # because they are strings captured at compute time, not a live object a
+    # hit would have to rebuild. See `_Computed`.
+    provider_name: str = ""
+    model: str = ""
 
 
-def _deployed_fingerprints() -> DeployedPrompt | None:
+def _deployed_fingerprints(target: str = DEFAULT_TARGET) -> DeployedPrompt | None:
     """`(schema_fp, prompt_fp)` for the configuration this API actually sends.
 
     Delegates the schema read to `api/agent/`, which is where reading a schema
@@ -918,6 +1097,12 @@ def _deployed_fingerprints() -> DeployedPrompt | None:
     on anything from `api.db`. Widening the test to admit an introspection call
     would have been the wrong repair: the first version of this task did exactly
     that, and it is how a rule acquires its first undocumented exception.
+
+    `target` (dynamic-database-switching) is not itself an `api.db` import --
+    it is a plain key from `api.targets.DATABASE_TARGETS`, resolved and
+    validated at the HTTP boundary (`_resolve_target`) before this function
+    ever sees it, and it reaches `get_schema()` only through
+    `api.agent.fingerprints.deployed_fingerprints`.
 
     `None` when the schema cannot be read, which deliberately **bypasses the
     cache** rather than inventing a key without one. `answer()` then produces
@@ -936,17 +1121,19 @@ def _deployed_fingerprints() -> DeployedPrompt | None:
     guarantee, and 118ms against a 459ms provider call is the cheaper half.
     """
     return deployed_fingerprints(
-        rendering=_DEPLOYED_RENDERING, glossary=_DEPLOYED_GLOSSARY
+        rendering=_DEPLOYED_RENDERING, glossary=_DEPLOYED_GLOSSARY, target=target
     )
 
 
-def _answer_or_replay(question: str) -> _Answered:
+def _answer_or_replay(question: str, target: str = DEFAULT_TARGET) -> _Answered:
     """Answer the question, or hand back an answer already paid for.
 
     **The provider is `None` on a hit** -- not merely unused, never built --
     which is what makes a cached answer survive a provider outage or a missing
     key, and what makes `provider_ms` honestly zero rather than a timer that was
-    started and never used.
+    started and never used. `provider_name`/`model` are different: they are
+    plain strings captured once at compute time (`_Computed`), so they do
+    survive a hit without requiring `get_provider()` to be called again.
     """
     timed: list[_TimedProvider] = []
 
@@ -959,27 +1146,44 @@ def _answer_or_replay(question: str) -> _Answered:
             # defers to it rather than keeping a second copy of that mapping in
             # sync. Both attempts fail immediately and neither touches the
             # network.
-            return answer(
-                question,
-                rendering=_DEPLOYED_RENDERING,
-                glossary=_DEPLOYED_GLOSSARY,
-                schema=schema,
+            return _Computed(
+                answer(
+                    question,
+                    rendering=_DEPLOYED_RENDERING,
+                    glossary=_DEPLOYED_GLOSSARY,
+                    schema=schema,
+                    target=target,
+                ),
+                "",
+                "",
             )
 
         timed.append(provider)
-        return answer(
-            question,
-            provider=provider,
-            rendering=_DEPLOYED_RENDERING,
-            glossary=_DEPLOYED_GLOSSARY,
-            schema=schema,
+        return _Computed(
+            answer(
+                question,
+                provider=provider,
+                rendering=_DEPLOYED_RENDERING,
+                glossary=_DEPLOYED_GLOSSARY,
+                schema=schema,
+                target=target,
+            ),
+            getattr(provider, "NAME", ""),
+            getattr(provider, "model", ""),
         )
 
-    fingerprints = _deployed_fingerprints()
+    fingerprints = _deployed_fingerprints(target=target)
     if fingerprints is None:
         # No schema was read, so there is nothing to hand on: `answer()` reads
         # its own and reports the unreachable database in its own category.
-        return _Answered(compute(), False, timed[0] if timed else None)
+        computed = compute()
+        return _Answered(
+            computed.result,
+            False,
+            timed[0] if timed else None,
+            provider_name=computed.provider_name,
+            model=computed.model,
+        )
 
     # **Carried, never inspected.** T3 threads the one schema read from
     # `api/agent/` through to `api/agent/`; this module holds the value and
@@ -987,12 +1191,23 @@ def _answer_or_replay(question: str) -> _Answered:
     # two structural assertions true -- no `api.db` import, and no database
     # call from this module.
     schema, schema_fp, prompt_fp = fingerprints
-    key = cache.cache_key(question, schema_fp, prompt_fp)
-    result, cache_hit = cache.get_or_compute(
+    # `target` folds into the key explicitly, defense in depth alongside the
+    # fingerprints: `schema_fp` already differs between databases with
+    # different structures, but a key that names the target rather than
+    # relying solely on that to disambiguate is one a reader can trust
+    # without re-deriving why two schemas can never collide.
+    key = cache.cache_key(question, schema_fp, prompt_fp, target)
+    computed, cache_hit = cache.get_or_compute(
         key, lambda: compute(schema), _is_cacheable
     )
     return _Answered(
-        result, cache_hit, timed[0] if timed else None, schema_fp, prompt_fp
+        computed.result,
+        cache_hit,
+        timed[0] if timed else None,
+        schema_fp,
+        prompt_fp,
+        provider_name=computed.provider_name,
+        model=computed.model,
     )
 
 

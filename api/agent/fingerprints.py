@@ -54,6 +54,7 @@ from api.agent.prompts import (
     render_transcript,
 )
 from api.db.introspection import SchemaIntrospectionError, get_schema
+from api.targets import DEFAULT_TARGET
 
 #: Characters of the hash kept. Twelve hex digits is 48 bits -- unambiguous for
 #: a handful of prompt versions and short enough to read in a table.
@@ -132,9 +133,15 @@ class DeployedPrompt(NamedTuple):
 
 
 def deployed_fingerprints(
-    *, rendering: str, glossary: bool
+    *, rendering: str, glossary: bool, target: str = DEFAULT_TARGET
 ) -> DeployedPrompt | None:
     """The schema and `(schema_fp, prompt_fp)` for a live configuration, or `None`.
+
+    `target` (dynamic-database-switching, Invariant #3) selects which
+    registered database's schema this reads -- validated no later than
+    `get_schema()`'s own gate, never used to build a connection string or an
+    identifier directly in this module. Defaults to `DEFAULT_TARGET`, so
+    `evals/` and every test written before this feature is unaffected.
 
     **This function is why the schema read lives in `api/agent/` rather than in
     the endpoint.** `api/main.py` is asserted to reach the database only through
@@ -160,7 +167,7 @@ def deployed_fingerprints(
         # SQLAlchemy's `Inspector` with three catalog queries and took it to 9
         # and 20ms, which left the cache saving 13ms of a request measured
         # between 1,431ms and 5,901ms. `012-board.md` §2.1 has the numbers.
-        schema = get_schema()
+        schema = get_schema(target=target)
     except SchemaIntrospectionError:
         return None
 

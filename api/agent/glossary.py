@@ -73,6 +73,7 @@ import os
 import pathlib
 
 from api.config import read_secret_file
+from api.targets import DATABASE_TARGETS, DEFAULT_TARGET
 
 logger = logging.getLogger("querypilot")
 
@@ -182,29 +183,44 @@ def _load_glossary_terms(path: str) -> dict[str, str]:
     return parsed
 
 
-#: The last raw path and what it parsed to. Keyed on the **path string**, the
-#: same shape as `api/http/auth.py`'s `_memo`: a changed `QUERYPILOT_GLOSSARY_FILE`
-#: is a different key and re-reads, so a rotated glossary needs no restart.
-_memo: tuple[str, dict[str, str]] | None = None
+#: The last (target, raw path) seen and what it parsed to. Keyed on both —
+#: the same shape as `api/http/auth.py`'s `_memo` widened by one field — so a
+#: changed env var *or* a different target re-reads, and a rotated glossary
+#: needs no restart.
+_memo: tuple[str, str, dict[str, str]] | None = None
 
 
-def current_glossary_terms() -> dict[str, str]:
-    """The glossary terms this deployment should inject, or `{}` — never raises.
+def current_glossary_terms(target: str = DEFAULT_TARGET) -> dict[str, str]:
+    """The glossary terms one target's questions should be answered with.
 
-    Reads `QUERYPILOT_GLOSSARY_FILE` fresh (memoised on its value) rather than
-    returning `GLOSSARY`: unset means no glossary (resolved Q-B), not
-    Chinook's by default. The demo's own `docker-compose.yml` points this
-    variable at `chinook.json`, which is what makes the shipped demo's prompt
-    unchanged from before this existed.
+    Never raises — an unrecognised `target` behaves exactly like every other
+    misconfiguration this function already tolerates: `{}`, not an error, per
+    D-2's fail-open rule below.
+
+    **Glossary coupling** (dynamic-database-switching, Invariant #3): each
+    registered target names its own glossary variable in
+    `api.targets.DATABASE_TARGETS`, or `None` for a target with no
+    business-term vocabulary of its own — Pagila, deliberately, per that
+    registry's own docstring. Chinook keeps reading the pre-existing
+    `QUERYPILOT_GLOSSARY_FILE` (resolved Q-B, Iteration 14): unset means no
+    glossary, not Chinook's by default, and the demo's own
+    `docker-compose.yml` already points that variable at `chinook.json`,
+    which is what keeps the shipped demo's prompt unchanged from before
+    targets existed.
     """
     global _memo
 
-    path = os.environ.get(GLOSSARY_FILE_ENV, "")
-    if _memo is not None and _memo[0] == path:
-        return _memo[1]
+    entry = DATABASE_TARGETS.get(target)
+    glossary_env = entry.glossary_env if entry is not None else None
+    if glossary_env is None:
+        return {}
+
+    path = os.environ.get(glossary_env, "")
+    if _memo is not None and _memo[0] == target and _memo[1] == path:
+        return _memo[2]
 
     terms = _load_glossary_terms(path)
-    _memo = (path, terms)
+    _memo = (target, path, terms)
     return terms
 
 

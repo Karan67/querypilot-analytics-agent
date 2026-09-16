@@ -373,7 +373,7 @@ def test_columns_are_ordered_by_attnum_and_not_by_arrival(monkeypatch):
     from api.db import introspection
     from api.db.execution import ExecutionResult
 
-    def fake(sql):
+    def fake(sql, target="chinook"):
         if sql is introspection.RELATIONS_SQL:
             return ExecutionResult(ok=True, rows=(("thing", "r"),))
         if sql is introspection.COLUMNS_SQL:
@@ -442,7 +442,7 @@ def test_a_truncated_catalog_read_is_never_returned_as_a_schema(monkeypatch):
     monkeypatch.setattr(
         introspection,
         "execute_sql",
-        lambda sql: ExecutionResult(
+        lambda sql, target="chinook": ExecutionResult(
             ok=True,
             columns=("relname", "relkind"),
             rows=(("album", "r"),),
@@ -462,7 +462,9 @@ def test_a_failed_catalog_read_names_which_query_failed(monkeypatch):
     monkeypatch.setattr(
         introspection,
         "execute_sql",
-        lambda sql: ExecutionResult(ok=False, category="database_error", error="boom"),
+        lambda sql, target="chinook": ExecutionResult(
+            ok=False, category="database_error", error="boom"
+        ),
     )
 
     with pytest.raises(introspection.SchemaIntrospectionError) as caught:
