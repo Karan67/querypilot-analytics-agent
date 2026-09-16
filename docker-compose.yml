@@ -90,7 +90,7 @@ services:
       QUERYPILOT_RO_PASSWORD: ${QUERYPILOT_RO_PASSWORD}
       QUERYPILOT_STATEMENT_TIMEOUT: ${QUERYPILOT_STATEMENT_TIMEOUT:-10s}
     ports:
-      - "${PAGILA_BIND_HOST:-127.0.0.1}:${PAGILA_PORT:-5433}:5432"
+      - "${PAGILA_BIND_HOST:-127.0.0.1}:${PAGILA_PORT:-5544}:5432"
     volumes:
       # Postgres 18's image expects the mount at the parent directory, not
       # .../data as 16's does -- it now stores data under a major-version

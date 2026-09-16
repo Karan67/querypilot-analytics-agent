@@ -116,11 +116,16 @@ def test_an_unknown_target_glossary_is_empty_not_an_error():
 
 
 @pytest.mark.needs_db
-@pytest.mark.usefixtures("configured_database")
+@pytest.mark.usefixtures("configured_database", "configured_pagila")
 def test_chinook_and_pagila_are_different_live_databases():
     """The measurement that actually proves switching works, not just that
     the plumbing compiles: the same query against the two targets returns
     two different `current_database()` values, from two different engines.
+
+    Skips rather than fails when Pagila's opt-in profile is not up
+    (`configured_pagila`) -- CI's default `docker compose up` never starts
+    it, the same way `tests/test_tls_profile.py` skips rather than fails
+    when the `tls` profile is not up.
     """
     chinook_engine = get_engine("chinook")
     pagila_engine = get_engine("pagila")
@@ -135,10 +140,11 @@ def test_chinook_and_pagila_are_different_live_databases():
 
 
 @pytest.mark.needs_db
-@pytest.mark.usefixtures("configured_database")
+@pytest.mark.usefixtures("configured_database", "configured_pagila")
 def test_pagila_has_tables_chinook_does_not():
     """A cheap, real discriminator that the two schemas are not secretly the
-    same database reached twice."""
+    same database reached twice. Skips when Pagila's opt-in profile is not
+    up, per `configured_pagila`."""
     result = execute_sql(
         "SELECT count(*) FROM information_schema.tables "
         "WHERE table_schema = 'public' AND table_name = 'film'",
@@ -220,8 +226,9 @@ def test_schema_refuses_an_unknown_database_with_400(authed_client):
 
 
 @pytest.mark.needs_db
-@pytest.mark.usefixtures("configured_database")
+@pytest.mark.usefixtures("configured_database", "configured_pagila")
 def test_schema_against_pagila_returns_pagila_tables(authed_client):
+    """Skips when Pagila's opt-in profile is not up, per `configured_pagila`."""
     body = authed_client.get("/schema", params={"database": "pagila"}).json()
     names = {table["name"] for table in body["tables"]}
     assert "film" in names

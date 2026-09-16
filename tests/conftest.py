@@ -175,6 +175,45 @@ def configured_database() -> str:
 
 
 @pytest.fixture(scope="session")
+def configured_pagila() -> str:
+    """Point at the Pagila target specifically, or skip.
+
+    Same probe-and-skip shape as `configured_database`, but for the opt-in
+    Pagila profile -- CI's `docker compose up` never brings up `pagila-db`
+    (it sits behind `--profile pagila`, per `docker-compose.yml`), so
+    `QUERYPILOT_PAGILA_DATABASE_URL` is legitimately unset there. A test
+    that specifically needs Pagila reachable must skip on that, not fail --
+    `tests/test_tls_profile.py` already draws this exact distinction for
+    the `tls` profile, probing reachability rather than assuming it.
+
+    **Does not replace `configured_database`.** `tests/isolation.py`'s
+    prohibition is keyed on that one fixture alone, so a test using this one
+    still needs `configured_database` in its closure too, even when the
+    query it runs never touches Chinook -- this fixture only adds the
+    Pagila-specific skip, not database access in general.
+    """
+    url = os.environ.get("QUERYPILOT_PAGILA_DATABASE_URL", "").strip()
+    if not url:
+        pytest.skip(
+            "QUERYPILOT_PAGILA_DATABASE_URL is not set. Start Pagila with "
+            "'docker compose --profile pagila up -d pagila-db', or set the "
+            "variable to point at an already-running one."
+        )
+
+    try:
+        probe = create_engine(
+            url, connect_args={"connect_timeout": PROBE_CONNECT_TIMEOUT_SECONDS}
+        )
+        with probe.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        probe.dispose()
+    except SQLAlchemyError as exc:
+        pytest.skip(f"Pagila is not reachable at the configured DSN: {exc}")
+
+    return url
+
+
+@pytest.fixture(scope="session")
 def schema(configured_database: str):
     """The introspected schema. Session-scoped: it is immutable, and one
     catalog read is enough for the whole suite."""
