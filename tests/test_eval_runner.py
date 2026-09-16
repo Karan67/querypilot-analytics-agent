@@ -448,12 +448,16 @@ def test_ac11_both_sides_go_through_execute_sql(gold):
 
 def test_execute_sql_still_offers_no_way_to_skip_validation():
     """The runner cannot bypass Gate 2 because there is no bypass to reach for.
-    Restated here because this is the module `000-project.md` §4 singles out."""
+    Restated here because this is the module `000-project.md` §4 singles out.
+
+    `target` (018-ui-redesign.md, dynamic-database-switching) is the one
+    addition since this was last written -- named explicitly here rather
+    than just widened, so a *second* new parameter still fails this test."""
     import inspect
 
     from api.db.execution import execute_sql
 
-    assert list(inspect.signature(execute_sql).parameters) == ["sql"]
+    assert list(inspect.signature(execute_sql).parameters) == ["sql", "target"]
 
 
 # --- AC12: the fingerprint gate ---------------------------------------------

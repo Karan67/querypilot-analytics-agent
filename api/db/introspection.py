@@ -17,6 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from api.db.execution import MAX_ROWS, execute_sql
 from api.db.type_names import sqlalchemy_spelling
+from api.targets import DEFAULT_TARGET
 
 #: Values for `Table.kind` (AC2). Constants rather than bare literals so a typo
 #: is an AttributeError at import time instead of a silently wrong comparison.
@@ -213,7 +214,7 @@ SELECT src.relname,
 _KINDS = {"r": KIND_TABLE, "v": KIND_VIEW}
 
 
-def _rows(sql: str, what: str) -> tuple[tuple, ...]:
+def _rows(sql: str, what: str, target: str = DEFAULT_TARGET) -> tuple[tuple, ...]:
     """Run one catalog query through Gate 2, or explain why the schema is unknown.
 
     **Truncation is a failure here, and it is a new one.** The `Inspector` had
@@ -227,7 +228,7 @@ def _rows(sql: str, what: str) -> tuple[tuple, ...]:
     So this raises, and the message says which query and what the cap is,
     because the fix is a different introspection strategy rather than a retry.
     """
-    result = execute_sql(sql)
+    result = execute_sql(sql, target=target)
 
     if not result.ok:
         raise SchemaIntrospectionError(
@@ -246,13 +247,23 @@ def _rows(sql: str, what: str) -> tuple[tuple, ...]:
     return result.rows
 
 
-def get_schema() -> Schema:
-    """Return the structural map of the target database.
+def get_schema(target: str = DEFAULT_TARGET) -> Schema:
+    """Return the structural map of one registered database.
 
-    Takes no arguments (AC14). The schema name is module configuration, not a
-    parameter, so nothing supplied by a user or a model can reach an
-    identifier — this is what makes the tool injection-free, and a future
-    signature of ``get_schema(schema_name)`` would forfeit it.
+    **AC14's guarantee, restated for a multi-database deployment.** This used
+    to take no arguments at all — the schema name was module configuration,
+    so nothing supplied by a user or a model could reach an identifier. That
+    stays true of the Postgres *namespace* (`SCHEMA_NAME`, always
+    ``"public"``, still fixed above and never a parameter). What changed is
+    which *database* is asked: `target` selects one, but it is validated
+    against the closed `api.targets.DATABASE_TARGETS` registry — inside
+    `execute_sql()` → `get_engine()` → `get_database_url()` — before it ever
+    reaches a connection string or a query, exactly the same allow-list gate
+    Invariant #1 of the dynamic-database-switching feature requires
+    everywhere else. A caller cannot pass an arbitrary schema *name*, only
+    pick which of a fixed, operator-configured set of databases to read the
+    one fixed ``public`` schema of. `test_ac14_unknown_targets_are_refused`
+    is the test that must go red if that gate is ever removed.
 
     Reads catalog metadata only; it selects no rows from any user relation
     (AC16).
@@ -278,7 +289,7 @@ def get_schema() -> Schema:
     try:
         relation_kinds = {
             str(name): _KINDS[str(relkind)]
-            for name, relkind in _rows(RELATIONS_SQL, "the relation list")
+            for name, relkind in _rows(RELATIONS_SQL, "the relation list", target)
             if str(relkind) in _KINDS
         }
 
@@ -286,7 +297,7 @@ def get_schema() -> Schema:
         # keys rather than by trusting the order rows arrived in.
         columns: dict[str, dict[int, Column]] = {name: {} for name in relation_kinds}
         for relname, attname, attnum, catalog_type, notnull, is_pk in _rows(
-            COLUMNS_SQL, "the column list"
+            COLUMNS_SQL, "the column list", target
         ):
             if str(relname) not in columns:
                 # A relation whose kind this module does not report. Skipped
@@ -305,7 +316,7 @@ def get_schema() -> Schema:
             name: [] for name in relation_kinds
         }
         for relname, conname, ordinal, column, referred_table, referred_column in _rows(
-            FOREIGN_KEYS_SQL, "the foreign keys"
+            FOREIGN_KEYS_SQL, "the foreign keys", target
         ):
             if str(relname) not in foreign_keys:
                 continue

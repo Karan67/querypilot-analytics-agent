@@ -98,14 +98,25 @@ _inflight: dict[str, _Pending] = {}
 _lock = threading.Lock()
 
 
-def cache_key(question: str, schema_fp: str, prompt_fp: str) -> str:
+def cache_key(question: str, schema_fp: str, prompt_fp: str, target: str) -> str:
     """The key for one question under one configuration.
 
     Hashed rather than concatenated so the key is a fixed size whatever the
     question, and so nothing downstream is tempted to parse a user's text back
     out of a dictionary key.
+
+    `target` (dynamic-database-switching) has **no default** on purpose: this
+    module stays fully decoupled from `api.targets` -- it does not know a
+    registry exists, only that its one caller must say which database a
+    question was asked against. A default here would either duplicate
+    `DEFAULT_TARGET`'s value (two constants free to drift, exactly the shape
+    `HANDOFF.md` warns about) or import the registry into a module that has
+    never needed to know about one. Defense in depth alongside the
+    fingerprints: `schema_fp` already differs between structurally different
+    databases, but a key that names the target explicitly is one a reader can
+    trust without re-deriving why two schemas can never collide.
     """
-    material = _SEPARATOR.join((question, schema_fp, prompt_fp))
+    material = _SEPARATOR.join((question, schema_fp, prompt_fp, target))
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 

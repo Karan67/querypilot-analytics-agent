@@ -295,6 +295,74 @@ def test_cache_hit_is_present_and_false_before_the_cache_exists(authed_client, m
     assert history.recent()[0]["cache_hit"] == 0
 
 
+# --- 018-ui-redesign.md AC8/AC10: the telemetry pills -----------------------
+
+
+class _FakeProvider:
+    """A deterministic stand-in so this test needs no real provider key.
+
+    `HANDOFF.md` §6 records the shape this avoids: a test driving `/ask` that
+    relies on whichever key happens to be configured in the environment it
+    runs in is silently meaningless the day that key is absent -- correct on
+    a laptop with `.env`, an untested no-op in CI. Patching `get_provider`
+    itself, not just `answer`, is the documented fix: `answer` being mocked
+    alone would still let the real `get_provider()` run underneath it.
+    """
+
+    NAME = "fakevendor"
+    model = "fake-model-1"
+    last_usage = None
+    last_rate_limit = None
+
+
+def _stub_get_provider(monkeypatch, calls: list[int] | None = None) -> None:
+    def factory(*_args, **_kwargs):
+        if calls is not None:
+            calls.append(1)
+        return _FakeProvider()
+
+    monkeypatch.setattr("api.main.get_provider", factory)
+
+
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
+def test_the_payload_names_the_provider_and_model_on_a_miss(authed_client, monkeypatch):
+    """AC8: the pills need to know who answered, read the same best-effort
+    way `.model` already was (`GroqProvider.NAME`/`.model`)."""
+    _stub_get_provider(monkeypatch)
+    _answer(monkeypatch, _ok(["count"], [[1]]))
+
+    body = authed_client.post("/ask", json={"question": "who answered this?"}).json()
+
+    assert body["provider"] == "fakevendor"
+    assert body["model"] == "fake-model-1"
+
+
+@pytest.mark.needs_db
+@pytest.mark.usefixtures("configured_database")
+def test_a_cache_hit_still_names_the_original_provider_and_model(authed_client, monkeypatch):
+    """AC10, and the ruling it was approved under: a hit must not call
+    `get_provider()` again to find this out. Doing so would undo the exact
+    property that makes a hit cheap and outage-proof -- `_answer_or_replay`'s
+    own docstring -- so `calls` asserts the call count directly rather than
+    only asserting the two answers agree, which a rebuilt-but-identical
+    provider would also satisfy without proving anything.
+    """
+    calls: list[int] = []
+    _stub_get_provider(monkeypatch, calls)
+    _answer(monkeypatch, _ok(["count"], [[1]]))
+
+    question = "who answered this, the second time?"
+    first = authed_client.post("/ask", json={"question": question}).json()
+    second = authed_client.post("/ask", json={"question": question}).json()
+
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is True
+    assert second["provider"] == "fakevendor"
+    assert second["model"] == "fake-model-1"
+    assert len(calls) == 1, "a cache hit must not call get_provider() again"
+
+
 # --- the wrapper that makes AC2 possible ------------------------------------
 
 

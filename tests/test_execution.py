@@ -97,7 +97,10 @@ def test_ac2_signature_offers_no_bypass():
     import ast
 
     signature = pyinspect.signature(execute_sql)
-    assert list(signature.parameters) == ["sql"]
+    # `target` (018-ui-redesign.md, dynamic-database-switching) is the one
+    # addition since this was last written, named explicitly so a *second*
+    # new parameter still fails this test rather than being waved through.
+    assert list(signature.parameters) == ["sql", "target"]
 
     tree = ast.parse(pyinspect.getsource(execute_sql))
     identifiers = {
@@ -709,10 +712,16 @@ def test_ac24_executes_once_and_does_not_retry(monkeypatch):
 
     calls = []
 
-    def _failing_run(sql):
+    def _failing_run(sql, engine):
         calls.append(sql)
         raise OperationalError("stmt", {}, Exception("boom"))
 
+    # `execute_sql` now resolves the engine itself before calling `_run`
+    # (018-ui-redesign.md, dynamic-database-switching), so this stays
+    # hermetic -- no real connection, no `needs_db` -- only by also stubbing
+    # `get_engine`. A placeholder is enough: `_run` is stubbed too and never
+    # calls `.connect()` on it.
+    monkeypatch.setattr(execution, "get_engine", lambda target: object())
     monkeypatch.setattr(execution, "_run", _failing_run)
     result = execution.execute_sql("SELECT 1")
 

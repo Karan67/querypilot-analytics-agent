@@ -51,6 +51,7 @@ from api.db.execution import (
     execute_sql,
 )
 from api.db.introspection import SchemaIntrospectionError, get_schema
+from api.targets import DEFAULT_TARGET
 from api.llm.base import LLMError, LLMProvider, RateLimitError, TokenUsage
 from api.llm.counting import usage_for_call
 
@@ -210,6 +211,12 @@ class _State:
     """Mutable working state. Deliberately not exposed."""
 
     question: str
+    #: Dynamic-database-switching (Invariant #3): which registered database
+    #: this run's tool calls reach. Carried on state rather than read fresh
+    #: from a module-level "current target" precisely because state is
+    #: per-call and a global would not be -- see `api/db/engine.py`'s
+    #: docstring for why a mutable global is unsafe under concurrent requests.
+    target: str = DEFAULT_TARGET
     calls: int = 0
     steps: list[Step] = field(default_factory=list)
     seen_sql: set[str] = field(default_factory=set)
@@ -273,7 +280,7 @@ def _run_execute_sql(
     rows, and re-running the query to recover them would double every successful
     question's database work and — worse — could return different rows.
     """
-    result = execute_sql(sql)
+    result = execute_sql(sql, target=state.target)
     state.last_sql = sql
 
     if result.ok:
@@ -307,7 +314,7 @@ def _run_get_schema(state: _State) -> Step:
     """Dispatch `get_schema`. This is the action the withheld-schema harness
     exists to exercise -- measured chosen in 10 of 12 cases (plan §2.2)."""
     try:
-        rendered = render_schema_ddl(get_schema())
+        rendered = render_schema_ddl(get_schema(target=state.target))
         observation = "Observation from get_schema:\n\n" + rendered
         return Step(attempt=state.calls, action="get_schema", ok=True, observation=observation)
     except SchemaIntrospectionError as exc:
@@ -364,6 +371,7 @@ def answer(
     rendering: str = ADOPTED_RENDERING,
     glossary: bool = True,
     schema: Schema | None = None,
+    target: str = DEFAULT_TARGET,
 ) -> AgentResult:
     """Answer one question, retrying against observed failures.
 
@@ -394,6 +402,12 @@ def answer(
             **Ignored unless `schema_mode` is `SCHEMA_FULL`**: the mode decides
             whether the agent is told the schema, and a caller cannot override
             that by supplying one.
+        target: which registered database this question is answered against
+            (dynamic-database-switching, Invariant #3) -- validated against
+            `api.targets.DATABASE_TARGETS` no later than the first
+            `execute_sql`/`get_schema` call it reaches, never interpolated
+            into SQL or an identifier. Defaults to `DEFAULT_TARGET`, so every
+            caller that predates this feature is unaffected.
 
     Returns:
         An `AgentResult` carrying the full trace (AC21-AC23).
@@ -414,7 +428,7 @@ def answer(
             error="No question was asked.",
         )
 
-    state = _State(question=question)
+    state = _State(question=question, target=target)
 
     # **Read at most once per request (Iteration 9 T3).** A caller that has
     # already read the schema -- `/ask` reads it to build the answer-cache key,
@@ -439,7 +453,7 @@ def answer(
         prompt_schema = schema
         if prompt_schema is None:
             try:
-                prompt_schema = get_schema()
+                prompt_schema = get_schema(target=target)
             except SchemaIntrospectionError as exc:
                 return _failure(
                     state,
@@ -460,7 +474,9 @@ def answer(
     # Fixed for the whole run. Everything learned afterwards arrives through the
     # transcript (resolved Q-C), so there is one prompt shape rather than one
     # that mutates as the run proceeds.
-    system = build_loop_system(prompt_schema, schema_mode, rendering, glossary)
+    system = build_loop_system(
+        prompt_schema, schema_mode, rendering, glossary, target=target
+    )
 
     while state.calls < max_calls:
         user = render_transcript(

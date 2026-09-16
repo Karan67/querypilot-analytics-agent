@@ -90,11 +90,16 @@ def test_wrapper_returns_a_schema_instance():
     assert isinstance(tools.get_schema(), introspection.Schema)
 
 
-def test_ac14_wrapper_takes_no_parameters():
-    """The no-injection-surface property has to survive the indirection. A
-    wrapper that grew a `schema_name` argument would forfeit it while the
-    implementation still looked correct."""
-    assert not pyinspect.signature(tools.get_schema).parameters
+def test_ac14_wrapper_takes_only_a_validated_target():
+    """The no-injection-surface property has to survive the indirection,
+    restated for dynamic-database-switching the same way
+    `tests/test_schema_tool.py::test_ac14_the_only_parameter_is_a_validated_target`
+    restates it for the function this wraps. A wrapper that grew a second,
+    *unvalidated* parameter -- a raw `schema_name`, say -- would forfeit the
+    property while `tools.get_schema`'s own signature still looked narrow."""
+    params = pyinspect.signature(tools.get_schema).parameters
+    assert set(params) == {"target"}
+    assert params["target"].default == "chinook"
 
 
 @pytest.mark.constructs_engine

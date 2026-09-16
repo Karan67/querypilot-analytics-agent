@@ -506,11 +506,19 @@ def test_the_auth_suite_runs_without_a_database(tmp_path):
 
     The charter opened B-15 because all 64 tests in `tests/test_auth.py` skipped
     with the stack down. Measurement corrected both halves of that: the file
-    holds 67 tests, and six of them really do need Postgres because `/health`
-    goes through `execute_sql()` by design. So the deselection is part of the
-    claim, not a way around it — 61 run, 6 are the database's.
+    held 67 tests at the time, six of which really do need Postgres because
+    `/health` goes through `execute_sql()` by design. So the deselection is
+    part of the claim, not a way around it.
 
-    Restore `autouse=True` on `configured_database` and every one of the 61
+    **Re-measured at `018-ui-redesign.md` T5**, after `/schema` was added to
+    `PROTECTED`: the file now holds 74 tests, 67 of them hermetic and 7
+    needing Postgres. The one extra `needs_db` test is not this iteration's —
+    it predates this change and the number here was simply never revisited
+    against it, which is its own small instance of `HANDOFF.md` §6's "a
+    measurement that survives only in conversation is not a measurement":
+    read from the real run below rather than carried forward by memory.
+
+    Restore `autouse=True` on `configured_database` and every one of the 67
     skips instead.
     """
     completed = subprocess.run(
@@ -533,7 +541,7 @@ def test_the_auth_suite_runs_without_a_database(tmp_path):
     assert "skipped" not in completed.stdout, (
         f"something skipped rather than ran:\n{completed.stdout[-800:]}"
     )
-    assert "61 passed" in completed.stdout, completed.stdout[-400:]
+    assert "67 passed" in completed.stdout, completed.stdout[-400:]
 
 
 def test_the_partition_script_is_idempotent():

@@ -54,6 +54,7 @@ from tests.conftest import TEST_SECRET, TEST_USER
 PROTECTED = [
     ("GET", "/", None),
     ("GET", "/quota", None),
+    ("GET", "/schema", None),
     ("GET", "/history", None),
     ("GET", "/history/data", None),
     ("GET", "/static/app.js", None),

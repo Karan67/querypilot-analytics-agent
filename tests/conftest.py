@@ -122,10 +122,13 @@ def configured_database() -> str:
     construction.
 
     ``get_schema()`` reads ``QUERYPILOT_DATABASE_URL`` through ``get_engine()``,
-    which is ``lru_cache``d. Setting the variable and clearing that cache lets
-    the tool under test run completely unmodified — no test-only parameter is
-    threaded through the production call path, which keeps AC14 (no parameters)
-    honest rather than merely asserted.
+    which is ``lru_cache``d per target. Setting the variable and clearing that
+    cache lets the tool under test run completely unmodified for the default
+    ``chinook`` target — no test-only *second* parameter is threaded through
+    the production call path beyond the one dynamic-database-switching added
+    (``target``, itself validated against a closed registry rather than
+    accepted freely), which keeps AC14's injection-free guarantee honest
+    rather than merely asserted.
 
     If nothing is listening, every test skips with a reason that says what to do
     about it. An unreachable database is an environment problem, and reporting

@@ -31,6 +31,8 @@ import datetime
 import decimal
 from collections.abc import Sequence
 
+from api.db.introspection import Schema
+
 #: Types that are already JSON primitives and pass through untouched.
 #:
 #: `bool` is listed **before** `int` matters nowhere here because this is an
@@ -87,3 +89,30 @@ def to_jsonable(value: object) -> object:
 def encode_rows(rows: Sequence[Sequence[object]]) -> list[list[object]]:
     """Every cell of a result set, JSON-ready."""
     return [[to_jsonable(cell) for cell in row] for row in rows]
+
+
+def schema_to_dict(schema: Schema) -> dict:
+    """`GET /schema`'s response body (018-ui-redesign.md AC4).
+
+    Every field here is already a JSON primitive -- `Table.name`/`kind` and
+    `Column.name`/`type` are plain `str` (`api/db/introspection.py`), so
+    unlike `encode_rows` this needs no `to_jsonable` pass. It is a named,
+    explicit projection rather than `dataclasses.asdict(schema)`: `Table`
+    also carries `foreign_keys`, and AC4/§7 Q-C deliberately scoped this
+    iteration's contract to a flat table/column list, not a graph. Dumping
+    the whole dataclass would widen that contract by accident the day a
+    field is added to `Table` or `Column` for an unrelated reason.
+    """
+    return {
+        "tables": [
+            {
+                "name": table.name,
+                "kind": table.kind,
+                "columns": [
+                    {"name": column.name, "type": column.type}
+                    for column in table.columns
+                ],
+            }
+            for table in schema.tables
+        ]
+    }

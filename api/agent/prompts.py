@@ -11,6 +11,7 @@ network, no configuration — so the tests need no fixture.
 from __future__ import annotations
 
 from api.agent.glossary import current_glossary_terms, render_glossary
+from api.targets import DEFAULT_TARGET
 from api.db.introspection import KIND_VIEW, Schema, Table
 
 #: The instruction block. Kept as one constant so Iteration 5 can diff prompt
@@ -429,6 +430,7 @@ def build_loop_system(
     schema_mode: str = SCHEMA_FULL,
     rendering: str = ADOPTED_RENDERING,
     glossary: bool = True,
+    target: str = DEFAULT_TARGET,
 ) -> str:
     """The system prompt for one loop run (AC3, AC6, AC10).
 
@@ -452,6 +454,11 @@ def build_loop_system(
     run ignores it, so accepting a typo there would let `--rendering complct`
     pass silently in one mode and fail in the other -- and the run that passes
     would be recorded under a rendering that does not exist.
+
+    `target` (dynamic-database-switching, Invariant #3) selects which
+    registered database's glossary, if any, `current_glossary_terms` reads --
+    Pagila's is `None` by registry entry, so `glossary=True` against it
+    renders the identical no-glossary prompt shape `glossary=False` would.
 
     `glossary` defaults to **on** (resolved Q-D). Injecting it only for the
     questions that declare a term would be cheaper -- measured at T3, it costs
@@ -493,7 +500,7 @@ def build_loop_system(
         # that resolves to nothing. Deployments with no glossary file
         # configured get exactly the Iteration 4 prompt shape, glossary=True
         # or not.
-        terms = current_glossary_terms()
+        terms = current_glossary_terms(target=target)
         if terms:
             schema_block = f"{render_glossary(terms)}\n\n{schema_block}"
 
