@@ -527,6 +527,45 @@ def test_a_clean_run_reconciles_nothing():
     assert used_tokens_from_refusals([_rate_limited_report()]) is None
 
 
+# --- Iteration 020: does the same mid-run path reach a Cerebras refusal? -----
+
+
+def test_a_cerebras_refusal_reconciles_when_the_wording_matches_groqs():
+    """**Fixture A end to end.** `020`'s finding at the parser level
+    (`tests/test_rate_limit_telemetry.py`) holds through the whole mid-run
+    path: a JSON-shaped Cerebras body whose `message` happens to phrase the
+    daily limit the way Groq's does reconciles with no production code
+    change, because `used_tokens_from_refusals` is provider-agnostic -- it
+    reads `case.error` text, never a provider name.
+    """
+    from evals.run_evals import used_tokens_from_refusals
+    from tests.test_rate_limit_telemetry import CEREBRAS_429_GROQ_STYLE_WORDING
+
+    assert (
+        used_tokens_from_refusals([_rate_limited_report(CEREBRAS_429_GROQ_STYLE_WORDING)])
+        == 999_500
+    )
+
+
+def test_a_cerebras_refusal_with_no_embedded_numbers_never_reconciles():
+    """**Fixture B end to end -- the real, accepted gap.**
+
+    A realistic Cerebras refusal that names the exceeded bucket without
+    embedding a figure yields `None`, the same as any other unparseable
+    message. This is not a defect the ledger papers over: there is nothing
+    here to reconcile from, and inventing a number would be worse than
+    leaving the ledger on its local estimate. Filed as debt in
+    `specs/000-project.md` §8 next to B-6, not fixed blind.
+    """
+    from evals.run_evals import used_tokens_from_refusals
+    from tests.test_rate_limit_telemetry import CEREBRAS_429_NO_EMBEDDED_NUMBERS
+
+    assert (
+        used_tokens_from_refusals([_rate_limited_report(CEREBRAS_429_NO_EMBEDDED_NUMBERS)])
+        is None
+    )
+
+
 def test_reconciling_overwrites_the_local_estimate_and_says_so(tmp_path, capsys):
     """End to end: the ledger stops being an estimate and reports as much.
 

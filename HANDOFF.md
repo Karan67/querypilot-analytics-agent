@@ -222,6 +222,7 @@ and it was written *before* the change for that reason.
 | ~~B-2~~ | AC13's glossary-off control | discharged 2026-09-08 -- see section 8 |
 | **B-4** | alternative LLM provider | deferred, own milestone |
 | **B-6** | 429 to ledger reconciliation | **half discharged** 2026-09-11 at Iteration 9 T6 -- mid-run reconciliation ships; the live leg is still unexercised |
+| **B-16** | a Cerebras refusal with no embedded usage figure can't reconcile the ledger | **opened 2026-09-17**, spec 020 -- hermetic only, see `specs/000-project.md` §8 |
 | ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
 | ~~B-10~~ | `get_schema()` reached the database around Gate 2 | discharged 2026-09-11 at Iteration 8 T5 |
 | ~~B-14~~ | did the schema cache still earn its weight after B-10? | **discharged 2026-09-11** at Iteration 9 T4 -- it did not; the cache is retired |

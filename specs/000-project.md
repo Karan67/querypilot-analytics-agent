@@ -481,6 +481,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-3~~ | ~~T8's held-out run on a clean quota~~ | Iteration 5 T8 | **discharged 2026-09-04** |
 | **B-4** | Alternative LLM provider, with re-baselining | Iteration 5 close | deferred, own milestone |
 | **B-6** | Exercise 429 → ledger reconciliation against the live API | B-5 | **half discharged 2026-09-11** at Iteration 9 T6 — mid-run reconciliation ships; the live leg stays open |
+| **B-16** | A Cerebras refusal with no embedded usage figure cannot reconcile the ledger | B-6 | **opened 2026-09-17**, spec 020 — hermetic only; see the entry below |
 | ~~B-7~~ | ~~Which `expert` questions the glossary actually rescues~~ | B-2 | **discharged 2026-09-09** |
 | ~~B-8~~ | ~~`naive_sql` records an assumption AC12 cannot check~~ | B-7 | **discharged 2026-09-09** |
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
@@ -785,6 +786,43 @@ visible the moment the row is struck through.
 > opportunistic, exactly as decided on 2026-09-08. The cheap way to close it is
 > still the next TPD refusal in the ordinary course of work: check that the
 > ledger was corrected and that the following run reports `provider-reconciled`.
+
+### B-16 — a Cerebras refusal with no embedded usage figure cannot reconcile
+
+Opened by spec 020, which set out to ask B-6's own question — does mid-run
+429→ledger reconciliation reach a second provider — for Cerebras, added in
+Iteration 13 without any reconciliation coverage at all.
+
+**Measured, not assumed, and hermetic throughout.** The Cerebras test account
+still returns 402 (no billing configured, `016-second-llm-provider.md` §2.1),
+so no live Cerebras refusal exists to test against. Two fixtures were built
+instead, both modeled on the one real Cerebras error envelope this project has
+ever seen — that same 402 body — and both labeled doc-sourced/unverified for
+the 429 case specifically:
+
+- A JSON-shaped body whose `message` happens to phrase a daily limit the way
+  Groq's does. `limit_from_message` already reconciles this with **no code
+  change** — `_LIMIT_NAMED.search()` matches anywhere in a string regardless
+  of surrounding JSON or dict-repr syntax, so text-matching already
+  generalizes past plain-text bodies for free.
+- A JSON-shaped body with a short, generic `message` and no embedded numbers —
+  the shape the one real measurement actually has. `limit_from_message`
+  returns `None`, and **no regex widening can fix this**: there is no number
+  anywhere in the string for any parser to find. Tuning the regex to guess at
+  punctuation Cerebras has never been shown to use would mean fitting code to
+  a fixture this project itself invented, which `016 §2.4` already named as
+  the standard to avoid ("doc-sourced ... should not be trusted at face
+  value").
+
+**Accepted as debt, deliberately, on the same reasoning as B-6.** Closing it
+for real requires either a genuine Cerebras 429 body (blocked on the account's
+billing, exactly as `016` §2.1 already blocked header verification) or
+inventing wording with zero evidentiary basis, which this project's own
+standards rule out. If Cerebras's real refusal turns out to look like the
+first fixture, reconciliation already works today. If it looks like the
+second — the more realistic case, and the one the one real measurement points
+toward — the ledger will silently not reconcile from it, exactly as it does
+today, until someone with a billed account captures the real body.
 
 ### B-2 — AC13's glossary-off control
 
