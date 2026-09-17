@@ -443,6 +443,79 @@ def test_the_429_body_names_the_limit_no_header_reports():
     assert limit_from_message(REAL_429) == ("TPD", 200_000, 199_301)
 
 
+# --- Cerebras: whether the same text-matching approach reaches it (020) ------
+#
+# **Both fixtures below are doc-sourced/unverified for the 429 case**, exactly
+# as `016-second-llm-provider.md` §2.4 already flagged Cerebras's rate-limit
+# *headers* as third-party and unmeasured. The one real measurement this
+# project has of a Cerebras error envelope is a 402 (no billing configured on
+# the probe account, `016` §2.1):
+#
+#     {"message": "Payment required to access this resource. Visit your
+#      billing tab.", "type": "payment_required_error", "param": "quota",
+#      "code": "payment_required"}
+#
+# -- flat JSON, no `error` wrapper, unlike Groq's nested exception rendering
+# above. Neither fixture claims to be a captured 429; both are modeled on that
+# one real envelope shape, rendered the way a stainless-generated SDK renders
+# an HTTP error (`"Error code: <status> - " + repr(body)`), matching how
+# `REAL_429` itself is shaped.
+
+#: Fixture A -- the envelope carries a `message` that happens to phrase the
+#: daily limit the way Groq's does. Built, not sampled, to test whether
+#: `limit_from_message`'s plain substring search reaches a number sitting
+#: inside a JSON-shaped body -- it is a question about *structure*, not about
+#: guessing Cerebras's real wording.
+CEREBRAS_429_GROQ_STYLE_WORDING = (
+    "Error code: 429 - {'message': 'Rate limit exceeded: on tokens per day "
+    "(TPD): Limit 1000000, Used 999500, Requested 1200.', "
+    "'type': 'rate_limit_error', 'param': 'quota', "
+    "'code': 'rate_limit_exceeded'}"
+)
+
+#: Fixture B -- the envelope shaped like the one real measurement actually is:
+#: a short, generic `message` with no embedded numbers at all. This is the
+#: realistic case, not the convenient one: most OpenAI-compatible rate-limit
+#: bodies name *which* bucket was exceeded and leave the numbers to headers,
+#: the way the measured 402 named a reason without a figure attached.
+CEREBRAS_429_NO_EMBEDDED_NUMBERS = (
+    "Error code: 429 - {'message': 'Rate limit exceeded for "
+    "requests-per-day.', 'type': 'rate_limit_error', 'param': 'quota', "
+    "'code': 'rate_limit_exceeded'}"
+)
+
+
+def test_a_json_shaped_body_reconciles_if_the_wording_matches():
+    """**Fixture A -- no code change needed.**
+
+    `_LIMIT_NAMED.search()` finds the pattern anywhere in a string; it does
+    not care whether the substring sits inside JSON, a Python dict repr, or
+    plain text the way Groq's body is. This is the free half of 020's finding:
+    text-matching already generalizes past plain-text bodies.
+    """
+    from api.llm.rate_limits import limit_from_message
+
+    assert limit_from_message(CEREBRAS_429_GROQ_STYLE_WORDING) == (
+        "TPD",
+        1_000_000,
+        999_500,
+    )
+
+
+def test_a_json_shaped_body_with_no_numbers_cannot_reconcile():
+    """**Fixture B -- the real gap, and it is not a parser bug.**
+
+    There is no number anywhere in this string. No amount of regex tolerance
+    can extract a daily-usage figure Cerebras never sent; widening the parser
+    would only be able to close this by guessing at wording nobody has
+    measured, which `016 §2.4` already treats as untrustworthy. `None` is the
+    honest answer, not a defect to be fixed by this iteration.
+    """
+    from api.llm.rate_limits import limit_from_message
+
+    assert limit_from_message(CEREBRAS_429_NO_EMBEDDED_NUMBERS) is None
+
+
 def test_a_full_minute_bucket_can_accompany_a_refusal():
     """The two limits are independent, and reading only the headers on a 429
     says the opposite of what happened: plenty left, yet refused."""
