@@ -281,9 +281,12 @@ a hint about whether the name exists.
 
 Iteration 12 (`specs/015-production-deployment.md`) closed the engineering half
 of B-11: the artifact is now something a reasonable platform would accept, and
-none of it required a cloud account. What it did **not** do is deploy anything
-— no host was chosen, and the custody questions below are recorded as an
-explicit, deferred matrix rather than resolved by default.
+none of it required a cloud account. Iteration 15
+(`specs/019-production-deployment.md`) then closed the custody half — which
+host, whose managed Postgres, whose domain — by user ruling rather than by
+code, and produced the two artifacts described below. Neither iteration
+creates a live Render service or Neon project on its own; that step is still
+yours to take, using them.
 
 **What changed, and what it buys:**
 
@@ -329,24 +332,60 @@ explicit, deferred matrix rather than resolved by default.
   `127.0.0.1` only, configurable via `POSTGRES_BIND_HOST` for the one
   legitimate exception, a database client on another machine, deliberately.
 
-**What this deliberately does not do.** Nothing here chose a host, a domain, a
-DNS provider, or a managed Postgres. Those are custody decisions — whose card,
-whose account, whose name on the bill — and `specs/015-production-deployment.md`
-§7 lays them out as a matrix rather than resolving them:
+**What Iteration 12 deliberately did not do**, and what Iteration 15 then
+resolved. Nothing in Iteration 12 chose a host, a domain, a DNS provider, or a
+managed Postgres — those are custody decisions, whose card, whose account,
+whose name on the bill — and `specs/015-production-deployment.md` §7 laid
+them out as a matrix rather than resolving them. Iteration 15
+(`specs/019-production-deployment.md`) is that decision, ruled by the user
+rather than assumed:
 
-| Decision | What it needs | Reversible? |
-|---|---|---|
-| API host (Fly.io, Render, Railway, a VPS, …) | a card on file | yes, if the image stays portable |
-| Managed Postgres, or a container on the same host | an account; a different seeding path if managed | painful — data has to move |
-| TLS issuance in production | a domain, or a platform that issues one | yes |
-| Domain and DNS | a registrar, roughly £10–15/yr | yes |
-| Container registry | GHCR is free for this repository | yes |
+| Decision | Resolved |
+|---|---|
+| API host | Render, free tier |
+| Managed Postgres | Neon, one project, Postgres 18, two databases (`chinook`, `pagila`) |
+| TLS issuance | Render's own platform-managed TLS |
+| Domain and DNS | Render's free `*.onrender.com` subdomain — no registrar |
+| Container registry | none — Render builds `api/Dockerfile` directly from this repository |
 
 And the sharpest of B-11's original three blockers is still exactly where it
 was: **whose LLM key** a public deployment spends, and how hard the credential
 gate and the spend ceiling hold against a stranger who finds the URL. A
 ceiling bounds the bill; it does not make the URL safe to publish to strangers
-you have not decided to trust.
+you have not decided to trust. The deployed instance spends the project's own
+free-tier Groq key, gated by the same `QUERYPILOT_USERS` credential map as any
+other deployment of this image — Iteration 10's answer, unchanged.
+
+### Deploying to Render + Neon
+
+**What this does not do, stated up front.** History (`GET /history`) is
+**ephemeral** on this deployment: Render's free-tier web services have no
+persistent disk, so `/data/querypilot.db` is reset on every restart,
+redeploy, or scale-to-zero. This is a stated limitation, not an oversight —
+see `specs/019-production-deployment.md` §7 Q-A. `docker-compose.yml` and
+local development are unaffected; this trade-off is specific to the Render
+leg.
+
+Two artifacts do the work:
+
+- **[`render.yaml`](render.yaml)** — the Render Blueprint. Builds the same
+  `api/Dockerfile` and `./api` context `docker-compose.yml`'s `api` service
+  builds; declares every environment variable the deployed instance needs,
+  with the secret-shaped ones (`GROQ_API_KEY`, `QUERYPILOT_USERS`, and both
+  database URLs) left for Render's own encrypted dashboard rather than
+  committed here.
+- **[`deploy/neon/README.md`](deploy/neon/README.md)** — a one-time, by-hand
+  runbook for seeding Neon. Nothing under `db/init/` or `db/init-pagila/`
+  runs automatically against a managed Postgres, so this walks through
+  creating the `chinook` and `pagila` databases, loading each dataset with
+  the same `psql -f` commands the local init scripts run inside their
+  containers, and provisioning the same read-only role (`querypilot_ro`) Gate
+  1 requires everywhere else.
+
+`docker-compose.yml` is untouched by any of this — the Render leg runs only
+the `api` service, against Neon instead of the local `db`/`pagila-db`
+containers, and `docker compose up -d` still works exactly as documented
+above.
 
 ---
 

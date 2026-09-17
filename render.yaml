@@ -1,0 +1,51 @@
+# Render Blueprint for QueryPilot (specs/019-production-deployment.md).
+#
+# Builds the same Dockerfile and context `docker-compose.yml`'s `api` service
+# builds (`context: ./api`, `dockerfilePath: ./api/Dockerfile`) -- there is
+# exactly one image definition, and this file does not duplicate it.
+#
+# `sync: false` on a variable means Render prompts for a value in its
+# dashboard rather than storing one here; every secret-shaped variable is
+# marked that way. The custody runbook is `deploy/neon/README.md` for the two
+# database URLs, and the two application secrets (`GROQ_API_KEY`,
+# `QUERYPILOT_USERS`) are the operator's own values, never committed here.
+#
+# No `_FILE` variable and no `QUERYPILOT_SECRETS_DIR` appear on purpose
+# (specs/019 §7 Q-A/AC4): this leg reads secrets from Render's own encrypted
+# environment store, not a mounted file. That mechanism still exists and is
+# still tested for anyone who *does* mount `/run/secrets` elsewhere.
+services:
+  - type: web
+    name: querypilot
+    env: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    healthCheckPath: /health
+    envVars:
+      # Custody: deploy/neon/README.md produces both of these.
+      - key: QUERYPILOT_DATABASE_URL
+        sync: false
+      - key: QUERYPILOT_PAGILA_DATABASE_URL
+        sync: false
+      # Custody: the operator's own values -- never committed.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: QUERYPILOT_USERS
+        sync: false
+      # Configuration, not secrets -- same defaults docker-compose.yml uses.
+      - key: QUERYPILOT_LLM_PROVIDER
+        value: groq
+      - key: QUERYPILOT_LLM_MODEL
+        value: openai/gpt-oss-120b
+      - key: QUERYPILOT_GLOSSARY_FILE
+        value: /app/api/glossary/chinook.json
+      - key: QUERYPILOT_DAILY_IDENTITY_LIMIT
+        value: "50"
+      - key: QUERYPILOT_DAILY_GLOBAL_LIMIT
+        value: "150"
+      # Accepted as ephemeral on Render's free tier (specs/019 §7 Q-A) --
+      # free web services have no persistent disk, so this path is reset on
+      # every restart, redeploy, or scale-to-zero. Left at the container's
+      # own default rather than pointed at a volume that doesn't exist here.
+      - key: QUERYPILOT_HISTORY_PATH
+        value: /data/querypilot.db

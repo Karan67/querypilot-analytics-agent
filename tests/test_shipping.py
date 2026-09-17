@@ -393,3 +393,19 @@ def test_ac10_readme_claims_trace_to_a_source(claim, source):
         f"the README states {claim!r} and {source} no longer does; a number "
         f"without a source is the estimate AC10 exists to keep out"
     )
+
+
+# --- Iteration 15: docker-compose.yml stays additive with render.yaml -------
+
+
+def test_docker_compose_does_not_depend_on_render_yaml():
+    """`specs/019-production-deployment.md` §7 Q-E, the other half of
+
+    `tests/test_render_blueprint.py::test_render_yaml_does_not_depend_on_docker_compose`.
+    The local dev stack must not come to rely on the Render blueprint for
+    anything, or "docker compose up -d unmodified" (AC11) stops being true
+    the moment someone edits render.yaml.
+    """
+    parsed = compose()
+    assert "render.yaml" not in COMPOSE_PATH.read_text(encoding="utf-8")
+    assert "render" not in parsed

@@ -486,7 +486,7 @@ this table only when it ships or when a spec records why it never will.
 | ~~B-5~~ | ~~Guard all three limits, and count the day not the invocation~~ | B-1 | **verified live 2026-09-08** |
 | ~~B-9~~ | ~~AC14's live injection test asserts a model behaviour~~ | Iteration 7 T4 | **discharged 2026-09-10** at Iteration 8 T3 |
 | ~~B-10~~ | ~~`get_schema()` reaches the database around Gate 2~~ | Iteration 7 T6 | **discharged 2026-09-11** at Iteration 8 T5 |
-| **B-11** | Production deployment: key provisioning, secrets, egress billing | Iteration 8 T1 | deferred — a decision, not a task. **The engineering half discharged 2026-09-15** by Iteration 12; key provisioning and secrets custody remain open; see the entry below |
+| ~~B-11~~ | ~~Production deployment: key provisioning, secrets, egress billing~~ | Iteration 8 T1 | **discharged 2026-09-17** by Iteration 15 — the engineering half (Iteration 12) and the custody half (Iteration 15, by user ruling) are both closed; see the entry below |
 | **B-12** | Demo video | Iteration 8 T1 | deferred — not code, and the system is still changing |
 | **B-15** | `tests/test_auth.py` cannot run without a database it does not need | Iteration 10 T4 | **discharged 2026-09-15** at Iteration 11 — 923 of 1,383 tests now run with the stack down; see the entry below |
 | ~~B-13~~ | ~~The gold-query test pair fails intermittently~~ — `hard-001` exceeded the 10s ceiling under load | Iteration 8 T2 | **discharged 2026-09-11** — diagnosed, then fixed by pre-aggregating the reference query |
@@ -1457,6 +1457,43 @@ missing is a decision, and the decision is not the assistant's to make.
 > zero card — and the custody questions (which host, which registrar, whose
 > Postgres, whose LLM key) are recorded as an explicit, deferred matrix in
 > `specs/015-production-deployment.md` §7, rather than resolved by default.
+
+> **B-11 DISCHARGED 2026-09-17, at Iteration 15
+> (`specs/019-production-deployment.md`). The custody matrix is resolved by
+> user ruling, not by code — the distinction Iteration 12 insisted on stays
+> true here too.**
+>
+> Host: Render, free tier. Managed Postgres: Neon, one project on Postgres
+> 18, holding both `chinook` and `pagila` as separate databases. TLS and
+> domain: Render's own platform-managed certificate over its free
+> `*.onrender.com` subdomain — no registrar, no DNS zone. Registry: none;
+> Render builds `api/Dockerfile` directly from this repository. *Whose LLM
+> key* is answered by continuity rather than by a new ruling: the project's
+> own free-tier Groq key, behind the same `QUERYPILOT_USERS` credential gate
+> Iteration 10 built.
+>
+> **This iteration still does not create a live Render service or a live
+> Neon project.** Both need an account and a card that belong to the user, not
+> to an iteration. What it produces is `render.yaml` — a Blueprint that builds
+> the same image `docker-compose.yml` already builds — and
+> `deploy/neon/README.md`, a one-time runbook for seeding a managed Postgres
+> that never runs `db/init/` on its own. `docker-compose.yml` and every
+> existing test are untouched; the Render leg is additive, verified by a pair
+> of tests asserting neither file references the other.
+>
+> **One trade-off was accepted rather than engineered around**: Render's free
+> tier has no persistent disk, so the SQLite history store is ephemeral on
+> this leg — reset on every restart, redeploy, or scale-to-zero. Stated in the
+> README next to the artifact that has it, not discovered later. Moving
+> history to a durable store was considered and set aside: it would need a
+> write-capable Postgres credential, which charter §4's gate — the API holds
+> only `querypilot_ro` — does not grant without a separate decision this
+> iteration did not make.
+>
+> B-11 is now fully discharged. Both of its original blockers — whose key,
+> and where the secret lives — were answered: the first at Iteration 10, by
+> continuity here; the second at Iteration 12, unchanged by anything in this
+> iteration.
 
 ### B-15 — `tests/test_auth.py` cannot run without a database it does not need
 
