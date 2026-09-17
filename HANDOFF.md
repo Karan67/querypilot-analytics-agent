@@ -226,12 +226,81 @@ and it was written *before* the change for that reason.
 | ~~B-9~~ | AC14's live tests asserted model behaviour -- all three | discharged 2026-09-10 at Iteration 8 T3 |
 | ~~B-10~~ | `get_schema()` reached the database around Gate 2 | discharged 2026-09-11 at Iteration 8 T5 |
 | ~~B-14~~ | did the schema cache still earn its weight after B-10? | **discharged 2026-09-11** at Iteration 9 T4 -- it did not; the cache is retired |
-| **B-11** | production deployment | still deferred — **one of its three blockers discharged** 2026-09-14 by Iteration 10. Who may spend the quota is now answered in code; *whose key* and *where the secret lives* are unchanged, and both are decisions rather than tasks. TLS belongs here too |
+| **B-11** | production deployment | custody half ruled 2026-09-17 (Iteration 15, `specs/019-production-deployment.md`): Render + Neon, by explicit user decision. **Superseded in practice 2026-09-18 — see the dated note below the table**: Render turned out to require card details Iteration 15 did not anticipate, and three further platforms tried as replacements each failed a different way. Custody is open again, on the hosting half only; Neon is unaffected and done |
 | **B-12** | demo video | deferred at Iteration 8 T1 — not code, and the system is still moving |
 | **B-15** | the auth suite cannot run without a database | **discharged 2026-09-15** at Iteration 11. `configured_database` is opt-in, `@pytest.mark.needs_db` declares the database lane, and `tests/isolation.py` refuses an Engine to anything else. 923 of the suite's then-1,383 total ran with the stack down; `tests/test_auth.py` gives 61 passed, 6 deselected. Measurement corrected the entry twice: the file holds 67 tests rather than 64, and six of them really do need Postgres because `/health` goes through `execute_sql()` |
 | ~~B-13~~ | the gold-query pair flaked — `hard-001` exceeded the 10s ceiling under load | **discharged 2026-09-11** — the reference query now pre-aggregates: 48x faster, identical result, fingerprints unmoved |
 | ~~B-7~~ | which `expert` questions the glossary rescues | discharged 2026-09-09 |
 | ~~B-8~~ | `naive_sql` records an assumption AC12 cannot check | discharged 2026-09-09 |
+
+### B-11, 2026-09-18: Neon is live and seeded; no hosting platform works yet
+
+**The Neon half of `specs/019`'s custody ruling is done and verified.** One
+live Neon project (Postgres 18) holds both `chinook` and `pagila`, seeded from
+`db/seed/chinook.sql` + `db/init/02_create_views.sql` and
+`db/pagila-seed/pagila-schema.sql` + `pagila-data.sql` respectively. A single
+`querypilot_ro` role (roles are cluster-wide in Postgres, not per-database —
+see below) holds `SELECT`-only grants on each: verified via
+`information_schema.table_privileges`, chinook reads `0` non-`SELECT` grants
+and `12` tables, pagila reads `0` and `77`.
+
+**`deploy/neon/README.md` had three real bugs, now fixed in place**, each one
+a genuine dead end for whoever ran it next rather than an error in how it was
+followed:
+1. The runbook named `db/seed/pagila-schema.sql`/`pagila-data.sql`; the real
+   output of `db/fetch_pagila.sh` is `db/pagila-seed/pagila-schema.sql` and
+   `db/pagila-seed/pagila-data.sql`.
+2. Pagila's upstream dump carries ~105 `ALTER ... OWNER TO postgres;`
+   statements. Locally this works because `pagila-db`'s superuser really is
+   named `postgres`; on Neon the project owner role is never named `postgres`
+   (this project's is `neondb_owner`), so the very first statement in the
+   schema file failed and, under `ON_ERROR_STOP=1`, aborted before a single
+   table was created. Fix: `grep -v 'OWNER TO postgres;'` the schema file
+   before loading it on Neon — ownership doesn't matter here, only the
+   `SELECT` grant in step 5 does.
+3. The runbook said "`chinook` and `pagila` each need their own role,"
+   copied from `db/init/03_readonly_role.sh`'s comment about the *local*
+   topology, where `db` and `pagila-db` are two separate Postgres clusters.
+   `specs/019` Q-B put both databases in **one** Neon project — one cluster —
+   and `CREATE ROLE` is cluster-scoped in Postgres, not database-scoped, so
+   running it twice against the same project fails with `role "querypilot_ro"
+   already exists`. Confirmed live. Fix: create the role once, then run only
+   the `GRANT` statements (not `CREATE ROLE`) against the second database.
+
+The runbook also now shows the PowerShell-safe way to run these through a
+Dockerized `psql` (no local install) — `sh -c "grep ... | psql ..."` nested
+inside `docker run` does not survive PowerShell's quoting and fails with
+`sh: -v: not found`; filtering on the host side and piping into
+`docker run -i` avoids it.
+
+**The Render half of that same ruling turned out not to hold**, and neither
+did three platforms tried as replacements — each failed a different way, and
+each looked viable right up until the specific point it wasn't:
+
+| Platform | What looked right | Where it actually failed |
+|---|---|---|
+| Render | `render.yaml` blueprint already built and tested (Iteration 15) | Asks for card details to create a web service — not anticipated when `specs/019` ruled it |
+| Koyeb | Docs and community sources: free tier, historically no card | Dashboard is frozen mid-acquisition by Mistral, no service-creation UI at all (confirmed live, 2026-09-18) |
+| Northflank | Structurally the best fit found: separate "Dockerfile location" and "build context" fields map exactly onto `docker-compose.yml`'s `context: ./api` / `dockerfile: ./api/Dockerfile`; signup itself never asked for a card; the entire service-creation form (build, resources, networking, health check, ten env vars) filled in cleanly | Asked for payment at the final "Create service" submit, after every prior section validated without one |
+| Hugging Face Spaces | Community sources call Docker Spaces free | HF's own docs (`spaces-overview`) say otherwise: "Gradio and Docker Spaces run on compute and require a paid plan to create: PRO for personal accounts... Static Spaces are free for everyone." A compute Space (which this app needs) isn't available on a free personal account at all — caught by reading the primary source before attempting signup, unlike the first three |
+
+**The pattern, not just four isolated failures**: a platform's marketing or
+even its own docs calling something "free" does not mean a card is never
+requested — verify at the literal final step, not the first one that
+validates cleanly. Third-party "no-card" roundup articles were wrong for both
+Koyeb and Hugging Face; only reading the platform's own primary docs caught
+Hugging Face's requirement before time was spent on a live account.
+
+**Not yet tried**: a Cloudflare Tunnel exposing the existing, already-tested
+`docker compose up -d` stack directly. This is structurally different from
+the four above — no third-party compute gets provisioned, so there is no
+compute to bill — but it is only reachable while the local machine is on and
+connected, which is a real limitation for a "deployment," not a technicality.
+A full planning doc for the platform search (superseded Northflank section
+included, for the record rather than deleted) exists outside the repo at
+`C:\Users\Admin\.claude\plans\validated-beaming-pearl.md` on the machine this
+session ran on; it is not version-controlled and a future session on a
+different machine will not have it, so this section is the durable record.
 
 ### The numbers that matter
 

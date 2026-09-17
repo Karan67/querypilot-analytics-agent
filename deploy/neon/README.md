@@ -64,43 +64,87 @@ follows it.
 ./db/fetch_pagila.sh           # or db\fetch_pagila.ps1 on Windows
 ```
 
-That produces `db/seed/pagila-schema.sql` and `db/seed/pagila-data.sql`
-(schema and data are separate files, unlike Chinook's single dump — see
-`db/init-pagila/01_load_pagila.sh`'s header). Load both, in order, against
-the `pagila` database's connection string:
+That produces `db/pagila-seed/pagila-schema.sql` and
+`db/pagila-seed/pagila-data.sql` (schema and data are separate files, unlike
+Chinook's single dump — see `db/init-pagila/01_load_pagila.sh`'s header).
+
+**The schema file cannot be loaded onto Neon unmodified.** Per
+`db/fetch_pagila.sh`'s own header comment, upstream Pagila's dump carries
+~105 `ALTER ... OWNER TO postgres;` statements, which is why the local
+`01_load_pagila.sh` connects as a role actually named `postgres` rather than
+rewriting them. Neon's project owner role is never named `postgres` (Neon
+picks a project-specific name, e.g. `neondb_owner`), so the very first
+statement — `ALTER SCHEMA public OWNER TO postgres;` — fails with
+`role "postgres" does not exist` and, under `ON_ERROR_STOP=1`, aborts before
+a single table is created. Strip those lines before loading; ownership does
+not matter here because `querypilot_ro` is granted `SELECT` in step 5 below,
+never ownership, and every statement is confirmed single-line
+(`grep -c 'OWNER TO postgres' db/pagila-seed/pagila-schema.sql`, checked
+2026-09-18):
 
 ```bash
-psql "<pagila connection string>" -v ON_ERROR_STOP=1 --quiet --file db/seed/pagila-schema.sql
-psql "<pagila connection string>" -v ON_ERROR_STOP=1 --quiet --file db/seed/pagila-data.sql
+grep -v 'OWNER TO postgres;' db/pagila-seed/pagila-schema.sql | psql "<pagila connection string>" -v ON_ERROR_STOP=1 --quiet
+psql "<pagila connection string>" -v ON_ERROR_STOP=1 --quiet --file db/pagila-seed/pagila-data.sql
 ```
 
-## 5. Create the read-only role, on each database
+Running `psql` through a container (no local install) means piping the filtered
+file into the container's stdin rather than nesting `sh -c "grep ... | psql ..."`
+inside it — the inner quotes needed to protect the connection string do not
+survive being re-quoted by an outer shell, and PowerShell in particular mangles
+them silently (the container reports something like `sh: -v: not found`, from
+the string having been split into separate arguments rather than one). Filter
+on the host shell instead and pipe the result straight to `docker run -i`:
+
+```powershell
+Get-Content db/pagila-seed/pagila-schema.sql | Where-Object { $_ -notmatch 'OWNER TO postgres;' } | docker run -i --rm postgres:18-alpine psql "<pagila connection string>" -v ON_ERROR_STOP=1 --quiet
+```
+
+The data file carries no `postgres`-role references (checked the same way),
+so it loads unmodified once the schema above has actually created its tables.
+
+## 5. Create the read-only role, then grant it on each database
 
 This is the SQL `db/init/03_readonly_role.sh` runs as a heredoc — reproduced
 here literally rather than run as that script, because the script also reads
 `$POSTGRES_USER`/`$POSTGRES_DB` from the container's own environment, which
-does not exist outside it. Pick your own role name and password (these
-become `QUERYPILOT_RO_USER`/`QUERYPILOT_RO_PASSWORD` in spirit, though on
-Neon they only need to exist in the connection string itself, not as
-separate variables), and run this once per database — `chinook` and
-`pagila` each need their own role, matching how `db` and `pagila-db` each
-provision their own locally:
+does not exist outside it.
+
+**One role, not two.** `db/init/03_readonly_role.sh`'s comment about `chinook`
+and `pagila` each provisioning their own role describes the *local* topology,
+where `db` and `pagila-db` are two separate Postgres server containers — two
+independent clusters, so `CREATE ROLE` in one never sees the other. Q-B's
+Neon topology is different on purpose: **one** project, one Postgres cluster,
+holding both databases. `CREATE ROLE` is cluster-scoped in Postgres, not
+database-scoped, so running it twice against the same Neon project fails with
+`role "querypilot_ro" already exists` — confirmed live 2026-09-18. Create the
+role once, then grant it access to each database separately:
 
 ```sql
+-- Run once, against either connection string:
 CREATE ROLE querypilot_ro LOGIN PASSWORD '<a password you choose>';
+ALTER ROLE querypilot_ro SET statement_timeout = '10s';
 
+-- Run against chinook's connection string, with <chinook_or_pagila> = chinook:
 GRANT CONNECT ON DATABASE <chinook_or_pagila> TO querypilot_ro;
 GRANT USAGE ON SCHEMA public TO querypilot_ro;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO querypilot_ro;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO querypilot_ro;
-ALTER ROLE querypilot_ro SET statement_timeout = '10s';
+
+-- Then again against pagila's connection string, with <chinook_or_pagila> = pagila
+-- (the GRANT block only -- CREATE ROLE and the statement_timeout ALTER ROLE
+-- already applied cluster-wide and must not be repeated):
+GRANT CONNECT ON DATABASE <chinook_or_pagila> TO querypilot_ro;
+GRANT USAGE ON SCHEMA public TO querypilot_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO querypilot_ro;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO querypilot_ro;
 ```
 
-Run against `chinook`'s connection string with `<chinook_or_pagila>` set to
-`chinook`, and again against `pagila`'s connection string with it set to
-`pagila`. This is Gate 1 of the safety layer (`specs/000-project.md` §4): the
-deployed API only ever holds this role's credential, never the project
-superuser's.
+This is Gate 1 of the safety layer (`specs/000-project.md` §4): the deployed
+API only ever holds this role's credential, never the project superuser's.
+The two Render env vars in step 6 end up with the **same** role name and
+password, differing only in the database name each connection string names —
+that is correct, not a shortcut, because it is genuinely the same role on
+both databases.
 
 **Verify it before moving on** — the same check `03_readonly_role.sh` runs
 automatically, run here by hand:
