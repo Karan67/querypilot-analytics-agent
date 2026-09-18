@@ -396,6 +396,51 @@ live Back4app service itself has not yet been redeployed against the fix, so
 B-11's hosting half is not closed yet — this section records the platform
 choice and the fix, not a completed deployment.
 
+### B-11, 2026-09-19: the fix deployed and answered correctly — and a second wall, on identity rather than compute
+
+The fix above was pushed to `main` (`a959b60`) and redeployed on Back4app.
+**A second bug surfaced first**, caught the same way as the first — reading
+the actual runtime log rather than guessing from the HTTP response:
+`ModuleNotFoundError: No module named 'psycopg2'` inside SQLAlchemy's engine
+creation. Not a new Dockerfile problem — `deploy/neon/README.md` §6 already
+documents that both database URLs must use the `postgresql+psycopg://`
+scheme, and the value pasted into Back4app's dashboard was Neon's own
+console-copied bare `postgresql://...` string, which makes SQLAlchemy
+default to the `psycopg2` dialect this project doesn't install (it installs
+`psycopg` v3). Corrected in the dashboard, not in code — the runbook was
+already right; the value just hadn't followed it.
+
+**After that fix, `https://querypilot-oby6pfov.b4a.run/health` answered
+`{"status":"ok"}` over a real HTTP request from outside the deploying
+machine**, and a real question through the page answered correctly. This is
+the first time in this entire platform search that a container has actually
+served a live, externally-reachable request without a card being provided
+anywhere in the process.
+
+**But the URL is not stable, and this is a materially different kind of
+"free" than the compute question this session spent most of its time on.**
+The first deploy's URL (`querypilot-vu4u2iu2.b4a.run`) had a dashboard note
+reading "Temporary URL Active — URL is temporary and will be live for 60
+minutes," and a day later it 404'd; simply reopening the app's dashboard the
+next day produced a *different* subdomain
+(`querypilot-oby6pfov.b4a.run`) with no redeploy in between. Back4app's own
+"Upgrade for a Permanent URL" button — confirmed live — asks for **$5**.
+Every platform checked so far in this search asked for a card to let the
+*container run at all*; Back4app is the first to separate that question from
+a second one — whether the address it runs at stays the same — and to put a
+price specifically on the second half. A rotating hostname is workable for
+manually re-checking the app but not for anything meant to be linked to or
+depended on, which is most of what "deployed" is understood to mean.
+
+**Not yet resolved.** The user does not have $5 to spend on this right now.
+The next decision is whether to accept the free-but-rotating Back4app
+identity as today's answer, revisit the Cloudflare Tunnel option (which
+trades machine-uptime for a URL that stays fixed for as long as the tunnel
+process itself keeps running, a different and possibly better-fitting
+trade-off than Back4app's), or treat this as good enough progress for one
+day and pick it back up later. This section records the finding, not the
+decision.
+
 ### The numbers that matter
 
 - **100.0%** held out — `compact` + glossary, `--split test`, 20/20, the only
