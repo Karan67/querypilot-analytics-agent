@@ -302,6 +302,100 @@ included, for the record rather than deleted) exists outside the repo at
 session ran on; it is not version-controlled and a future session on a
 different machine will not have it, so this section is the durable record.
 
+### B-11, later the same day (2026-09-18): five more platforms checked, same wall
+
+The user asked to keep searching rather than fall back to the Cloudflare
+Tunnel. Checked against each platform's **own primary documentation** (not
+third-party "free hosting" roundups, which had already produced two wrong
+readings — Koyeb and Hugging Face):
+
+| Platform | Verdict | Source |
+|---|---|---|
+| Qoddi | **Requires a card.** Its own pricing page: "Yes, for security reasons a credit card is required to verify your account." | qoddi.com/pricing |
+| IBM Cloud Code Engine (Lite) | **Requires a card.** IBM's own free-tier tutorial: "You're asked to enter your credit card information to secure your account and verify your identity." | cloud.ibm.com docs |
+| Oracle Cloud "Always Free" | **Requires a card** for essentially all normal signups; the no-card fast path is limited to recognized Oracle Academy/CloudWorld/Sales contacts. | oracle.com/cloud/free/faq |
+| Fly.io | **Requires a card** on file for all but "Linked Organizations." | Fly.io community/docs |
+| Google Cloud "Starter Tier" / Cloud Run | **Requires a card.** Google's own docs claim the Starter Tier needs no credit card or billing account "to deploy your applications," and a project can in fact exist with no billing account linked. **But Cloud Run itself — the actual service that would run this container — demands a billing account be linked before it will create a service at all**, confirmed live: a real project (`querypilot-509010`) with no billing account showed Cloud Run's "Create service" flow prompting to enable billing before proceeding. The Starter Tier's no-card claim evidently scopes to Firebase App Hosting's own managed pipeline, not a general Cloud Run deploy — and App Hosting's documented framework auto-detection (Next.js, Angular, etc.) was already the open question for whether it could build this repo's plain FastAPI `api/Dockerfile` at all. Not tested further once Cloud Run itself proved to be the wall. | docs.cloud.google.com/docs/starter-tier; live console check, 2026-09-18 |
+
+**Nine platforms in a row have now wanted a card somewhere**: Render, Koyeb,
+Northflank, Hugging Face Spaces, Qoddi, IBM Cloud, Oracle Cloud, Fly.io, and
+now Google Cloud Run. The pattern from the first four only strengthened —
+"no card" claims on a docs or pricing page describe *account creation*, not
+*the specific action of building and running a container*, and the two are
+answered by different parts of a platform almost every time. This is no
+longer a small sample: **structurally free, always-on, card-free Docker
+hosting does not appear to exist among the mid-size/major platforms checked
+so far.** The Cloudflare Tunnel option above remains the one path that is
+card-free by construction rather than by a claim that needs re-verifying at
+the next screen, precisely because it provisions no third-party compute at
+all.
+
+### B-11, later still the same day: Back4app Containers cleared the card wall — and then found a real bug
+
+**Railway** was also checked and ruled out the same way as the nine above —
+its own docs: "Railway requires the use of a post-paid card."
+
+**Back4app Containers did not ask for a card at any point** — account
+creation, connecting this GitHub repo, or configuring the service (root
+directory `api`, Dockerfile build method, port 8000 auto-detected, 8
+environment variables, health check `/health`). Confirmed live, 2026-09-18.
+This is the tenth platform checked and the first to clear this specific wall.
+
+**The first deploy attempt still failed, on a real portability bug rather
+than a card prompt.** `api/Dockerfile` (Iteration 12 T2) copies dependencies
+from its builder stage into the runtime stage with
+`RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels` — a
+BuildKit-only mount type, chosen specifically to avoid a measured 39MB image
+bloat from an earlier `COPY --from=builder` version. **Back4app's builder is
+Kaniko** (or Kaniko-equivalent; not stated in their docs but the failure
+signature matches exactly), which does not implement that mount type at all
+(open upstream: `GoogleContainerTools/kaniko#1568`). The mount silently
+produced an empty `/wheels` directory, and the runtime stage's
+`pip install --no-index --find-links=/wheels` then failed every dependency
+in `requirements.lock` at once with "no versions" — not a Back4app-specific
+error, a generic pip failure that took reading the actual build log plus the
+Dockerfile's own history comment to connect back to the real cause.
+
+**Fixed by restructuring, not patching.** The builder stage now runs
+`pip install --target=/install -r requirements.lock` — installing straight
+into a directory it owns rather than building wheels as an intermediate
+artifact — and the runtime stage does a single ordinary
+`COPY --from=builder /install /install`, no mount of any kind. This needs
+nothing BuildKit-specific, so it works on Kaniko and on plain `docker build`
+identically. Measured, not assumed: the image is still **300MB**, unchanged
+from before this fix — no bloat reappeared. `uvicorn` is now invoked as
+`python -m uvicorn` rather than the console-script entry point, because a
+`--target` install does not reliably place that script on `PATH` and a
+module invocation needs no `PATH` entry at all.
+
+`tests/test_container_image.py` had two tests that asserted the now-removed
+mechanism by name (`test_the_runtime_stage_installs_from_the_builder_stages_
+wheels`, `test_the_wheels_never_become_a_layer_at_all`) — both correctly went
+red the moment the Dockerfile changed, which is the mutation-testing
+discipline working as intended rather than a regression. They're replaced by
+`test_the_runtime_stage_copies_the_builders_install_directory`,
+`test_only_the_builder_stage_ever_invokes_pip` (a *strictly stronger* version
+of the old `--no-index` guarantee: the runtime stage now never invokes pip at
+all, so there is no index for it to silently contact), and
+`test_the_installed_tree_is_copied_once_and_never_rebuilt`, which guards
+against both the 39MB-bloat anti-pattern and the BuildKit-only-mount
+anti-pattern reappearing. Both new failure-mode guards were mutation-tested
+live before being trusted: reintroducing the bind-mount string or a `pip
+install` inside the runtime stage each independently turned the relevant test
+red.
+
+**Local `docker compose up -d` was rebuilt and re-verified end to end against
+the fixed Dockerfile** — both containers healthy, `/health` correct
+authenticated and anonymous, and a real `/ask` question answered correctly
+(`SELECT COUNT(*) FROM customer` → 59, matching the known Chinook fact) — so
+this fix has not regressed the path every test and eval already runs against.
+
+**Not yet done**: the fix needs to be pushed to `main` before Back4app's
+GitHub-connected build can pick it up and actually deploy successfully. The
+live Back4app service itself has not yet been redeployed against the fix, so
+B-11's hosting half is not closed yet — this section records the platform
+choice and the fix, not a completed deployment.
+
 ### The numbers that matter
 
 - **100.0%** held out — `compact` + glossary, `--split test`, 20/20, the only

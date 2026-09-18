@@ -151,41 +151,70 @@ def test_the_dockerfile_is_multi_stage() -> None:
     assert stage_names() == ["builder", "runtime"]
 
 
-def test_the_runtime_stage_installs_from_the_builder_stages_wheels() -> None:
-    runs = directives("RUN")
-    assert any("from=builder" in r and "/wheels" in r for r in runs), (
+def _runtime_stage_lines() -> list[str]:
+    """Every instruction from the `FROM ... AS runtime` line onward."""
+    lines = instructions()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*FROM\s+.*\bAS\s+runtime\s*$", line, re.IGNORECASE):
+            return lines[i:]
+    raise AssertionError("no `FROM ... AS runtime` line found")
+
+
+def test_the_runtime_stage_copies_the_builders_install_directory() -> None:
+    copies = directives("COPY")
+    assert any("--from=builder" in c and "/install" in c for c in copies), (
         "the runtime stage does not take anything from the builder, which makes "
         "the builder theatre"
     )
 
 
-def test_the_runtime_install_never_contacts_an_index() -> None:
-    """`--no-index` is the load-bearing flag.
+def test_only_the_builder_stage_ever_invokes_pip() -> None:
+    """Replaced Iteration 12 T2's `pip install --no-index` in the runtime stage.
 
-    Without it, `pip install --find-links` silently falls back to PyPI when a
-    wheel is missing, the builder stage stops mattering, and the build stops
-    being reproducible without anyone being told.
+    That flag guarded against a silent network install if a wheel went
+    missing. Installing straight into `--target=/install` in the builder and
+    only ever copying that directory into the runtime stage is a strictly
+    stronger version of the same guarantee: there is no index for the runtime
+    stage to silently contact, because it never invokes pip at all.
     """
-    installs = [r for r in directives("RUN") if "pip install" in r]
-    assert installs, "the runtime stage installs nothing"
+    lines = instructions()
+    runtime_lines = _runtime_stage_lines()
+    builder_lines = lines[: len(lines) - len(runtime_lines)]
+
+    assert not any("pip install" in line for line in runtime_lines), (
+        "the runtime stage runs pip; it should only ever copy the builder's "
+        "already-resolved /install directory"
+    )
+    installs = [line for line in builder_lines if "pip install" in line]
+    assert installs, "the builder stage installs nothing"
     for line in installs:
-        assert "--no-index" in line
-        assert "--find-links" in line
+        assert "--target=/install" in line, f"builder does not install into /install: {line}"
 
 
-def test_the_wheels_never_become_a_layer_at_all() -> None:
-    """A COPY cannot be undone by a later `rm`, and measurement proved it.
+def test_the_installed_tree_is_copied_once_and_never_rebuilt() -> None:
+    """Guards against reintroducing either of two historical failure modes.
 
-    The first version copied /wheels into the runtime stage and deleted it in
-    the same RUN. `/wheels` was then absent from the filesystem and still
-    present in the image, which had grown 39MB. A bind mount is visible to one
-    command and is committed to nothing.
+    The first version of this Dockerfile copied wheels into the runtime stage
+    and deleted them in the same RUN -- the COPY still committed a layer no
+    later `rm` could reclaim, and measurement showed the image grew 39MB. The
+    second version replaced that COPY with a BuildKit-only bind mount
+    (`RUN --mount=type=bind,from=builder`), which then broke on Kaniko-based
+    builders -- confirmed live against Back4app Containers, 2026-09-18, which
+    don't implement that mount type at all. This version copies the builder's
+    `/install` directory exactly once and never installs anything a second
+    time in the runtime stage, so neither failure mode has anywhere to
+    reappear.
     """
     text = instruction_text()
-    assert "--mount=type=bind,from=builder" in text
-    assert "COPY --from=builder" not in text, (
-        "a COPY from the builder commits a layer that no later rm can reclaim"
+    assert "--mount=type=bind" not in text, (
+        "a BuildKit-only bind mount reappeared; it silently breaks on Kaniko"
     )
+    copies = [c for c in directives("COPY") if "--from=builder" in c]
+    assert len(copies) == 1, f"expected exactly one copy from the builder, found {copies}"
+    runtime_lines = _runtime_stage_lines()
+    assert not any(
+        line.strip().upper().startswith("RUN") and "rm " in line for line in runtime_lines
+    ), "a cleanup RUN in the runtime stage cannot undo an earlier COPY's layer"
 
 
 def test_no_pip_cache_is_kept() -> None:

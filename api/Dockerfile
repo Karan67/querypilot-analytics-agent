@@ -6,12 +6,13 @@
 # this line is the other half of closing that.
 #
 # Two stages as of Iteration 12 T2 (`specs/015-production-deployment.md` AC2).
-# The builder resolves and compiles wheels; the runtime installs from them with
-# the index switched off and then discards them. Nothing that was needed to
-# *build* a dependency survives into the image that serves requests.
+# The builder resolves every dependency in `requirements.lock` straight into a
+# target directory; the runtime stage only ever copies that directory in. No
+# wheel file, cache, or compiler artifact from resolving the dependency graph
+# survives into the image that serves requests.
 
 # --------------------------------------------------------------------------
-# Stage 1: build the wheels.
+# Stage 1: install every locked dependency into a self-contained directory.
 # --------------------------------------------------------------------------
 FROM python:3.12.13-slim AS builder
 
@@ -26,10 +27,22 @@ WORKDIR /build
 # source and the lock's header points at it.
 COPY requirements.txt requirements.lock ./
 
-# `pip wheel` resolves once, here, where a compiler is allowed to exist. The
-# runtime stage never contacts an index, so a dependency that is missing from
-# this directory is a build failure rather than a silent network install.
-RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.lock
+# `--target` puts the resolved tree at a path this stage owns rather than the
+# interpreter's own site-packages, so the runtime stage can copy exactly that
+# directory and nothing else -- no pip cache, no wheel files, no compiler.
+#
+# This replaced a `RUN --mount=type=bind,from=builder` copy of built wheels
+# (Iteration 12 T2), which depended on a BuildKit-only mount type. That broke
+# the first time this Dockerfile was built on a platform whose builder doesn't
+# implement it (Kaniko, which most multi-tenant PaaS builders use because it
+# needs no Docker daemon) -- confirmed live against Back4app Containers,
+# 2026-09-18: the mount silently produced an empty directory, and the runtime
+# stage's `--no-index` install then failed every dependency at once. This
+# version needs nothing BuildKit-specific and reaches the identical result --
+# nothing installed here lands in a layer the runtime stage doesn't choose to
+# copy.
+RUN pip install --no-cache-dir --no-warn-script-location \
+    --target=/install -r requirements.lock
 
 # --------------------------------------------------------------------------
 # Stage 2: the image that actually runs.
@@ -37,25 +50,16 @@ RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.lock
 FROM python:3.12.13-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/install
 
 WORKDIR /app
 
-COPY requirements.txt requirements.lock ./
-
-# The wheels arrive as a **bind mount**, not a COPY, and this is the whole
-# difference between a multi-stage build that works and one that looks like it
-# does. The first version of this file copied /wheels in, installed from it,
-# and deleted it in the same RUN. Measurement said the image grew by 39MB: the
-# COPY had already committed a 19.3MB layer, and deleting the files in a later
-# layer does not reclaim the bytes -- `/wheels` was absent from the filesystem
-# and still present in the image. A bind mount is visible to this one command
-# and is never committed to any layer.
-#
-# `--no-index` is the other load-bearing flag. Without it this line would
-# quietly fall back to PyPI and the builder stage would be theatre.
-RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
-    pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.lock
+# The whole resolved dependency tree, as one directory copied once. There is
+# no `pip install` in this stage and nothing here ever contacts an index -- a
+# dependency missing from `requirements.lock` is a stage-1 build failure, not
+# a silent network install at runtime.
+COPY --from=builder /install /install
 
 # A fixed numeric UID rather than a named account (spec §7 Q-D). The number is
 # what a host's user namespace, a volume's ownership and a `docker top` all
@@ -105,9 +109,12 @@ HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=3 \
 # container could not comply. `exec` keeps uvicorn as PID 1 so that a SIGTERM
 # from the platform reaches it instead of the shell.
 #
-# `--no-server-header` is AC11. uvicorn announces itself in every response, and
-# the deployment gains nothing from telling a scanner which server and which
-# version it is talking to. Suppressed at the server rather than stripped in
-# middleware, because the header is uvicorn's to emit and not emitting it is
-# cheaper than removing it 8,000 times a day.
-CMD ["sh", "-c", "exec uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-server-header"]
+# `uvicorn` invoked as a module (`-m`), not its console-script entry point --
+# a `--target` install does not reliably put that script on `PATH`, and a
+# module invocation needs no `PATH` entry at all. `--no-server-header` is
+# AC11: uvicorn announces itself in every response, and the deployment gains
+# nothing from telling a scanner which server and which version it is talking
+# to. Suppressed at the server rather than stripped in middleware, because the
+# header is uvicorn's to emit and not emitting it is cheaper than removing it
+# 8,000 times a day.
+CMD ["sh", "-c", "exec python -m uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-server-header"]
